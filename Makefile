@@ -1,7 +1,7 @@
 # Hooray, a make file.
 
-CC=gcc
-CFLAGS+=-Wall
+CC     = gcc -std=gnu99
+CFLAGS += -Wall
 
 SRCDIR = src
 OBJDIR = obj
@@ -12,9 +12,9 @@ INCLUDES := $(wildcard $(SRCDIR)/*.h)
 OBJECTS  := $(SOURCES:$(SRCDIR)/%.c=$(OBJDIR)/%.o)
 
 # Targets
-build: $(SRCDIR)/hello.c
+build:
 	$(CC) -o $(BINDIR)/hello $(SRCDIR)/hello.c
-
+	$(CC) -o $(BINDIR)/main $(SRCDIR)/main.c
 
 clean:
 	rm -f $(BINDIR)/*
