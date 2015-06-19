@@ -17,6 +17,6 @@ build: $(SRCDIR)/hello.c
 
 
 clean:
-	rm $(BINDIR)/*
-	rm $(OBJECTS)
+	rm -f $(BINDIR)/*
+	rm -f $(OBJECTS)
 	echo "Cleanup complete!"
