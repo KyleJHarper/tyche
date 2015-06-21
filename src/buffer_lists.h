@@ -28,12 +28,15 @@ Buffer *comp_head;
  * list__initialize
  * Creates the two lists we'll need need to maintain.  The raw list and the compressed list.
  */
-int list__initialize(Buffer *head) {
-  if (head != NULL) return 1;
-  head = (Buffer *)malloc(sizeof(Buffer));
-  head->next = *head;
-  return 0;
+int list__initialize() {
+  /* Raw List */
+  if (raw_head == NULL) return 1;
+  raw_head = (Buffer *)malloc(sizeof(Buffer));
+  raw_head->next = *raw_head;
+  raw_head->previous = *raw_head;
 
+  /* Compressed List */
+  return 0;
 }
 
 int list__add() {
