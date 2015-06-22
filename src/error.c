@@ -6,6 +6,7 @@
  */
 
 #include <stdio.h>
+#include <stdlib.h>
 
 void show_err(char *message, int exit_code) {
   printf("%s\n", message);

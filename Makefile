@@ -15,7 +15,8 @@ OBJECTS  := $(SOURCES:$(SRCDIR)/%.c=$(OBJDIR)/%.o)
 build:
 	$(CC) -o $(BINDIR)/hello $(SRCDIR)/hello.c
 	$(CC) -o $(BINDIR)/main      \
-		$(SRCDIR)/buffer.h       \
+		$(SRCDIR)/lock.c         \
+		$(SRCDIR)/error.c        \
 		$(SRCDIR)/buffer_lists.c \
 		$(SRCDIR)/main.c
 
