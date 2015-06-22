@@ -8,14 +8,11 @@
 /* Headers */
 #include <stdio.h>
 #include "buffer_lists.h"
+#include "error.h"
+
 
 int main(int argc, char *argv[]) {
-  printf("%s", "This is the main.  Here are the args.\n");
-  for (int i; i<argc; i++)
-    printf("%s%d%s%s%s", "Arg ", i, " is: ", argv[i], "\n");
-  return 0;
-
   /* Initialize lists here. */
-  if (! list__initialize(raw_head))
-    return 1;
+  show_err(strcat("a test"));
+  //if (! list__initialize()) return 1;
 }

@@ -14,7 +14,10 @@ OBJECTS  := $(SOURCES:$(SRCDIR)/%.c=$(OBJDIR)/%.o)
 # Targets
 build:
 	$(CC) -o $(BINDIR)/hello $(SRCDIR)/hello.c
-	$(CC) -o $(BINDIR)/main $(SRCDIR)/main.c
+	$(CC) -o $(BINDIR)/main      \
+		$(SRCDIR)/buffer.h       \
+		$(SRCDIR)/buffer_lists.c \
+		$(SRCDIR)/main.c
 
 clean:
 	rm -f $(BINDIR)/*
