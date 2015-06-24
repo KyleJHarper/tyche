@@ -23,6 +23,7 @@ struct buffer {
   uint32_t id;           /* Identifier of the page. Should come from the system providing the data itself (e.g.: inode). */
   uint16_t ref_count;    /* Number of references currently holding this buffer. */
   uint8_t popularity;    /* Rapidly decaying counter used for victim selection with clock sweep.  Ceiling of MAX_POPULARITY. */
+  uint8_t victimized;    /* If the buffer has been victimized this is set non-zero.  Prevents incrementing of ref_count. */
 
   /* Cost values for each buffer when pulled from disk or compressed/decompressed. */
   uint32_t comp_cost;    /* Time spent, in ns, to compress and decompress a page during a polling period.  Using clock_gettime(3) */
@@ -30,19 +31,21 @@ struct buffer {
   uint16_t comp_hits;    /* Number of times reclaimed from the compressed table during a polling period. */
 
   /* We use a ring buffer so we track previous and next Buffers. */
-  Buffer *previous;      /* Pointer to the previous buffer for use in a circular queue. */
+  Buffer *previous;    /* Pointer to the previous buffer for use in a circular queue. */
   Buffer *next;          /* Pointer to the next buffer for use in a circular queue. */
-  uint16_t lock_id;      /* Lock ID from the lock_pool[], rather than having a pthread mutex for each Buffer. */
+  uint16_t lock_id;      /* Lock ID from the locker_pool[], rather than having a pthread mutex for each Buffer. */
 
   /* The actual payload we want to cache (i.e.: the page). */
   uint16_t data_length;  /* Number of bytes in data.  For raw tables, always PAGE_SIZE.  Compressed will vary. */
-  char *data[];          /* Pointer to the character array holding the page data. */
+  char *data;            /* Pointer to the character array holding the page data. */
 };
 
 
 /* Prototypes */
 void buffer__lock(Buffer *buf);
 void buffer__unlock(Buffer *buf);
+int buffer__update_ref(Buffer *buf);
+void buffer__victimize(Buffer *buf);
 
 
 #endif /* SRC_BUFFER_H_ */

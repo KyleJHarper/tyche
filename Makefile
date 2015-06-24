@@ -14,6 +14,7 @@ OBJECTS  := $(SOURCES:$(SRCDIR)/%.c=$(OBJDIR)/%.o)
 # Targets
 build:
 	$(CC) -o $(BINDIR)/hello $(SRCDIR)/hello.c
+	$(CC) -o $(BINDIR)/sizes $(SRCDIR)/sizes.c
 	$(CC) -o $(BINDIR)/main      \
 		$(SRCDIR)/lock.c         \
 		$(SRCDIR)/error.c        \

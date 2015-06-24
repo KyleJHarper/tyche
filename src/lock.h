@@ -26,6 +26,7 @@ void lock__assign_next_id(uint16_t *referring_id_ptr);
 typedef struct lock Lock;
 struct lock {
   pthread_mutex_t mutex;  /* The actual mutex used for locking. */
+  pthread_cond_t cond;    /* The cond to use when we need signaling. */
 };
 
 #endif /* SRC_LOCK_H_ */

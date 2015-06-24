@@ -35,7 +35,9 @@ Lock locker_pool[MAX_LOCK_VALUE];
 void lock__initialize() {
   for (uint16_t i=0; i<MAX_LOCK_VALUE; i++) {
     if (pthread_mutex_init(&locker_pool[i].mutex, NULL) != 0)
-      show_err("Failed to initialize mutex.  This is fatal.", 1);
+      show_err("Failed to initialize mutex.  This is fatal.", E_GENERIC);
+    if (pthread_cond_init(&locker_pool[i].cond, NULL) != 0)
+      show_err("Failed to initialize cond.  This is fatal.", E_GENERIC);
   }
 }
 
@@ -43,7 +45,6 @@ void lock__initialize() {
  * Set the mutex indicated by the lock_id.
  */
 void lock__acquire(uint16_t lock_id) {
-  /* Really would like to be lock-less but I'm not verse enough to do that yet */
   pthread_mutex_lock(&locker_pool[lock_id].mutex);
 }
 
@@ -54,10 +55,16 @@ void lock__release(uint16_t lock_id) {
   pthread_mutex_unlock(&locker_pool[lock_id].mutex);
 }
 
+/* lock__assign_next_id
+ * This will assign the next available lock_id to the caller (via the pointer sent).  Checks for max value and circles back to zero
+ * and always ensures that the lock_id 0 is not assigned.  Lock ID 0 isn't special yet but might be.
+ */
 void lock__assign_next_id(uint16_t *referring_id_ptr) {
   pthread_mutex_lock(&next_id_mutex);
-  *referring_id_ptr = next_id;
+  if (next_id == MAX_LOCK_VALUE)
+    next_id = 0;
   next_id++;
+  *referring_id_ptr = next_id;
   pthread_mutex_unlock(&next_id_mutex);
 }
 

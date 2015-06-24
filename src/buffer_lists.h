@@ -10,8 +10,8 @@
 
 /* Function prototypes.  Not required, but whatever. */
 void list__initialize();
-int list__add();
-int list__remove();
+void list__add(Buffer *list);
+void list__remove(Buffer *list);
 
 
 
