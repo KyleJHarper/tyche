@@ -21,7 +21,8 @@
 
 /* Defines and global values */
 #define MAX_LOCK_VALUE UINT16_MAX
-uint16_t next_value;
+uint16_t next_id;
+pthread_mutex_t next_id_mutex = PTHREAD_MUTEX_INITIALIZER;
 Lock locker_pool[MAX_LOCK_VALUE];
 
 
@@ -51,5 +52,12 @@ void lock__acquire(uint16_t lock_id) {
  */
 void lock__release(uint16_t lock_id) {
   pthread_mutex_unlock(&locker_pool[lock_id].mutex);
+}
+
+void lock__assign_next_id(uint16_t *referring_id_ptr) {
+  pthread_mutex_lock(&next_id_mutex);
+  *referring_id_ptr = next_id;
+  next_id++;
+  pthread_mutex_unlock(&next_id_mutex);
 }
 

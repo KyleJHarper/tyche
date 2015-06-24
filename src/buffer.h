@@ -39,4 +39,10 @@ struct buffer {
   char *data[];          /* Pointer to the character array holding the page data. */
 };
 
+
+/* Prototypes */
+void buffer__lock(Buffer *buf);
+void buffer__unlock(Buffer *buf);
+
+
 #endif /* SRC_BUFFER_H_ */

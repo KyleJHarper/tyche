@@ -20,9 +20,15 @@
 #include "error.h"
 #include "lock.h"
 
+/* Globals and externs because I'm bad */
+extern Buffer *raw_list;
+extern Buffer *comp_list;
+
 int main(int argc, char *argv[]) {
   /* Initialize locker and lists here. */
   lock__initialize();
   list__initialize();
+  list__add(&raw_list);
+  list__add(&comp_list);
   return 0;
 }

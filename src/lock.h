@@ -20,6 +20,7 @@
 void lock__initialize();
 void lock__acquire(uint16_t lock_id);
 void lock__release(uint16_t lock_id);
+void lock__assign_next_id(uint16_t *referring_id_ptr);
 
 
 typedef struct lock Lock;
