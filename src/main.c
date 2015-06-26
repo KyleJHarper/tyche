@@ -16,6 +16,7 @@
 /* Headers */
 #include <stdio.h>
 #include <string.h>
+#include "error_codes.h"
 #include "buffer_lists.h"
 #include "error.h"
 #include "lock.h"
@@ -28,7 +29,7 @@ int main(int argc, char *argv[]) {
   /* Initialize locker and lists here. */
   lock__initialize();
   list__initialize();
-  list__add(&raw_list);
-  list__add(&comp_list);
+  list__add(raw_list);
+  list__add(comp_list);
   return 0;
 }

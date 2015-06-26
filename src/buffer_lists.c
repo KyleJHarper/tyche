@@ -26,8 +26,9 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <pthread.h>
+#include <string.h>
 #include "buffer.h"
-#include "buffer_lists.h"
+#include "lock.h"
 #include "error.h"
 
 
@@ -36,6 +37,9 @@ Buffer *raw_list;                                            /* Circular list of
 Buffer *comp_list;                                           /* Circular list of compressed buffers. */
 pthread_mutex_t raw_list_lock = PTHREAD_MUTEX_INITIALIZER;   /* Lock for the raw list. */
 pthread_mutex_t comp_list_lock = PTHREAD_MUTEX_INITIALIZER;  /* Lock for the compressed list. */
+
+/* Extern the error codes we'll use. */
+extern const int E_GENERIC;
 
 
 /* Functions */
@@ -67,12 +71,12 @@ void list__initialize() {
  * Adds a node to the list specified.  By 'list' we really just mean the node buffer in the list, always 'head'.
  */
 void list__add(Buffer *list) {
-  pthread_mutex_t *lock = raw_list_lock;
+  pthread_mutex_t *list_lock = &raw_list_lock;
   if (list == comp_list)
-    lock = comp_list_lock;
+    list_lock = &comp_list_lock;
 
   /* Lock the list and make edits.  We could use a freelist if fragmentation becomes an issue. */
-  pthread_mutex_lock(&lock);
+  pthread_mutex_lock(list_lock);
   Buffer *new_node = (Buffer *)malloc(sizeof(Buffer));
   if (new_node == NULL)
     show_err("Error malloc-ing new buffer from list__add.", E_GENERIC);
@@ -80,30 +84,27 @@ void list__add(Buffer *list) {
   new_node->previous = list;
   list->next->previous = new_node;
   list->next = new_node;
-  pthread_mutex_unlock(&lock);
+  pthread_mutex_unlock(list_lock);
 }
 
 /* list__remove
  * Removes the node from the list it is associated with.  We need the caller to tell us which list it is associated with so we
  * don't have to scan the whole list to find a matching raw_list or comp_list pointer.
+ * Caller must mark the buffer as victimized!  Caller must ensure ref_count is 0!  buffer__victimize() handles this.
  */
 void list__remove(Buffer *buf, char *list_name) {
-  pthread_mutex_t *lock = raw_list_lock;
-  if (*list_name == "comp")
-    lock = comp_list_lock;
+  pthread_mutex_t *list_lock = &raw_list_lock;
+  if (strcmp(list_name, "comp") == 0)
+    list_lock = &comp_list_lock;
 
-  /* Caller must mark the buffer as victimized.  Caller should also make ref_count zero but we'll double check here. */
-  lock__acquire(&buf->lock_id);
-  while (buf->ref_count > 0)
-
-TODO:  Need to finish this cond but it's opening an edge case.  I either need to re-check and re-loop or use a unique mutex and cond per buffer.'
-    pthread_cond_wait()
-  lock__release(&buf->lock_id);
-
-  /* Lock the list so we can move pointers. */
-  pthread_mutex_lock(&lock);
-
-
-  //Buffer needs to be unpinned before we can continue.
-  //Remove node and change links.
+  /* Lock the list so we can move pointers and set the buffer to NULL. */
+  pthread_mutex_lock(list_lock);
+  buf->previous->next = buf->next;
+  buf->next->previous = buf->previous;
+  if (buffer__lock(buf) == 0) {
+    int lock_id = buf->lock_id;
+    buf = NULL;
+    lock__release(lock_id);
+  }
+  pthread_mutex_unlock(list_lock);
 }

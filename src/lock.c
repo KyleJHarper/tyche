@@ -25,6 +25,9 @@ uint16_t next_id;
 pthread_mutex_t next_id_mutex = PTHREAD_MUTEX_INITIALIZER;
 Lock locker_pool[MAX_LOCK_VALUE];
 
+/* Extern the error codes we'll use. */
+extern const int E_GENERIC;
+
 
 /* Functions */
 
@@ -42,7 +45,7 @@ void lock__initialize() {
 }
 
 /* lock__acquire
- * Set the mutex indicated by the lock_id.
+ * Set the mutex indicated by the lock_id.  Buffer poofing is handled by callers.
  */
 void lock__acquire(uint16_t lock_id) {
   pthread_mutex_lock(&locker_pool[lock_id].mutex);
