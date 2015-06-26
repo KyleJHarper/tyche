@@ -16,6 +16,7 @@ build:
 	$(CC) -o $(BINDIR)/hello $(SRCDIR)/hello.c
 	$(CC) -o $(BINDIR)/sizes $(SRCDIR)/sizes.c
 	$(CC) -o $(BINDIR)/main      \
+		$(SRCDIR)/buffer.c       \
 		$(SRCDIR)/lock.c         \
 		$(SRCDIR)/error.c        \
 		$(SRCDIR)/buffer_lists.c \

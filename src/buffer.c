@@ -11,6 +11,7 @@
 #include <stdint.h>
 #include "lock.h"
 #include "error.h"
+#include "buffer.h"
 
 /* Give extern access to locker_pool[] to us, even though I'm sure this is a no no and someone will yell at me. */
 extern Lock locker_pool[];
@@ -30,7 +31,6 @@ int buffer__lock(Buffer *buf) {
   uint16_t lock_id;
   if (buf)
     lock_id = buf->lock_id;
-
   /* When lock_id is 0, buf is NULL or unusable.  When buf goes NULL or is victimized, we're still unusable. */
   if (lock_id == 0)
     return E_BUFFER_POOFED;

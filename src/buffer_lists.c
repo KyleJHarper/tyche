@@ -28,6 +28,7 @@
 #include <pthread.h>
 #include <string.h>
 #include "buffer.h"
+#include "buffer_lists.h"
 #include "lock.h"
 #include "error.h"
 
@@ -55,6 +56,7 @@ void list__initialize() {
   if (raw_list == NULL)
     show_err("Failed to malloc the head of the raw_list.", E_GENERIC);
   raw_list->next = raw_list;
+  raw_list->previous = raw_list;
   lock__assign_next_id(&raw_list->lock_id);
 
   /* Compressed List */
@@ -64,13 +66,14 @@ void list__initialize() {
   if (comp_list == NULL)
     show_err("Failed to malloc the head of the comp_list.", E_GENERIC);
   comp_list->next = comp_list;
+  comp_list->previous = comp_list;
   lock__assign_next_id(&comp_list->lock_id);
 }
 
 /* list__add
  * Adds a node to the list specified.  By 'list' we really just mean the node buffer in the list, always 'head'.
  */
-void list__add(Buffer *list) {
+Buffer* list__add(Buffer *list) {
   pthread_mutex_t *list_lock = &raw_list_lock;
   if (list == comp_list)
     list_lock = &comp_list_lock;
@@ -84,7 +87,9 @@ void list__add(Buffer *list) {
   new_node->previous = list;
   list->next->previous = new_node;
   list->next = new_node;
+  lock__assign_next_id(&new_node->lock_id);
   pthread_mutex_unlock(list_lock);
+  return new_node;
 }
 
 /* list__remove
@@ -92,19 +97,33 @@ void list__add(Buffer *list) {
  * don't have to scan the whole list to find a matching raw_list or comp_list pointer.
  * Caller must mark the buffer as victimized!  Caller must ensure ref_count is 0!  buffer__victimize() handles this.
  */
-void list__remove(Buffer *buf, char *list_name) {
+void list__remove(Buffer **buf, char *list_name) {
   pthread_mutex_t *list_lock = &raw_list_lock;
   if (strcmp(list_name, "comp") == 0)
     list_lock = &comp_list_lock;
 
-  /* Lock the list so we can move pointers and set the buffer to NULL. */
+  /* Lock the list so we can move pointers and set the buffer to NULL.  Caller must free() the Buffer* pointer it sent. */
   pthread_mutex_lock(list_lock);
-  buf->previous->next = buf->next;
-  buf->next->previous = buf->previous;
-  if (buffer__lock(buf) == 0) {
-    int lock_id = buf->lock_id;
-    buf = NULL;
+  (*buf)->previous->next = (*buf)->next;
+  (*buf)->next->previous = (*buf)->previous;
+  if (buffer__lock(*buf) == 0) {
+    int lock_id = (*buf)->lock_id;
+    *buf = NULL;
     lock__release(lock_id);
   }
   pthread_mutex_unlock(list_lock);
+}
+
+/* list__count
+ * Counts the number of elements in the list that the buffer is associated with.  Requires locking the list.
+ */
+uint32_t list__count(Buffer *list) {
+  uint32_t count = 0;
+  Buffer *start = list;
+  while(list->next != start) {
+    count++;
+    list = list->next;
+  }
+  /* Add one for head to give accurate count of the whole list. */
+  return ++count;
 }
