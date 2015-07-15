@@ -12,6 +12,7 @@
 
 /* Include necessary headers here. */
 #include <stdint.h>  /* Used for the uint_ types */
+#include "lock.h"    /* For lockid_t type */
 
 /* Defines used by this header. */
 #define MAX_POPULARITY UINT8_MAX

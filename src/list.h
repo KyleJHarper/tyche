@@ -22,7 +22,7 @@ struct list {
 };
 
 /* Function prototypes.  Not required, but whatever. */
-void list__initialize(List *list);
+List* list__initialize();
 Buffer* list__add(List *list);
 void list__remove(Buffer **buf, List *list);
 uint32_t list__count(List *list);

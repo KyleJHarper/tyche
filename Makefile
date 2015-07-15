@@ -15,11 +15,12 @@ OBJECTS  := $(SOURCES:$(SRCDIR)/%.c=$(OBJDIR)/%.o)
 build:
 	$(CC) -o $(BINDIR)/hello $(SRCDIR)/hello.c
 	$(CC) -o $(BINDIR)/sizes $(SRCDIR)/sizes.c
-	$(CC) -o $(BINDIR)/main      \
-		$(SRCDIR)/buffer.c       \
-		$(SRCDIR)/lock.c         \
-		$(SRCDIR)/error.c        \
-		$(SRCDIR)/list.c \
+	$(CC) -o $(BINDIR)/main     \
+		$(SRCDIR)/buffer.c  \
+		$(SRCDIR)/lock.c    \
+		$(SRCDIR)/error.c   \
+		$(SRCDIR)/list.c    \
+		$(SRCDIR)/tests.c   \
 		$(SRCDIR)/main.c
 
 clean:

@@ -41,13 +41,13 @@ extern const int E_GENERIC;
 /* list__initialize
  * Creates the actual list that we're being given a pointer to.  We will also create the head of it as a reference point.
  */
-void list__initialize(List *list) {
+List* list__initialize() {
   /* Quick error checking, then initialize the list. */
-  if (list != NULL)
-    show_err("List must be NULL, otherwise this is going to fail.", E_GENERIC);
-  list = (List *)malloc(sizeof(List));
+  List *list = (List *)malloc(sizeof(List));
   if (list == NULL)
     show_err("Failed to malloc the list.", E_GENERIC);
+  list->count = 0;
+  pthread_mutex_init(&list->lock, NULL);
 
   /* Create the head buffer and set it.  No locking required as this isn't a parallelized action. */
   Buffer *head = (Buffer *)malloc(sizeof(Buffer));
@@ -56,6 +56,7 @@ void list__initialize(List *list) {
   head->next = head;
   head->previous = head;
   list->head = head;
+  return list;
 }
 
 /* list__add

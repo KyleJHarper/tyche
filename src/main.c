@@ -21,24 +21,13 @@
 #include "error.h"
 #include "list.h"
 #include "lock.h"
-
-/* Build a couple lists */
-List *raw_list;
-List *comp_list;
+#include "tests.h"
 
 int main(int argc, char *argv[]) {
   /* Initialize locker and lists here. */
   lock__initialize();
-  list__initialize(raw_list);
-  list__initialize(comp_list);
-  Buffer *elem1 = list__add(raw_list);
-  Buffer *elem2 = list__add(raw_list);
-  Buffer *elem3 = list__add(raw_list);
-  Buffer *rawr = list__add(comp_list);
-  Buffer *rawr2 = list__add(comp_list);
 
-  printf("Number of elements: %d\n", list__count(raw_list));
-  printf("Number of elements: %d\n", list__count(comp_list));
-  printf("Self: %p   Prev: %p   Next: %p\n", comp_list, comp_list->previous, comp_list->next);
-  return 0;
+  tests__elem();
+return 0;
 }
+
