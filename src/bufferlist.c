@@ -21,6 +21,8 @@
  */
 
 /* Include necessary headers here. */
+#include "bufferlist.h"
+
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -28,7 +30,6 @@
 #include <pthread.h>
 #include <string.h>
 #include "buffer.h"
-#include "buffer_lists.h"
 #include "lock.h"
 #include "error.h"
 
