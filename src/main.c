@@ -28,6 +28,6 @@ int main(int argc, char *argv[]) {
   lock__initialize();
 
   tests__elem();
-return 0;
+  return 0;
 }
 
