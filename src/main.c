@@ -17,20 +17,20 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
-
 #include "error_codes.h"
 #include "error.h"
 #include "list.h"
 #include "lock.h"
 
-/* Globals and externs because I'm bad */
-extern Buffer *raw_list;
-extern Buffer *comp_list;
+/* Build a couple lists */
+List *raw_list;
+List *comp_list;
 
 int main(int argc, char *argv[]) {
   /* Initialize locker and lists here. */
   lock__initialize();
-  list__initialize();
+  list__initialize(raw_list);
+  list__initialize(comp_list);
   Buffer *elem1 = list__add(raw_list);
   Buffer *elem2 = list__add(raw_list);
   Buffer *elem3 = list__add(raw_list);

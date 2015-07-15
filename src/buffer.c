@@ -28,7 +28,7 @@ extern const int E_BUFFER_POOFED;
  * waiting for a lock on a buffer while another thread is removing that buffer entirely.  So we add a little more logic for that.
  */
 int buffer__lock(Buffer *buf) {
-  uint16_t lock_id;
+  lockid_t lock_id;
   if (buf)
     lock_id = buf->lock_id;
   /* When lock_id is 0, buf is NULL or unusable.  When buf goes NULL or is victimized, we're still unusable. */

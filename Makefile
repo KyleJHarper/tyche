@@ -19,7 +19,7 @@ build:
 		$(SRCDIR)/buffer.c       \
 		$(SRCDIR)/lock.c         \
 		$(SRCDIR)/error.c        \
-		$(SRCDIR)/buffer_lists.c \
+		$(SRCDIR)/list.c \
 		$(SRCDIR)/main.c
 
 clean:

@@ -21,7 +21,7 @@
 
 /* Defines and global values */
 #define MAX_LOCK_VALUE UINT16_MAX
-uint16_t next_id;
+lockid_t next_id;
 pthread_mutex_t next_id_mutex = PTHREAD_MUTEX_INITIALIZER;
 Lock locker_pool[MAX_LOCK_VALUE];
 
@@ -36,7 +36,7 @@ extern const int E_GENERIC;
  * this is just a pthread_mutex_t array but if we add attributes it'll be much easier to update this way.
  */
 void lock__initialize() {
-  for (uint16_t i=0; i<MAX_LOCK_VALUE; i++) {
+  for (lockid_t i=0; i<MAX_LOCK_VALUE; i++) {
     if (pthread_mutex_init(&locker_pool[i].mutex, NULL) != 0)
       show_err("Failed to initialize mutex.  This is fatal.", E_GENERIC);
     if (pthread_cond_init(&locker_pool[i].cond, NULL) != 0)
@@ -47,14 +47,14 @@ void lock__initialize() {
 /* lock__acquire
  * Set the mutex indicated by the lock_id.  Buffer poofing is handled by callers.
  */
-void lock__acquire(uint16_t lock_id) {
+void lock__acquire(lockid_t lock_id) {
   pthread_mutex_lock(&locker_pool[lock_id].mutex);
 }
 
 /* lock__release
  * Release the mutex indicated by the lock_id
  */
-void lock__release(uint16_t lock_id) {
+void lock__release(lockid_t lock_id) {
   pthread_mutex_unlock(&locker_pool[lock_id].mutex);
 }
 
@@ -62,7 +62,7 @@ void lock__release(uint16_t lock_id) {
  * This will assign the next available lock_id to the caller (via the pointer sent).  Checks for max value and circles back to zero
  * and always ensures that the lock_id 0 is not assigned.  Lock ID 0 isn't special yet but might be.
  */
-void lock__assign_next_id(uint16_t *referring_id_ptr) {
+void lock__assign_next_id(lockid_t *referring_id_ptr) {
   pthread_mutex_lock(&next_id_mutex);
   if (next_id == MAX_LOCK_VALUE)
     next_id = 0;

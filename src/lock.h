@@ -16,17 +16,20 @@
 #include <stdint.h>
 #include <pthread.h>
 
-/* Prototypes */
-void lock__initialize();
-void lock__acquire(uint16_t lock_id);
-void lock__release(uint16_t lock_id);
-void lock__assign_next_id(uint16_t *referring_id_ptr);
 
-
+typedef uint16_t lockid_t;
 typedef struct lock Lock;
 struct lock {
   pthread_mutex_t mutex;  /* The actual mutex used for locking. */
   pthread_cond_t cond;    /* The cond to use when we need signaling. */
 };
+
+
+/* Prototypes */
+void lock__initialize();
+void lock__acquire(lockid_t lock_id);
+void lock__release(lockid_t lock_id);
+void lock__assign_next_id(lockid_t *referring_id_ptr);
+
 
 #endif /* SRC_LOCK_H_ */
