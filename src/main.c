@@ -18,9 +18,9 @@
 #include <string.h>
 #include <stdint.h>
 
-#include "bufferlist.h"
 #include "error_codes.h"
 #include "error.h"
+#include "list.h"
 #include "lock.h"
 
 /* Globals and externs because I'm bad */

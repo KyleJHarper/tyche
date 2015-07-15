@@ -1,5 +1,5 @@
 /*
- * buffer_lists.c
+ * list.c
  *
  *  Created on: Jun 19, 2015
  *      Author: Kyle Harper
@@ -21,8 +21,6 @@
  */
 
 /* Include necessary headers here. */
-#include "bufferlist.h"
-
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -32,6 +30,7 @@
 #include "buffer.h"
 #include "lock.h"
 #include "error.h"
+#include "list.h"
 
 
 /* Globals for ease. */
