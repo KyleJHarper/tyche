@@ -21,5 +21,13 @@ void tests__elem() {
   printf("Number of elements: %d\n", list__count(raw_list));
   printf("Number of elements: %d\n", list__count(comp_list));
   printf("Self: %p   Prev: %p   Next: %p\n", comp_list->head, comp_list->head->previous, comp_list->head->next);
+
+  buffer__victimize(elem1);
+  buffer__victimize(elem3);
+  buffer__victimize(rawr);
+
+  printf("Number of elements: %d\n", list__count(raw_list));
+  printf("Number of elements: %d\n", list__count(comp_list));
+  printf("Self: %p   Prev: %p   Next: %p\n", comp_list->head, comp_list->head->previous, comp_list->head->next);
 }
 

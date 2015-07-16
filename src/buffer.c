@@ -69,7 +69,7 @@ int buffer__update_ref(Buffer *buf, int delta) {
 /*buffer__victimize
  * Marks the victimized attribute of the buffer and sets up a condition to wait for the ref_count to reach 0.  This allows this
  * function to fully block the caller until the buffer is ready to be removed.  The list__remove() function is how you get rid of
- * a buffer from the list since we need to manage the pointers.
+ * a buffer from the list since we need to manage the pointers.  In fact, only list__remove() should ever call this.
  */
 int buffer__victimize(Buffer *buf) {
   int rv = buffer__lock(buf);
