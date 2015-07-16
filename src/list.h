@@ -24,7 +24,7 @@ struct list {
 /* Function prototypes.  Not required, but whatever. */
 List* list__initialize();
 Buffer* list__add(List *list);
-void list__remove(Buffer **buf, List *list);
+void list__remove(List *list, Buffer **buf);
 uint32_t list__count(List *list);
 
 

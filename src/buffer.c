@@ -28,7 +28,7 @@ extern const int E_BUFFER_POOFED;
  * waiting for a lock on a buffer while another thread is removing that buffer entirely.  So we add a little more logic for that.
  */
 int buffer__lock(Buffer *buf) {
-  lockid_t lock_id;
+  lockid_t lock_id = 0;
   if (buf)
     lock_id = buf->lock_id;
   /* When lock_id is 0, buf is NULL or unusable.  When buf goes NULL or is victimized, we're still unusable. */
@@ -50,13 +50,15 @@ void buffer__unlock(Buffer *buf) {
 
 /* buffer__update_ref
  * Makes atomic changes to the buffers ref_count.  This should only ever be 1 or -1.  If we're victimized we need to return a
- * warning-level error code (E_TRY_AGAIN) to indicate the caller should retry whatever it was intending knowing this buffer is
+ * warning-level error code (E_BUFFER_POOFED) to indicate the caller should retry whatever it was intending knowing this buffer is
  * invalidated.
  */
 int buffer__update_ref(Buffer *buf, int delta) {
+  /* Lock the buffer.  If it poofed (because victimization is set) we'll catch that rv and push it farther up the stack. */
   int rv = buffer__lock(buf);
   if (rv > 0)
     return rv;
+  /* We can now safely update the count because we own the lock and we didn't poof from the lock request. */
   buf->ref_count += delta;
 
   /* When decrementing we need to broadcast to our cond that we're ready. */
@@ -66,7 +68,7 @@ int buffer__update_ref(Buffer *buf, int delta) {
   return E_OK;
 }
 
-/*buffer__victimize
+/* buffer__victimize
  * Marks the victimized attribute of the buffer and sets up a condition to wait for the ref_count to reach 0.  This allows this
  * function to fully block the caller until the buffer is ready to be removed.  The list__remove() function is how you get rid of
  * a buffer from the list since we need to manage the pointers.  In fact, only list__remove() should ever call this.
@@ -75,7 +77,7 @@ int buffer__victimize(Buffer *buf) {
   int rv = buffer__lock(buf);
   if (rv > 0)
     return rv;
-  buf->victimized = 1;  /* This can only ever be set, so there's no check; or race condition since we own the lock. */
+  buf->victimized = 1;  /* This can only ever be set, so there's no check; or race condition since we own the lock anyway. */
   while(buf->ref_count > 0)
     pthread_cond_wait(&locker_pool[buf->lock_id].cond, &locker_pool[buf->lock_id].mutex);
   buffer__unlock(buf);

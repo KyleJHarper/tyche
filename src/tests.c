@@ -18,16 +18,18 @@ void tests__elem() {
   Buffer *rawr = list__add(comp_list);
   Buffer *rawr2 = list__add(comp_list);
 
-  printf("Number of elements: %d\n", list__count(raw_list));
-  printf("Number of elements: %d\n", list__count(comp_list));
-  printf("Self: %p   Prev: %p   Next: %p\n", comp_list->head, comp_list->head->previous, comp_list->head->next);
+  printf("Number of raw  elements: %d and %d\n", list__count(raw_list), raw_list->count);
+  printf("Number of comp elements: %d and %d\n", list__count(comp_list), comp_list->count);
+  printf("Raw  Self: %p   Prev: %p   Next: %p\n", raw_list->head, raw_list->head->previous, raw_list->head->next);
+  printf("Comp Self: %p   Prev: %p   Next: %p\n", comp_list->head, comp_list->head->previous, comp_list->head->next);
 
-  buffer__victimize(elem1);
-  buffer__victimize(elem3);
-  buffer__victimize(rawr);
+  list__remove(raw_list, &elem1);
+  list__remove(raw_list, &elem3);
+  list__remove(comp_list, &rawr);
 
-  printf("Number of elements: %d\n", list__count(raw_list));
-  printf("Number of elements: %d\n", list__count(comp_list));
-  printf("Self: %p   Prev: %p   Next: %p\n", comp_list->head, comp_list->head->previous, comp_list->head->next);
+  printf("Number of raw  elements: %d and %d\n", list__count(raw_list), raw_list->count);
+  printf("Number of comp elements: %d and %d\n", list__count(comp_list), comp_list->count);
+  printf("Raw  Self: %p   Prev: %p   Next: %p\n", raw_list->head, raw_list->head->previous, raw_list->head->next);
+  printf("Comp Self: %p   Prev: %p   Next: %p\n", comp_list->head, comp_list->head->previous, comp_list->head->next);
 }
 

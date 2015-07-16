@@ -35,6 +35,7 @@
 
 /* Extern the error codes we'll use. */
 extern const int E_GENERIC;
+extern const int E_BUFFER_POOFED;
 
 
 /* Functions */
@@ -46,7 +47,7 @@ List* list__initialize() {
   List *list = (List *)malloc(sizeof(List));
   if (list == NULL)
     show_err("Failed to malloc the list.", E_GENERIC);
-  list->count = 0;
+  list->count = 1;
   pthread_mutex_init(&list->lock, NULL);
 
   /* Create the head buffer and set it.  No locking required as this isn't a parallelized action. */
@@ -79,19 +80,29 @@ Buffer* list__add(List *list) {
 }
 
 /* list__remove
- * Removes the node from the list it is associated with.
- * Caller must mark the buffer as victimized!  Caller must ensure ref_count is 0!  buffer__victimize() handles this.
+ * Removes the node from the list it is associated with.  We will ensure victimization happens.
+ * This process merely removes it from a list specified; we don't handle the HCRS logic here.
  */
-void list__remove(Buffer **buf, List *list) {
-  /* Lock the list so we can move pointers and set the buffer to NULL.  Caller must free() the Buffer* pointer it sent. */
+void list__remove(List *list, Buffer **buf) {
+  /* Victimize the buffer so we can ensure it's flushed of references. */
+  int rv = buffer__victimize(*buf);
+  /* If the buffer poofed we can't work with it let alone remove it.  This should never happen but we'll protect against it. */
+  if (rv == E_BUFFER_POOFED)
+    return;
+  if (rv != 0)
+    show_err("The list__remove function received an error when trying to victimize the buffer.\n", rv);
+
+  /* Lock the list so we can move pointers and set the buffer to NULL and free it. */
   pthread_mutex_lock(&list->lock);
   (*buf)->previous->next = (*buf)->next;
   (*buf)->next->previous = (*buf)->previous;
-  if (buffer__lock(*buf) == 0) {
-    lockid_t lock_id = (*buf)->lock_id;
-    *buf = NULL;
-    lock__release(lock_id);
-  }
+
+  /* Lock the buffer just to be safe.  This will return E_BUFFER_POOFED because victimized == 1 but that's ok. */
+  buffer__lock(*buf);
+  lockid_t lock_id = (*buf)->lock_id;
+  free(*buf);
+  *buf = NULL;
+  lock__release(lock_id);
   list->count--;
   pthread_mutex_unlock(&list->lock);
 }
