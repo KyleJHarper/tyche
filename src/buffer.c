@@ -49,22 +49,14 @@ void buffer__unlock(Buffer *buf) {
 }
 
 /* buffer__update_ref
- * Makes atomic changes to the buffers ref_count.  This should only ever be 1 or -1.  If we're victimized we need to return a
- * warning-level error code (E_BUFFER_POOFED) to indicate the caller should retry whatever it was intending knowing this buffer is
- * invalidated.
+ * Updates a buffer's ref_count.  This should only ever be 1 or -1.  Caller must lock the buffer to avoid race conditions.
  */
 int buffer__update_ref(Buffer *buf, int delta) {
-  /* Lock the buffer.  If it poofed (because victimization is set) we'll catch that rv and push it farther up the stack. */
-  int rv = buffer__lock(buf);
-  if (rv > 0)
-    return rv;
-  /* We can now safely update the count because we own the lock and we didn't poof from the lock request. */
   buf->ref_count += delta;
 
   /* When decrementing we need to broadcast to our cond that we're ready. */
   if (buf->victimized != 0 && buf->ref_count == 0)
     pthread_cond_broadcast(&locker_pool[buf->lock_id].cond);
-  buffer__unlock(buf);
   return E_OK;
 }
 
@@ -80,6 +72,7 @@ int buffer__victimize(Buffer *buf) {
   buf->victimized = 1;  /* This can only ever be set, so there's no check; or race condition since we own the lock anyway. */
   while(buf->ref_count > 0)
     pthread_cond_wait(&locker_pool[buf->lock_id].cond, &locker_pool[buf->lock_id].mutex);
+  printf("We here?\n");
   buffer__unlock(buf);
   return E_OK;
 }

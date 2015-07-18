@@ -34,7 +34,9 @@
 
 
 /* Extern the error codes we'll use. */
+extern const int E_OK;
 extern const int E_GENERIC;
+extern const int E_BUFFER_NOT_FOUND;
 extern const int E_BUFFER_POOFED;
 
 
@@ -122,4 +124,35 @@ uint32_t list__count(List *list) {
   pthread_mutex_unlock(&list->lock);
   /* Add one for head to give accurate count of the whole list. */
   return ++count;
+}
+
+/* list__acquire
+ * Searches for a buffer in the list specified so it can be sent back as a double pointer.  We need to lock the list so we can
+ * search for it.  The opposite of this function is to simply lower the ref_count; caller(s) need to do that themselves.
+ */
+int list__acquire(List *list, Buffer **buf, uint32_t id) {
+  int rv = 0;
+  if (list == NULL)
+    show_err("List specified is null.  This shouldn't ever happen.", E_GENERIC);
+  pthread_mutex_lock(&list->lock);
+  Buffer *temp = list->head->next;
+  while (temp != list->head) {
+    if (temp->id == id) {
+      // Found it.  Assign the double pointer and bail.
+      rv = buffer__lock(temp);
+      if (rv > 0) {
+        pthread_mutex_unlock(&list->lock);
+        return rv;
+      }
+      (*buf) = temp;
+      buffer__update_ref(temp, 1);
+      buffer__unlock(temp);
+      pthread_mutex_unlock(&list->lock);
+      return E_OK;
+    }
+    temp = temp->next;
+  }
+  // Didn't find it... boo...
+  pthread_mutex_unlock(&list->lock);
+  return E_BUFFER_NOT_FOUND;
 }

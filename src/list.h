@@ -26,6 +26,7 @@ List* list__initialize();
 Buffer* list__add(List *list);
 void list__remove(List *list, Buffer **buf);
 uint32_t list__count(List *list);
+int list__acquire(List *list, Buffer **buf, uint32_t id);
 
 
 #endif /* SRC_LIST_H_ */

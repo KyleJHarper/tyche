@@ -27,7 +27,8 @@ int main(int argc, char *argv[]) {
   /* Initialize locker and lists here. */
   lock__initialize();
 
-  tests__elem();
+  //tests__elem();
+  tests__synchronized_read();
   return 0;
 }
 
