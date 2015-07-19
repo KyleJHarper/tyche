@@ -14,14 +14,20 @@
 #include "buffer.h"
 #include "tests.h"
 
+extern const int E_OK;
+extern const int E_BUFFER_POOFED;
+extern const int E_BUFFER_NOT_FOUND;
+extern const int E_BUFFER_IS_VICTIMIZED;
 
+// A global for testing cuz I'm bad
+const int LIST_COUNT = 500;
 
 void tests__synchronized_read() {
   List *raw_list = list__initialize();
   Buffer *temp, *head;
   head = raw_list->head;
-  // Create 50 buffers with random data in them.
-  for (int i=0; i<50; i++)
+  // Create LIST_COUNT buffers with random data in them.
+  for (int i=0; i<LIST_COUNT; i++)
     temp = list__add(raw_list);
   temp = head;
   for (int i=1; i<raw_list->count; i++) {
@@ -30,14 +36,8 @@ void tests__synchronized_read() {
     temp->id = i;
   }
 
-  head = raw_list->head;
-  temp = head;
-  for (int i=1; i<raw_list->count; i++) {
-    temp = temp->next;
-    //printf("Buffer number %02d has id %02d and value: %s\n", i, temp->id, temp->data);
-  }
   // Start worker threads which will try to read data at the same time.
-  int worker_count = 1;
+  int worker_count = 200;
   pthread_t workers[worker_count];
   for (int i=0; i<worker_count; i++)
     pthread_create(&workers[i], NULL, (void *) &tests__read, raw_list);
@@ -56,37 +56,30 @@ void tests__synchronized_read() {
     temp = temp->next;
     if (temp->ref_count != 0)
       printf("Buffer number %02d has non-zero ref_count: %02d\n	", temp->id, temp->ref_count);
+    printf("Buffer id %03d has ref_count of %d\n", temp->id, temp->ref_count);
   }
 }
 void tests__read(List *raw_list) {
   // Pick random buffers in the list and pin them for reading.  The only way to pick randomly from a list that shrinks is to search
   // over the list itself, which is kinda magoo but it suits the purpose.
   srand(time(0));
-  char *string = "nope";
   int rv = 0;
-  int skip = 0;
   int id_to_get = 0;
   Buffer *selected;
   for (int i=0; i<1000; i++) {
     for(;;) {
-      skip = rand() % (raw_list->count - 1) + 1;
-      selected = raw_list->head;
-      for(int j=0; j<skip; j++)
-        selected = selected->next;
-      id_to_get = selected->id;
-      //printf("id_to_get: %02d, skip value was %02d, count is: %02d\n", id_to_get, skip, raw_list->count);
+      id_to_get = rand() % LIST_COUNT + 1;
+      //printf("Read buf id %02d\n", id_to_get);
       rv = list__acquire(raw_list, &selected, id_to_get);
       if (rv == 0)
         break;
-      if (rv != 0)
-        printf("Couldn't find buffer we wanted: %02d.  This is bad in a read-only test.  Rv is %d, looping for a new id.\n", id_to_get, rv);
+      if (rv == E_BUFFER_NOT_FOUND || rv == E_BUFFER_POOFED || rv == E_BUFFER_IS_VICTIMIZED)
+        continue;
+      printf("We should never hit this.\n");
     }
-    string = "nope";
-    string = selected->data;
     usleep(rand() % 1234);  // This helps skew interlocking (letting ref_count go above 1)
-    //if (strcmp(string, "some text, hooray for me") == 0)
-    //	  printf("Found buffer id %02d.  Ref count is %02d.\n", selected->id, selected->ref_count);
-    if (buffer__lock(selected) == 0) {
+    rv = buffer__lock(selected);
+    if (rv == E_OK || rv == E_BUFFER_IS_VICTIMIZED) {
       buffer__update_ref(selected, -1);
       buffer__unlock(selected);
     }
@@ -98,17 +91,32 @@ void tests__chaos(List *raw_list) {
   // Remove a buffer from the list every so often until we're down to 5.  There are 45 to remove and we want it to take about half
   // a second so we'll micro-sleep for about 11,000 seconds each time.
   Buffer *temp;
-  int skip = 0;
+  int rv, id_to_remove = 0;
   while(raw_list->count > 5) {
-    skip = rand() % (raw_list->count - 1) + 1;
-    temp = raw_list->head;
-    for(int i=0; i<skip; i++)
-      temp = temp->next;
-    printf("Going to remove buffer id: %02d\n", temp->id);
-    list__remove(raw_list, &temp);
+    printf("Want to remove: ");
+    for(;;) {
+      id_to_remove = rand() % LIST_COUNT + 1;
+      printf(" %2d", id_to_remove);
+      rv = list__acquire(raw_list, &temp, id_to_remove);
+      if (rv == 0)
+        break;
+      if (rv == E_BUFFER_NOT_FOUND || rv == E_BUFFER_POOFED)
+        continue;
+      printf("We should never hit this either.\n");
+    }
+    printf("\n");
+    rv = buffer__lock(temp);
+    if (rv == E_OK || rv == E_BUFFER_IS_VICTIMIZED){
+      buffer__update_ref(temp, -1);
+      buffer__unlock(temp);
+    } else {
+      printf("Grr %d\n", rv);
+    }
+    printf("Going to remove buffer id: %2d (count is: %d, list size is: %d)\n", temp->id, temp->ref_count, raw_list->count);
+    list__remove(raw_list, &temp);  // There's only one thread removing buffers so no checking required.
     usleep(11000);
   }
-  printf("Removed all buffers.  Count is now %02d", raw_list->count);
+  printf("Removed all buffers.  Count is now %d\n", raw_list->count);
   pthread_exit(0);
 }
 

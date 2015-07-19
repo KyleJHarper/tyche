@@ -1,6 +1,6 @@
 # Hooray, a make file.
 
-CC     = gcc -std=gnu99 -pthread
+CC     = gcc -std=gnu99 -pthread -g
 CFLAGS += -Wall
 
 SRCDIR = src

@@ -140,7 +140,8 @@ int list__acquire(List *list, Buffer **buf, uint32_t id) {
     if (temp->id == id) {
       // Found it.  Assign the double pointer and bail.
       rv = buffer__lock(temp);
-      if (rv > 0) {
+      if (rv == E_BUFFER_POOFED || rv == E_BUFFER_NOT_FOUND) {
+        // We need to leave because we didn't actually get the buffer, so don't adjust the count below.
         pthread_mutex_unlock(&list->lock);
         return rv;
       }

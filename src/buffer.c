@@ -19,7 +19,7 @@ extern Lock locker_pool[];
 /* Extern the error codes we'll use. */
 extern const int E_OK;
 extern const int E_BUFFER_POOFED;
-
+extern const int E_BUFFER_IS_VICTIMIZED;
 
 
 /* Functions */
@@ -35,8 +35,10 @@ int buffer__lock(Buffer *buf) {
   if (lock_id == 0)
     return E_BUFFER_POOFED;
   lock__acquire(lock_id);
-  if (!buf || buf->victimized != 0)
+  if (!buf)
     return E_BUFFER_POOFED;
+  if (buf->victimized != 0)
+    return E_BUFFER_IS_VICTIMIZED;
   return E_OK;
 }
 
@@ -53,10 +55,12 @@ void buffer__unlock(Buffer *buf) {
  */
 int buffer__update_ref(Buffer *buf, int delta) {
   buf->ref_count += delta;
-
+  //printf("Updating buf id %d, count is %d\n", buf->id, buf->ref_count);
   /* When decrementing we need to broadcast to our cond that we're ready. */
-  if (buf->victimized != 0 && buf->ref_count == 0)
+  if (buf->victimized != 0 && buf->ref_count == 0) {
+    printf("Sending notice for buf id %d\n", buf->id);
     pthread_cond_broadcast(&locker_pool[buf->lock_id].cond);
+  }
   return E_OK;
 }
 
@@ -72,7 +76,7 @@ int buffer__victimize(Buffer *buf) {
   buf->victimized = 1;  /* This can only ever be set, so there's no check; or race condition since we own the lock anyway. */
   while(buf->ref_count > 0)
     pthread_cond_wait(&locker_pool[buf->lock_id].cond, &locker_pool[buf->lock_id].mutex);
-  printf("We here?\n");
+  //printf("victimized buf id %02d\n", buf->id);
   buffer__unlock(buf);
   return E_OK;
 }
