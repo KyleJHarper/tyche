@@ -18,10 +18,12 @@
 #define MAX_POPULARITY UINT8_MAX
 
 /* Build the typedef and structure for a Buffer */
+typedef struct list List;  //Need to tell buffer.h what a "list" is.  This is probably wrong...
+typedef uint32_t bufferid_t;
 typedef struct buffer Buffer;
 struct buffer {
   /* Attributes for typical buffer organization and management. */
-  uint32_t id;           /* Identifier of the page. Should come from the system providing the data itself (e.g.: inode). */
+  bufferid_t id;         /* Identifier of the page. Should come from the system providing the data itself (e.g.: inode). */
   uint16_t ref_count;    /* Number of references currently holding this buffer. */
   uint8_t popularity;    /* Rapidly decaying counter used for victim selection with clock sweep.  Ceiling of MAX_POPULARITY. */
   uint8_t victimized;    /* If the buffer has been victimized this is set non-zero.  Prevents incrementing of ref_count. */
@@ -43,10 +45,11 @@ struct buffer {
 
 
 /* Prototypes */
-int buffer__lock(Buffer *buf);
+Buffer* buffer__initialize();
+int buffer__lock(List *list, Buffer *buf);
 void buffer__unlock(Buffer *buf);
 int buffer__update_ref(Buffer *buf, int delta);
-int buffer__victimize(Buffer *buf);
+int buffer__victimize(List *list, Buffer *buf);
 
 
 #endif /* SRC_BUFFER_H_ */

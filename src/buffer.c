@@ -9,8 +9,10 @@
 #include <stdio.h>
 #include <pthread.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include "lock.h"
 #include "error.h"
+#include "list.h"
 #include "buffer.h"
 
 /* Give extern access to locker_pool[] to us, even though I'm sure this is a no no and someone will yell at me. */
@@ -18,25 +20,40 @@ extern Lock locker_pool[];
 
 /* Extern the error codes we'll use. */
 extern const int E_OK;
+extern const int E_GENERIC;
 extern const int E_BUFFER_POOFED;
 extern const int E_BUFFER_IS_VICTIMIZED;
 
 
 /* Functions */
+/* buffer__initialize
+ * Creates a new buffer, simply put.
+ */
+Buffer* buffer__initialize(bufferid_t id) {
+  Buffer *new_node = (Buffer *)malloc(sizeof(Buffer));
+  if (new_node == NULL)
+      show_err("Error malloc-ing new buffer from list__add.", E_GENERIC);
+  lock__assign_next_id(&new_node->lock_id);
+  new_node->ref_count = 0;
+  new_node->id = id;
+  return new_node;
+}
+
 /* buffer__lock
  * Setting a lock just locks the mutex from the locker_pool[].  Since we support concurrency, it's possible to have a thread
  * waiting for a lock on a buffer while another thread is removing that buffer entirely.  So we add a little more logic for that.
  */
-int buffer__lock(Buffer *buf) {
-  lockid_t lock_id = 0;
-  if (buf)
-    lock_id = buf->lock_id;
-  /* When lock_id is 0, buf is NULL or unusable.  When buf goes NULL or is victimized, we're still unusable. */
-  if (lock_id == 0)
+int buffer__lock(List *list, Buffer *buf) {
+  /* We have to lock the entire list while acquiring a lock on this buffer to ensure no one removes it while we're waiting. */
+  pthread_mutex_lock(&list->lock);
+  /* Now that we're sure the buffer can't poof (race cond) we check once more to ensure it didn't poof while we waited. */
+  if (buf == NULL) {
+    pthread_mutex_unlock(&list->lock);
     return E_BUFFER_POOFED;
-  lock__acquire(lock_id);
-  if (!buf)
-    return E_BUFFER_POOFED;
+  }
+  pthread_mutex_lock(&locker_pool[buf->lock_id].mutex);
+  pthread_mutex_unlock(&list->lock);
+  /* If a buffer is victimized we can still lock it, but the caller needs to know. This is safe because buffer__victimize locks. */
   if (buf->victimized != 0)
     return E_BUFFER_IS_VICTIMIZED;
   return E_OK;
@@ -47,16 +64,17 @@ int buffer__lock(Buffer *buf) {
  * of a block who already owns the lock, we don't need any special checking.
  */
 void buffer__unlock(Buffer *buf) {
-  lock__release(buf->lock_id);
+  pthread_mutex_unlock(&locker_pool[buf->lock_id].mutex);
 }
 
 /* buffer__update_ref
- * Updates a buffer's ref_count.  This should only ever be 1 or -1.  Caller must lock the buffer to avoid race conditions.
+ * Updates a buffer's ref_count.  This should only ever be 1 or -1.  Caller MUST lock the buffer to avoid race conditions.
  */
 int buffer__update_ref(Buffer *buf, int delta) {
   buf->ref_count += delta;
-  //printf("Updating buf id %d, count is %d\n", buf->id, buf->ref_count);
   /* When decrementing we need to broadcast to our cond that we're ready. */
+  if (buf->ref_count > 1000)
+    printf("Buf %d ref_count over 1000: %d\n", buf->id,  buf->ref_count);
   if (buf->victimized != 0 && buf->ref_count == 0) {
     printf("Sending notice for buf id %d\n", buf->id);
     pthread_cond_broadcast(&locker_pool[buf->lock_id].cond);
@@ -68,15 +86,16 @@ int buffer__update_ref(Buffer *buf, int delta) {
  * Marks the victimized attribute of the buffer and sets up a condition to wait for the ref_count to reach 0.  This allows this
  * function to fully block the caller until the buffer is ready to be removed.  The list__remove() function is how you get rid of
  * a buffer from the list since we need to manage the pointers.  In fact, only list__remove() should ever call this.
+ * The buffer MUST remain locked upon exit otherwise another thread could try reading the buffer while we go back up the stack.
  */
-int buffer__victimize(Buffer *buf) {
-  int rv = buffer__lock(buf);
-  if (rv > 0)
+int buffer__victimize(List *list, Buffer *buf) {
+  /* Try to lock the buffer.  If it returns already victimized then we don't need to do anything.  Any other non-zero, error. */
+  int rv = buffer__lock(list, buf);
+  if (rv > 0 && rv != E_BUFFER_IS_VICTIMIZED)
     return rv;
-  buf->victimized = 1;  /* This can only ever be set, so there's no check; or race condition since we own the lock anyway. */
-  while(buf->ref_count > 0)
+  buf->victimized = 1;
+  printf("marked victim, ref count is %d, rv from lock is %d\n", buf->ref_count, rv);
+  while(buf->ref_count != 0)
     pthread_cond_wait(&locker_pool[buf->lock_id].cond, &locker_pool[buf->lock_id].mutex);
-  //printf("victimized buf id %02d\n", buf->id);
-  buffer__unlock(buf);
   return E_OK;
 }

@@ -12,6 +12,7 @@
 #include <stdint.h>
 #include <pthread.h>
 #include "buffer.h"
+#include "list.h"
 
 /* Build the typedef and structure for a List */
 typedef struct list List;
@@ -23,10 +24,9 @@ struct list {
 
 /* Function prototypes.  Not required, but whatever. */
 List* list__initialize();
-Buffer* list__add(List *list);
+void list__add(List *list, Buffer *buf);
 void list__remove(List *list, Buffer **buf);
-uint32_t list__count(List *list);
-int list__acquire(List *list, Buffer **buf, uint32_t id);
+int list__search(List *list, Buffer **buf, bufferid_t id);
 
 
 #endif /* SRC_LIST_H_ */

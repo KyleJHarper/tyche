@@ -44,20 +44,6 @@ void lock__initialize() {
   }
 }
 
-/* lock__acquire
- * Set the mutex indicated by the lock_id.  Buffer poofing is handled by callers.
- */
-void lock__acquire(lockid_t lock_id) {
-  pthread_mutex_lock(&locker_pool[lock_id].mutex);
-}
-
-/* lock__release
- * Release the mutex indicated by the lock_id
- */
-void lock__release(lockid_t lock_id) {
-  pthread_mutex_unlock(&locker_pool[lock_id].mutex);
-}
-
 /* lock__assign_next_id
  * This will assign the next available lock_id to the caller (via the pointer sent).  Checks for max value and circles back to zero
  * and always ensures that the lock_id 0 is not assigned.  Lock ID 0 isn't special yet but might be.
@@ -69,5 +55,19 @@ void lock__assign_next_id(lockid_t *referring_id_ptr) {
   next_id++;
   *referring_id_ptr = next_id;
   pthread_mutex_unlock(&next_id_mutex);
+}
+
+/* lock__acquire
+ * Locks the lock_id specified.  This should probably never be needed, but we'll add it.
+ */
+void lock__acquire(lockid_t lock_id) {
+  pthread_mutex_lock(&locker_pool[lock_id].mutex);
+}
+
+/* lock__release
+ * Releases a lock from the locker_pool.  Used when a buffer is removed and its data (including lock_id) are wiped.
+ */
+void lock__release(lockid_t lock_id) {
+  pthread_mutex_unlock(&locker_pool[lock_id].mutex);
 }
 

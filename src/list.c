@@ -38,6 +38,7 @@ extern const int E_OK;
 extern const int E_GENERIC;
 extern const int E_BUFFER_NOT_FOUND;
 extern const int E_BUFFER_POOFED;
+extern const int E_BUFFER_IS_VICTIMIZED;
 
 
 /* Functions */
@@ -58,27 +59,24 @@ List* list__initialize() {
     show_err("Error malloc-ing head buffer in list_add.", E_GENERIC);
   head->next = head;
   head->previous = head;
+  head->ref_count = 0;
+  head->id = 0;
   list->head = head;
   return list;
 }
 
 /* list__add
- * Adds a node to the list specified.
+ * Adds a node to the list specified.  Buffer must be created by caller.
  */
-Buffer* list__add(List *list) {
+void list__add(List *list, Buffer *buf) {
   /* Lock the list and make edits.  We could use a freelist if fragmentation becomes an issue. */
   pthread_mutex_lock(&list->lock);
-  Buffer *new_node = (Buffer *)malloc(sizeof(Buffer));
-  if (new_node == NULL)
-    show_err("Error malloc-ing new buffer from list__add.", E_GENERIC);
-  new_node->next = list->head->next;
-  new_node->previous = list->head;
-  list->head->next->previous = new_node;
-  list->head->next = new_node;
-  lock__assign_next_id(&new_node->lock_id);
+  buf->next = list->head->next;
+  buf->previous = list->head;
+  list->head->next->previous = buf;
+  list->head->next = buf;
   list->count++;
   pthread_mutex_unlock(&list->lock);
-  return new_node;
 }
 
 /* list__remove
@@ -86,8 +84,9 @@ Buffer* list__add(List *list) {
  * This process merely removes it from a list specified; we don't handle the HCRS logic here.
  */
 void list__remove(List *list, Buffer **buf) {
-  /* Victimize the buffer so we can ensure it's flushed of references. */
-  int rv = buffer__victimize(*buf);
+  /* Victimize the buffer so we can ensure it's flushed of references and we own it. */
+  int rv = buffer__victimize(list, *buf);
+  printf("victimize is done, rv is %d\n", rv);
   /* If the buffer poofed we can't work with it let alone remove it.  This should never happen but we'll protect against it. */
   if (rv == E_BUFFER_POOFED)
     return;
@@ -95,61 +94,45 @@ void list__remove(List *list, Buffer **buf) {
     show_err("The list__remove function received an error when trying to victimize the buffer.\n", rv);
 
   /* Lock the list so we can move pointers and set the buffer to NULL and free it. */
+  printf("want a lock\n");
   pthread_mutex_lock(&list->lock);
+  printf("got my lock\n");
   (*buf)->previous->next = (*buf)->next;
   (*buf)->next->previous = (*buf)->previous;
+  list->count--;
+  pthread_mutex_unlock(&list->lock);
 
-  /* Lock the buffer just to be safe.  This will return E_BUFFER_POOFED because victimized == 1 but that's ok. */
-  buffer__lock(*buf);
+  /* Store the lock id so we can unlock it below (because we're going NULL/free() the buffer). */
   lockid_t lock_id = (*buf)->lock_id;
   free(*buf);
   *buf = NULL;
   lock__release(lock_id);
-  list->count--;
-  pthread_mutex_unlock(&list->lock);
 }
 
-/* list__count
- * Counts the number of elements in the list that the buffer is associated with.  Requires locking the list.
- */
-uint32_t list__count(List *list) {
-  uint32_t count = 0;
-  Buffer *start = list->head;
-  Buffer *current = list->head;
-  pthread_mutex_lock(&list->lock);
-  while(current->next != start) {
-    count++;
-    current = current->next;
-  }
-  pthread_mutex_unlock(&list->lock);
-  /* Add one for head to give accurate count of the whole list. */
-  return ++count;
-}
 
-/* list__acquire
+/* list__search
  * Searches for a buffer in the list specified so it can be sent back as a double pointer.  We need to lock the list so we can
- * search for it.  The opposite of this function is to simply lower the ref_count; caller(s) need to do that themselves.
+ * search for it.  When successfully found, we increment ref_count.
  */
-int list__acquire(List *list, Buffer **buf, uint32_t id) {
+int list__search(List *list, Buffer **buf, bufferid_t id) {
   int rv = 0;
   if (list == NULL)
     show_err("List specified is null.  This shouldn't ever happen.", E_GENERIC);
+  /* Lock the list to ensure the buffers we're scanning don't poof while we perform checks. */
   pthread_mutex_lock(&list->lock);
   Buffer *temp = list->head->next;
   while (temp != list->head) {
     if (temp->id == id) {
-      // Found it.  Assign the double pointer and bail.
-      rv = buffer__lock(temp);
-      if (rv == E_BUFFER_POOFED || rv == E_BUFFER_NOT_FOUND) {
-        // We need to leave because we didn't actually get the buffer, so don't adjust the count below.
-        pthread_mutex_unlock(&list->lock);
-        return rv;
-      }
+      // Found it.  Release the list lock and lock the buffer so we can assign the double pointer and bail.
+      pthread_mutex_unlock(&list->lock);
+      rv = buffer__lock(list, temp);
+      if (rv == E_BUFFER_POOFED)
+        return E_BUFFER_NOT_FOUND;
+      // If we're here we got a buffer (possibly victimized but that's ok).  Assign pointer and update refs.  Then quit. */
       (*buf) = temp;
       buffer__update_ref(temp, 1);
-      buffer__unlock(temp);
-      pthread_mutex_unlock(&list->lock);
-      return E_OK;
+      buffer__unlock(temp);  // We can release the lock because it's pinned now.
+      return rv;  // If rv from buffer__lock() was E_BUFFER_IS_VICTIMIZED we need to let the caller know.
     }
     temp = temp->next;
   }
