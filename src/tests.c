@@ -43,12 +43,12 @@ void tests__synchronized_read() {
 
   // Start up a chaos monkey to remove some of the buffers.
   pthread_t chaos_worker;
-  //pthread_create(&chaos_worker, NULL, (void *) &tests__chaos, raw_list);
+  pthread_create(&chaos_worker, NULL, (void *) &tests__chaos, raw_list);
 
   // Wait for them to finish.
   for (int i=0; i<WORKER_COUNT; i++)
     pthread_join(workers[i], NULL);
-  //pthread_join(chaos_worker, NULL);
+  pthread_join(chaos_worker, NULL);
 
   temp = raw_list->head;
   for (int i=1; i<raw_list->count; i++) {
