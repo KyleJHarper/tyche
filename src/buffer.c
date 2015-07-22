@@ -73,8 +73,6 @@ void buffer__unlock(Buffer *buf) {
 int buffer__update_ref(Buffer *buf, int delta) {
   buf->ref_count += delta;
   /* When decrementing we need to broadcast to our cond that we're ready. */
-  if (buf->ref_count > 1000)
-    printf("Buf %d ref_count over 1000: %d\n", buf->id,  buf->ref_count);
   if (buf->victimized != 0 && buf->ref_count == 0) {
     printf("Sending notice for buf id %d\n", buf->id);
     pthread_cond_broadcast(&locker_pool[buf->lock_id].cond);

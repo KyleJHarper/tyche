@@ -41,6 +41,7 @@ extern const int E_BUFFER_POOFED;
 extern const int E_BUFFER_IS_VICTIMIZED;
 
 
+
 /* Functions */
 /* list__initialize
  * Creates the actual list that we're being given a pointer to.  We will also create the head of it as a reference point.
@@ -87,26 +88,32 @@ void list__remove(List *list, Buffer **buf) {
   /* Victimize the buffer so we can ensure it's flushed of references and we own it. */
   int rv = buffer__victimize(list, *buf);
   printf("victimize is done, rv is %d\n", rv);
-  /* If the buffer poofed we can't work with it let alone remove it.  This should never happen but we'll protect against it. */
+  /* If the buffer poofed we can't work with it let alone remove it (someone else did).  It's unlocked at this point too. */
   if (rv == E_BUFFER_POOFED)
     return;
   if (rv != 0)
     show_err("The list__remove function received an error when trying to victimize the buffer.\n", rv);
 
-  /* Lock the list so we can move pointers and set the buffer to NULL and free it. */
-  printf("want a lock\n");
-  pthread_mutex_lock(&list->lock);
-  printf("got my lock\n");
-  (*buf)->previous->next = (*buf)->next;
-  (*buf)->next->previous = (*buf)->previous;
-  list->count--;
-  pthread_mutex_unlock(&list->lock);
-
+  /* It's crucial we remove locks in the reverse order we set them here.  The buffer needs to be manipulated and then its lock
+   * released; otherwise a race condition exists where one thread holds the list lock that we're trying to get but it can't grab
+   * the buffers lock and this thread can't grab the list lock to remove the buffer pointers (i.e.: we deadlock). */
   /* Store the lock id so we can unlock it below (because we're going NULL/free() the buffer). */
   lockid_t lock_id = (*buf)->lock_id;
+  Buffer *next = (*buf)->next;
+  Buffer *previous = (*buf)->previous;
   free(*buf);
   *buf = NULL;
   lock__release(lock_id);
+
+  /* NOW we can safely lock the list so we can move pointers and set the buffer to NULL and free it.  Since this is a manipulation
+   * of just the ->next and ->previous pointers we only need the list lock, not the next/previous buffers' locks. */
+  printf("want a lock\n");
+  pthread_mutex_lock(&list->lock);
+  printf("got my lock\n");
+  previous->next = next;
+  next->previous = previous;
+  list->count--;
+  pthread_mutex_unlock(&list->lock);
 }
 
 
@@ -123,20 +130,22 @@ int list__search(List *list, Buffer **buf, bufferid_t id) {
   Buffer *temp = list->head->next;
   while (temp != list->head) {
     if (temp->id == id) {
-      // Found it.  Release the list lock and lock the buffer so we can assign the double pointer and bail.
+      // Found it.  Grab the lock directly because we need to hold list lock to avoid a race condition.
+      lock__acquire(temp->lock_id);
       pthread_mutex_unlock(&list->lock);
-      rv = buffer__lock(list, temp);
       if (rv == E_BUFFER_POOFED)
         return E_BUFFER_NOT_FOUND;
       // If we're here we got a buffer (possibly victimized but that's ok).  Assign pointer and update refs.  Then quit. */
       (*buf) = temp;
       buffer__update_ref(temp, 1);
       buffer__unlock(temp);  // We can release the lock because it's pinned now.
-      return rv;  // If rv from buffer__lock() was E_BUFFER_IS_VICTIMIZED we need to let the caller know.
+      return rv;
     }
     temp = temp->next;
   }
-  // Didn't find it... boo...
+  // Didn't find it... boo...  If rv isn't 0 (i.e.: victimized), we need to let the caller know.
   pthread_mutex_unlock(&list->lock);
+  if (rv > 0)
+    return rv;
   return E_BUFFER_NOT_FOUND;
 }

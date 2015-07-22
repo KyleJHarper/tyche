@@ -21,7 +21,7 @@ extern const int E_BUFFER_IS_VICTIMIZED;
 
 // A global for testing cuz I'm bad
 const int LIST_COUNT       =  500;
-const int WORKER_COUNT     =  100;
+const int WORKER_COUNT     = 5000;
 const int READS_PER_WORKER = 1000;
 const int LIST_FLOOR       =    5;
 const int SLEEP_DELAY      = 1234;
@@ -43,12 +43,12 @@ void tests__synchronized_read() {
 
   // Start up a chaos monkey to remove some of the buffers.
   pthread_t chaos_worker;
-  pthread_create(&chaos_worker, NULL, (void *) &tests__chaos, raw_list);
+  //pthread_create(&chaos_worker, NULL, (void *) &tests__chaos, raw_list);
 
   // Wait for them to finish.
   for (int i=0; i<WORKER_COUNT; i++)
     pthread_join(workers[i], NULL);
-  pthread_join(chaos_worker, NULL);
+  //pthread_join(chaos_worker, NULL);
 
   temp = raw_list->head;
   for (int i=1; i<raw_list->count; i++) {
@@ -76,6 +76,7 @@ void tests__read(List *raw_list) {
       printf("We should never hit this (rv is %d).\n", rv);
     }
     usleep(rand() % SLEEP_DELAY);  // This helps skew interlocking (letting ref_count go above 1)
+    //printf("Going to lock buffer %d\n", selected->id);
     rv = buffer__lock(raw_list, selected);
     if (rv == E_OK || rv == E_BUFFER_IS_VICTIMIZED) {
       buffer__update_ref(selected, -1);
