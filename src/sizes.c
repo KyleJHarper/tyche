@@ -15,7 +15,6 @@ int main() {
   char *cptr = NULL;
   //Buffer buf = (Buffer)malloc(sizeof(Buffer));
 
-  printf("Size of Buffer             : %zu Bytes\n", sizeof(Buffer));
   printf("Size of Buffer->id         : %zu Bytes\n", sizeof((Buffer *)0)->id);
   printf("Size of Buffer->ref_count  : %zu Bytes\n", sizeof((Buffer *)0)->ref_count);
   printf("Size of Buffer->popularity : %zu Bytes\n", sizeof((Buffer *)0)->popularity);
@@ -27,8 +26,17 @@ int main() {
   printf("Size of Buffer->next       : %zu Bytes\n", sizeof((Buffer *)0)->next);
   printf("Size of Buffer->lock_id    : %zu Bytes\n", sizeof((Buffer *)0)->lock_id);
   printf("Size of Buffer->data_length: %zu Bytes\n", sizeof((Buffer *)0)->data_length);
+  //printf("Size of Buffer->lock       : %zu Bytes\n", sizeof((Buffer *)0)->lock);
+  //printf("Size of Buffer->cond       : %zu Bytes\n", sizeof((Buffer *)0)->cond);
   printf("Size of Buffer->data       : %zu Bytes\n", sizeof((Buffer *)0)->data);
+  printf("Size of Buffer             : %zu Bytes\n", sizeof(Buffer));
 
+  printf("\n\n%10s%10s\n", "PAGE_SIZE", "Overhead");
+  float size = 0.0;
+  for (int i=64; i<=65536; i*=2) {
+    size = (100.0f * sizeof(Buffer)) / (sizeof(Buffer) + i);
+    printf("%10i%9.3f%%\n", i, size);
+  }
   uint8_t popularity;    /* Rapidly decaying counter used for victim selection with clock sweep.  Ceiling of MAX_POPULARITY. */
   uint8_t victimized;    /* If the buffer has been victimized this is set non-zero.  Prevents incrementing of ref_count. */
 

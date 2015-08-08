@@ -37,6 +37,8 @@ struct buffer {
   Buffer *previous;      /* Pointer to the previous buffer for use in a circular queue. */
   Buffer *next;          /* Pointer to the next buffer for use in a circular queue. */
   lockid_t lock_id;      /* Lock ID from the locker_pool[], rather than having a pthread mutex for each Buffer. */
+  //pthread_mutex_t lock;
+  //pthread_cond_t cond;
 
   /* The actual payload we want to cache (i.e.: the page). */
   uint16_t data_length;  /* Number of bytes in data.  For raw tables, always PAGE_SIZE.  Compressed will vary. */

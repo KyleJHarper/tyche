@@ -20,11 +20,11 @@ extern const int E_BUFFER_NOT_FOUND;
 extern const int E_BUFFER_IS_VICTIMIZED;
 
 // A global for testing cuz I'm bad
-const int LIST_COUNT       =  500;
-const int WORKER_COUNT     = 5000;
-const int READS_PER_WORKER = 1000;
-const int LIST_FLOOR       =    5;
-const int SLEEP_DELAY      = 1234;
+const int LIST_COUNT       = 5000;
+const int WORKER_COUNT     = 50;
+const int READS_PER_WORKER = 10000;
+const int LIST_FLOOR       = 5000;
+const int SLEEP_DELAY      = 123;
 
 void tests__synchronized_read() {
   List *raw_list = list__initialize();
