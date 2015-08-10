@@ -14,18 +14,32 @@
 #include "buffer.h"
 #include "list.h"
 
+
+/* Create a structure to allow for faster searching of the list.  Normally we'd use multiple levels of a Skip List, but we given
+ * the fixed dataset of this program will work with, I'm just going to hard-code an array.  If others want to use the theory they
+ * can implement whatever search methodology they'd like.
+ * We use a fixed size of elements with push/pop since our minimum page size is 4096 bytes and maximum data set is < 20GB.
+ */
+#define SKIP_LIST_SIZE 5000000   /* 5 Million */
+typedef struct skiplistentry SkipListEntry;
+struct skiplistentry {
+  bufferid_t id;   /* ID of the buffer we want to store. */
+  Buffer *buf;     /* Pointer to the buffer we're managing. */
+};
+
 /* Build the typedef and structure for a List */
 typedef struct list List;
 struct list {
-  Buffer *head;          /* Top of the ring buffer.  Mostly for a fixed point. */
-  uint32_t count;        /* Number of buffers in the list. */
-  pthread_mutex_t lock;  /* For operations requiring exclusive locking of the list. */
+  Buffer *head;                             /* Top of the ring buffer.  Mostly for a fixed point. */
+  uint32_t count;                           /* Number of buffers in the list. */
+  pthread_mutex_t lock;                     /* For operations requiring exclusive locking of the list (writing to it). */
+  Buffer skiplist[SKIP_LIST_SIZE];  /* Array of entries to create a crude but effective skip list. */
 };
 
 /* Function prototypes.  Not required, but whatever. */
 List* list__initialize();
-void list__add(List *list, Buffer *buf);
-void list__remove(List *list, Buffer **buf);
+int list__add(List *list, Buffer *buf);
+int list__remove(List *list, Buffer **buf);
 int list__search(List *list, Buffer **buf, bufferid_t id);
 
 

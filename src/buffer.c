@@ -32,7 +32,7 @@ extern const int E_BUFFER_IS_VICTIMIZED;
 Buffer* buffer__initialize(bufferid_t id) {
   Buffer *new_node = (Buffer *)malloc(sizeof(Buffer));
   if (new_node == NULL)
-      show_err("Error malloc-ing new buffer from list__add.", E_GENERIC);
+      show_err("Error malloc-ing a new buffer in buffer__initialize.", E_GENERIC);
   lock__assign_next_id(&new_node->lock_id);
   new_node->ref_count = 0;
   new_node->id = id;
@@ -43,16 +43,11 @@ Buffer* buffer__initialize(bufferid_t id) {
  * Setting a lock just locks the mutex from the locker_pool[].  Since we support concurrency, it's possible to have a thread
  * waiting for a lock on a buffer while another thread is removing that buffer entirely.  So we add a little more logic for that.
  */
-int buffer__lock(List *list, Buffer *buf) {
-  /* We have to lock the entire list while acquiring a lock on this buffer to ensure no one removes it while we're waiting. */
-  pthread_mutex_lock(&list->lock);
-  /* Now that we're sure the buffer can't poof (race cond) we check once more to ensure it didn't poof while we waited. */
-  if (buf == NULL) {
-    pthread_mutex_unlock(&list->lock);
+int buffer__lock(Buffer *buf) {
+  /* Check to make sure the buffer exists. */
+  if (buf == NULL)
     return E_BUFFER_POOFED;
-  }
   pthread_mutex_lock(&locker_pool[buf->lock_id].mutex);
-  pthread_mutex_unlock(&list->lock);
   /* If a buffer is victimized we can still lock it, but the caller needs to know. This is safe because buffer__victimize locks. */
   if (buf->victimized != 0)
     return E_BUFFER_IS_VICTIMIZED;
@@ -86,9 +81,9 @@ int buffer__update_ref(Buffer *buf, int delta) {
  * a buffer from the list since we need to manage the pointers.  In fact, only list__remove() should ever call this.
  * The buffer MUST remain locked upon exit otherwise another thread could try reading the buffer while we go back up the stack.
  */
-int buffer__victimize(List *list, Buffer *buf) {
+int buffer__victimize(Buffer *buf) {
   /* Try to lock the buffer.  If it returns already victimized then we don't need to do anything.  Any other non-zero, error. */
-  int rv = buffer__lock(list, buf);
+  int rv = buffer__lock(buf);
   if (rv > 0 && rv != E_BUFFER_IS_VICTIMIZED)
     return rv;
   buf->victimized = 1;

@@ -39,6 +39,7 @@ extern const int E_GENERIC;
 extern const int E_BUFFER_NOT_FOUND;
 extern const int E_BUFFER_POOFED;
 extern const int E_BUFFER_IS_VICTIMIZED;
+extern const int E_BUFFER_ALREADY_EXISTS;
 
 
 
@@ -47,73 +48,113 @@ extern const int E_BUFFER_IS_VICTIMIZED;
  * Creates the actual list that we're being given a pointer to.  We will also create the head of it as a reference point.
  */
 List* list__initialize() {
-  /* Quick error checking, then initialize the list. */
+  /* Quick error checking, then initialize the list.  We don't need to lock it because it's synchronous. */
   List *list = (List *)malloc(sizeof(List));
   if (list == NULL)
     show_err("Failed to malloc the list.", E_GENERIC);
   list->count = 1;
-  pthread_mutex_init(&list->lock, NULL);
 
   /* Create the head buffer and set it.  No locking required as this isn't a parallelized action. */
-  Buffer *head = (Buffer *)malloc(sizeof(Buffer));
-  if (head == NULL)
-    show_err("Error malloc-ing head buffer in list_add.", E_GENERIC);
+  Buffer *head = buffer__initialize(0);
   head->next = head;
   head->previous = head;
-  head->ref_count = 0;
-  head->id = 0;
   list->head = head;
+
+  /* Since we use list->count to handle the skip list upper bound, we don't need to do any initialization.  Just add head. */
+  list->skiplist[0].id = head->id;
+  list->skiplist[0].buf = head;
+
   return list;
 }
 
+
 /* list__add
- * Adds a node to the list specified.  Buffer must be created by caller.
+ * Adds a node to the list specified.  Buffer must be created by caller.  We will lock the list here so insertion is guaranteed
+ * to be sort-ordered.  We will also fail safely if the buffer already exists because we don't want duplicates.
  */
-void list__add(List *list, Buffer *buf) {
-  /* Lock the list and make edits.  We could use a freelist if fragmentation becomes an issue. */
+int list__add(List *list, Buffer *buf) {
+  /* Lock the list and search for insertion point.  We could use a freelist if fragmentation becomes an issue. */
   pthread_mutex_lock(&list->lock);
-  buf->next = list->head->next;
-  buf->previous = list->head;
-  list->head->next->previous = buf;
-  list->head->next = buf;
-  list->count++;
+  Buffer *previous, *next;
+  int low = 0, high = list->count - 1, mid;
+  previous = list->skiplist[low];
+  next = list->skiplist[high];
+  for(;;) {
+    mid = (low + high)/2;
+
+    // If our current skiplist[mid] ID is too high, update low and the prev pointer.
+    if (list->skiplist[mid].id < buf->id) {
+      previous = list->skiplist[mid].next;
+      low = mid + 1;
+      continue;
+    }
+
+    // If the skiplist[mid]->id matches, we have an error.  We can't add an existing buffer (duplicate).
+    if (list->skiplist[mid].id == buf->id) {
+      pthread_mutex_unlock(&list->lock);
+      return E_BUFFER_ALREADY_EXISTS;
+    }
+
+    // If the skiplist[mid] ID is too low, we need to update high and next pointer.
+    if(list->skiplist[mid].id > buf->id) {
+      next = list->skiplist[mid].previous;
+      high = mid - 1;
+      continue;
+    }
+
+    /* If we're here we *should* have the correct prev and next buffers, and they should point to eachother.  Verify and set. */
+    if (previous->next != next || next->previous != previous)
+      show_err("The list__add function just produced an insertion point whose previous and next pointers don't point to eachother.", E_GENERIC);
+    buf->next = next;
+    buf->previous = previous;
+    next->previous = buf;
+    previous->next = buf;
+
+    /* Update the skiplist by pushing.  Then bring the list count up to date and break out. */
+    for(int i=list->count; i<mid; i--)
+      list->skiplist[i] = list->skiplist[i-1];
+    list->skiplist[mid] = buf;
+    list->count++;
+    break;
+  }
+
+  /* Unlock the list lock and leave happy. */
   pthread_mutex_unlock(&list->lock);
+  return E_OK;
 }
+
 
 /* list__remove
  * Removes the node from the list it is associated with.  We will ensure victimization happens.
  * This process merely removes it from a list specified; we don't handle the HCRS logic here.
  */
-void list__remove(List *list, Buffer **buf) {
+int list__remove(List *list, Buffer **buf) {
   /* Victimize the buffer so we can ensure it's flushed of references and we own it. */
   int rv = buffer__victimize(list, *buf);
-  printf("victimize is done, rv is %d\n", rv);
   /* If the buffer poofed we can't work with it let alone remove it (someone else did).  It's unlocked at this point too. */
   if (rv == E_BUFFER_POOFED)
     return;
   if (rv != 0)
     show_err("The list__remove function received an error when trying to victimize the buffer.\n", rv);
 
-  /* It's crucial we remove locks in the reverse order we set them here.  The buffer needs to be manipulated and then its lock
-   * released; otherwise a race condition exists where one thread holds the list lock that we're trying to get but it can't grab
-   * the buffers lock and this thread can't grab the list lock to remove the buffer pointers (i.e.: we deadlock). */
-  /* Store the lock id so we can unlock it below (because we're going NULL/free() the buffer). */
+  /* Store the lock id so we can unlock it below (because we're going NULL/free() the victimized buffer). */
   lockid_t lock_id = (*buf)->lock_id;
   Buffer *next = (*buf)->next;
   Buffer *previous = (*buf)->previous;
-  free(*buf);
-  *buf = NULL;
-  lock__release(lock_id);
 
   /* NOW we can safely lock the list so we can move pointers and set the buffer to NULL and free it.  Since this is a manipulation
    * of just the ->next and ->previous pointers we only need the list lock, not the next/previous buffers' locks. */
-  printf("want a lock\n");
   pthread_mutex_lock(&list->lock);
-  printf("got my lock\n");
   previous->next = next;
   next->previous = previous;
   list->count--;
   pthread_mutex_unlock(&list->lock);
+  lock__release(lock_id);
+
+  /* Free()-ing is supposed to be threadsafe with -pthreads and gcc.  But this might fail with segfaults while readers try to read
+   * the buffer we're about to free if I'm wrong... so we'll see.  We can wrap a shared lock around this to test if need be. */
+  free(*buf);
+  *buf = NULL;
 }
 
 

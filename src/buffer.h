@@ -36,9 +36,7 @@ struct buffer {
   /* We use a ring buffer so we track previous and next Buffers. */
   Buffer *previous;      /* Pointer to the previous buffer for use in a circular queue. */
   Buffer *next;          /* Pointer to the next buffer for use in a circular queue. */
-  lockid_t lock_id;      /* Lock ID from the locker_pool[], rather than having a pthread mutex for each Buffer. */
-  //pthread_mutex_t lock;
-  //pthread_cond_t cond;
+  lockid_t lock_id;      /* Lock ID from the locker_pool[], rather than having a pthread mutex & cond for each Buffer. */
 
   /* The actual payload we want to cache (i.e.: the page). */
   uint16_t data_length;  /* Number of bytes in data.  For raw tables, always PAGE_SIZE.  Compressed will vary. */
@@ -48,10 +46,10 @@ struct buffer {
 
 /* Prototypes */
 Buffer* buffer__initialize();
-int buffer__lock(List *list, Buffer *buf);
+int buffer__lock(Buffer *buf);
 void buffer__unlock(Buffer *buf);
 int buffer__update_ref(Buffer *buf, int delta);
-int buffer__victimize(List *list, Buffer *buf);
+int buffer__victimize(Buffer *buf);
 
 
 #endif /* SRC_BUFFER_H_ */

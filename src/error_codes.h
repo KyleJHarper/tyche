@@ -22,6 +22,7 @@ const int E_TRY_AGAIN              = 101;  // Conditions may exist (e.g. threadi
 const int E_BUFFER_NOT_FOUND       = 120;  // When searching for a buffer, throw this when not found.  Let caller handle.
 const int E_BUFFER_POOFED          = 121;  // Some operations cause buffers to *poof* as we swap them around.  Handle appropriately.
 const int E_BUFFER_IS_VICTIMIZED   = 122;  // When buffers are victimized, callers need to know this.  For ex: lowering ref counts.
+const int E_BUFFER_ALREADY_EXISTS  = 123;  // When trying to add a buffer to a list, we return this if it already exists.
 
 
 #endif /* SRC_ERROR_CODES_H_ */

@@ -26,8 +26,6 @@ int main() {
   printf("Size of Buffer->next       : %zu Bytes\n", sizeof((Buffer *)0)->next);
   printf("Size of Buffer->lock_id    : %zu Bytes\n", sizeof((Buffer *)0)->lock_id);
   printf("Size of Buffer->data_length: %zu Bytes\n", sizeof((Buffer *)0)->data_length);
-  //printf("Size of Buffer->lock       : %zu Bytes\n", sizeof((Buffer *)0)->lock);
-  //printf("Size of Buffer->cond       : %zu Bytes\n", sizeof((Buffer *)0)->cond);
   printf("Size of Buffer->data       : %zu Bytes\n", sizeof((Buffer *)0)->data);
   printf("Size of Buffer             : %zu Bytes\n", sizeof(Buffer));
 
