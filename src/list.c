@@ -73,10 +73,16 @@ List* list__initialize() {
  * to be sort-ordered.  We will also fail safely if the buffer already exists because we don't want duplicates.
  */
 int list__add(List *list, Buffer *buf) {
-  /* Lock the list and search for insertion point.  We could use a freelist if fragmentation becomes an issue. */
+  /* Drain the list of references so we don't modify the list while another thread is scanning it. */
   pthread_mutex_lock(&list->lock);
+  list->pending_writers++;
+  while(list->ref_count != 0)
+    pthread_cond_wait(&list->writer_condition, &list->lock);
+  list->pending_writers--;
+
+  /* We now own the lock and no one should be scanning the list.  We can safely scan it ourselves and then edit it. */
   Buffer *previous, *next;
-  int low = 0, high = list->count - 1, mid;
+  int rv = E_OK, low = 0, high = list->count - 1, mid;
   previous = list->skiplist[low];
   next = list->skiplist[high];
   for(;;) {
@@ -91,8 +97,8 @@ int list__add(List *list, Buffer *buf) {
 
     // If the skiplist[mid]->id matches, we have an error.  We can't add an existing buffer (duplicate).
     if (list->skiplist[mid].id == buf->id) {
-      pthread_mutex_unlock(&list->lock);
-      return E_BUFFER_ALREADY_EXISTS;
+      rv = E_BUFFER_ALREADY_EXISTS;
+      break;
     }
 
     // If the skiplist[mid] ID is too low, we need to update high and next pointer.
@@ -118,9 +124,10 @@ int list__add(List *list, Buffer *buf) {
     break;
   }
 
-  /* Unlock the list lock and leave happy. */
+  /* Start the notification chain for reader_conditions, release the lock and leave with whatever rv is. */
+  pthread_cond_broadcast(&list->reader_condition);
   pthread_mutex_unlock(&list->lock);
-  return E_OK;
+  return rv;
 }
 
 
@@ -189,4 +196,35 @@ int list__search(List *list, Buffer **buf, bufferid_t id) {
   if (rv > 0)
     return rv;
   return E_BUFFER_NOT_FOUND;
+}
+
+
+/* list__update_ref
+ * Edits the reference count of threads currently pinning the list.  Pinning happens for searching the list.  Delta should only be
+ * 1 or -1, ever.  Also note: writer operations (list__add, list__remove) do *not* call this.  Unlike buffer__update_ref we will
+ * lock the list for the caller since list-poofing isn't a reality like buffer poofing.
+ */
+int list__update_ref(List *list, int delta) {
+  /* Lock the list and check pending writers.  If non-zero and we're incrementing, wait on the reader condition. */
+  int i_had_to_wait = 0;
+  pthread_mutex_lock(&list->lock);
+  if(delta > 0) {
+    while(list->pending_writers > 0) {
+      i_had_to_wait = 1;
+      pthread_cond_wait(&list->reader_condition, &list->lock);
+    }
+  }
+  list->ref_count += delta;
+
+  /* When writers are waiting and we are decrementing, we need to broadcast to the writer condition that it's safe to proceed. */
+  if (delta < 0 && list->pending_writers != 0 && list->ref_count == 0)
+    pthread_cond_broadcast(&list->writer_condition);
+
+  /* If we were forced to wait, others may have been too.  Call the broadcast again (once per waiter) so others will wake up. */
+  if (i_had_to_wait > 0)
+    pthread_cond_broadcast(&list->reader_condition);
+
+  /* Release the lock, which will also finally unblock any threads we woke up with broadcast above.  Then leave happy. */
+  pthread_mutex_unlock(&list->lock);
+  return E_OK;
 }

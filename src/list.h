@@ -30,9 +30,13 @@ struct skiplistentry {
 /* Build the typedef and structure for a List */
 typedef struct list List;
 struct list {
-  Buffer *head;                             /* Top of the ring buffer.  Mostly for a fixed point. */
-  uint32_t count;                           /* Number of buffers in the list. */
-  pthread_mutex_t lock;                     /* For operations requiring exclusive locking of the list (writing to it). */
+  Buffer *head;                     /* Top of the ring buffer.  Mostly for a fixed point. */
+  uint32_t count;                   /* Number of buffers in the list. */
+  pthread_mutex_t lock;             /* For operations requiring exclusive locking of the list (writing to it). */
+  pthread_cond_t writer_condition;  /* The condition variable for writers to wait for when attempting to drain a list of refs. */
+  pthread_cond_t reader_condition;  /* The condition variable for readers to wait for when attempting to increment ref count. */
+  uint32_t ref_count;               /* Number of threads pinning this list (searching it) */
+  uint8_t pending_writers;          /* Value to indicate how many writers are waiting to edit the list. */
   Buffer skiplist[SKIP_LIST_SIZE];  /* Array of entries to create a crude but effective skip list. */
 };
 
@@ -40,6 +44,7 @@ struct list {
 List* list__initialize();
 int list__add(List *list, Buffer *buf);
 int list__remove(List *list, Buffer **buf);
+int list__update_ref(List *list, int delta);
 int list__search(List *list, Buffer **buf, bufferid_t id);
 
 
