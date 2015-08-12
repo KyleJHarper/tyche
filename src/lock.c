@@ -38,9 +38,9 @@ extern const int E_GENERIC;
 void lock__initialize() {
   for (lockid_t i=0; i<MAX_LOCK_VALUE; i++) {
     if (pthread_mutex_init(&locker_pool[i].mutex, NULL) != 0)
-      show_err("Failed to initialize mutex.  This is fatal.", E_GENERIC);
-    if (pthread_cond_init(&locker_pool[i].cond, NULL) != 0)
-      show_err("Failed to initialize cond.  This is fatal.", E_GENERIC);
+      show_err("Failed to initialize mutex for locker pool.  This is fatal.", E_GENERIC);
+    if (pthread_cond_init(&locker_pool[i].condition, NULL) != 0)
+      show_err("Failed to initialize condition for locker pool.  This is fatal.", E_GENERIC);
   }
 }
 

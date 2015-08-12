@@ -20,8 +20,8 @@
 typedef uint16_t lockid_t;
 typedef struct lock Lock;
 struct lock {
-  pthread_mutex_t mutex;  /* The actual mutex used for locking. */
-  pthread_cond_t cond;    /* The cond to use when we need signaling. */
+  pthread_mutex_t mutex;     /* The actual mutex used for locking. */
+  pthread_cond_t condition;  /* The condition variable to use when we need signaling. */
 };
 
 

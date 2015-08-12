@@ -67,11 +67,9 @@ void buffer__unlock(Buffer *buf) {
  */
 int buffer__update_ref(Buffer *buf, int delta) {
   buf->ref_count += delta;
-  /* When decrementing we need to broadcast to our cond that we're ready. */
-  if (buf->victimized != 0 && buf->ref_count == 0) {
-    printf("Sending notice for buf id %d\n", buf->id);
-    pthread_cond_broadcast(&locker_pool[buf->lock_id].cond);
-  }
+  /* When decrementing we need to broadcast to our condition that we're ready. */
+  if (buf->victimized != 0 && buf->ref_count == 0)
+    pthread_cond_broadcast(&locker_pool[buf->lock_id].condition);
   return E_OK;
 }
 
@@ -89,6 +87,6 @@ int buffer__victimize(Buffer *buf) {
   buf->victimized = 1;
   printf("marked victim, ref count is %d, rv from lock is %d\n", buf->ref_count, rv);
   while(buf->ref_count != 0)
-    pthread_cond_wait(&locker_pool[buf->lock_id].cond, &locker_pool[buf->lock_id].mutex);
+    pthread_cond_wait(&locker_pool[buf->lock_id].condition, &locker_pool[buf->lock_id].mutex);
   return E_OK;
 }

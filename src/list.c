@@ -51,8 +51,16 @@ List* list__initialize() {
   /* Quick error checking, then initialize the list.  We don't need to lock it because it's synchronous. */
   List *list = (List *)malloc(sizeof(List));
   if (list == NULL)
-    show_err("Failed to malloc the list.", E_GENERIC);
+    show_err("Failed to malloc a new list.", E_GENERIC);
   list->count = 1;
+  list->ref_count = 0;
+  list->pending_writers = 0;
+  if (pthread_mutex_init(&list->lock, NULL) != 0)
+    show_err("Failed to initialize mutex for a list.  This is fatal.", E_GENERIC);
+  if (pthread_cond_init(&list->reader_condition, NULL) != 0)
+      show_err("Failed to initialize reader condition for a list.  This is fatal.", E_GENERIC);
+  if (pthread_cond_init(&list->writer_condition, NULL) != 0)
+      show_err("Failed to initialize writer condition for a list.  This is fatal.", E_GENERIC);
 
   /* Create the head buffer and set it.  No locking required as this isn't a parallelized action. */
   Buffer *head = buffer__initialize(0);
@@ -132,8 +140,8 @@ int list__add(List *list, Buffer *buf) {
 
 
 /* list__remove
- * Removes the node from the list it is associated with.  We will ensure victimization happens.
- * This process merely removes it from a list specified; we don't handle the HCRS logic here.
+ * Removes the node from the list it is associated with.  We will ensure victimization happens so the caller(s) can be free of that
+ * responsibility.  (This process merely removes it from a list specified; we don't handle the HCRS logic here.)
  */
 int list__remove(List *list, Buffer **buf) {
   /* Victimize the buffer so we can ensure it's flushed of references and we own it. */
