@@ -20,11 +20,11 @@ extern const int E_BUFFER_NOT_FOUND;
 extern const int E_BUFFER_IS_VICTIMIZED;
 
 // A global for testing cuz I'm bad
-const int LIST_COUNT       = 5000;
-const int WORKER_COUNT     = 50;
-const int READS_PER_WORKER = 10000;
-const int LIST_FLOOR       = 5000;
-const int SLEEP_DELAY      = 123;
+const int LIST_COUNT       =  5000;
+const int WORKER_COUNT     =    50;
+const int READS_PER_WORKER =  1000;
+const int LIST_FLOOR       =  4900;
+const int SLEEP_DELAY      =  1234;
 
 void tests__synchronized_read() {
   List *raw_list = list__initialize();
@@ -50,9 +50,7 @@ void tests__synchronized_read() {
     pthread_join(workers[i], NULL);
   pthread_join(chaos_worker, NULL);
 
-  temp = raw_list->head;
-  for (int i=1; i<raw_list->count; i++) {
-    temp = temp->next;
+  for (int i=0; i<raw_list->count; i++) {
     if (temp->ref_count != 0)
       printf("Buffer number %d has non-zero ref_count: %d\n", temp->id, temp->ref_count);
     //printf("Buffer id %03d has ref_count of %d\n", temp->id, temp->ref_count);

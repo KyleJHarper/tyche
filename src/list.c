@@ -42,17 +42,17 @@ extern const int E_BUFFER_IS_VICTIMIZED;
 extern const int E_BUFFER_ALREADY_EXISTS;
 
 
-
 /* Functions */
 /* list__initialize
  * Creates the actual list that we're being given a pointer to.  We will also create the head of it as a reference point.
  */
-List* list__initialize() {
+List* list__initialize(uint8_t is_sorted) {
   /* Quick error checking, then initialize the list.  We don't need to lock it because it's synchronous. */
   List *list = (List *)malloc(sizeof(List));
   if (list == NULL)
     show_err("Failed to malloc a new list.", E_GENERIC);
-  list->count = 1;
+  list->is_sorted = is_sorted;
+  list->count = 0;
   list->ref_count = 0;
   list->pending_writers = 0;
   if (pthread_mutex_init(&list->lock, NULL) != 0)
@@ -62,16 +62,6 @@ List* list__initialize() {
   if (pthread_cond_init(&list->writer_condition, NULL) != 0)
       show_err("Failed to initialize writer condition for a list.  This is fatal.", E_GENERIC);
 
-  /* Create the head buffer and set it.  No locking required as this isn't a parallelized action. */
-  Buffer *head = buffer__initialize(0);
-  head->next = head;
-  head->previous = head;
-  list->head = head;
-
-  /* Since we use list->count to handle the skip list upper bound, we don't need to do any initialization.  Just add head. */
-  list->skiplist[0].id = head->id;
-  list->skiplist[0].buf = head;
-
   return list;
 }
 
@@ -79,6 +69,7 @@ List* list__initialize() {
 /* list__add
  * Adds a node to the list specified.  Buffer must be created by caller.  We will lock the list here so insertion is guaranteed
  * to be sort-ordered.  We will also fail safely if the buffer already exists because we don't want duplicates.
+ * Note: this function is not responsible for managing list sizes or HCRS logic.  It just adds buffers.
  */
 int list__add(List *list, Buffer *buf) {
   /* Drain the list of references so we don't modify the list while another thread is scanning it. */
@@ -89,50 +80,45 @@ int list__add(List *list, Buffer *buf) {
   list->pending_writers--;
 
   /* We now own the lock and no one should be scanning the list.  We can safely scan it ourselves and then edit it. */
-  Buffer *previous, *next;
-  int rv = E_OK, low = 0, high = list->count - 1, mid;
-  previous = list->skiplist[low];
-  next = list->skiplist[high];
-  for(;;) {
+  int rv = E_OK, low = 0, high = list->count, mid = 0;
+  if (list->is_sorted == 0) {
+    /* The list isn't sorted.  We can just assign buf to the index of list->count. */
+    list->pool[list->count] = buf;
+  }
+  while(list->is_sorted > 0) {
+    // Reset mid and begin testing.
     mid = (low + high)/2;
 
-    // If our current skiplist[mid] ID is too high, update low and the prev pointer.
-    if (list->skiplist[mid].id < buf->id) {
-      previous = list->skiplist[mid].next;
-      low = mid + 1;
-      continue;
+    // If low == high then mid also matches and we didn't find it (which is good!).  We're safe to shift (if needed) and insert.
+    if (low == high) {
+      for(int i=list->count; i<mid; i--)
+        list->pool[i] = list->pool[i-1];
+      list->pool[mid] = buf;
+      break;
     }
 
-    // If the skiplist[mid]->id matches, we have an error.  We can't add an existing buffer (duplicate).
-    if (list->skiplist[mid].id == buf->id) {
+    // If the pool[mid] ID matches, we have an error.  We can't add an existing buffer (duplicate).
+    if (list->pool[mid]->id == buf->id) {
       rv = E_BUFFER_ALREADY_EXISTS;
       break;
     }
 
-    // If the skiplist[mid] ID is too low, we need to update high and next pointer.
-    if(list->skiplist[mid].id > buf->id) {
-      next = list->skiplist[mid].previous;
-      high = mid - 1;
+    // If our current pool[mid] ID is too high, update low.
+    if (list->pool[mid]->id < buf->id) {
+      low = mid + 1;
       continue;
     }
 
-    /* If we're here we *should* have the correct prev and next buffers, and they should point to eachother.  Verify and set. */
-    if (previous->next != next || next->previous != previous)
-      show_err("The list__add function just produced an insertion point whose previous and next pointers don't point to eachother.", E_GENERIC);
-    buf->next = next;
-    buf->previous = previous;
-    next->previous = buf;
-    previous->next = buf;
-
-    /* Update the skiplist by pushing.  Then bring the list count up to date and break out. */
-    for(int i=list->count; i<mid; i--)
-      list->skiplist[i] = list->skiplist[i-1];
-    list->skiplist[mid] = buf;
-    list->count++;
-    break;
+    // If the pool[mid] ID is too low, we need to update high.
+    if (list->pool[mid].id > buf->id) {
+      high = mid - 1;
+      continue;
+    }
   }
 
   /* Start the notification chain for reader_conditions, release the lock and leave with whatever rv is. */
+  if (rv == 0)
+    list->count++;
   pthread_cond_broadcast(&list->reader_condition);
   pthread_mutex_unlock(&list->lock);
   return rv;
@@ -140,36 +126,73 @@ int list__add(List *list, Buffer *buf) {
 
 
 /* list__remove
- * Removes the node from the list it is associated with.  We will ensure victimization happens so the caller(s) can be free of that
- * responsibility.  (This process merely removes it from a list specified; we don't handle the HCRS logic here.)
+ * Removes the buffer from the list's pool while respecting the list lock and readers.
+ * Note: this function is not responsible for managing list sizes or HCRS logic.  It just removes buffers.
  */
 int list__remove(List *list, Buffer **buf) {
-  /* Victimize the buffer so we can ensure it's flushed of references and we own it. */
+  /* Update the pending writers in case others are waiting. */
+  pthread_mutex_lock(&list->lock);
+  list->pending_writers++;
+  while(list->ref_count != 0)
+    pthread_cond_wait(&list->writer_condition, &list->lock);
+  list->pending_writers--;
+
+  /* At this point we own the list lock.  Try to victimize the buffer so we can remove it. */
   int rv = buffer__victimize(list, *buf);
-  /* If the buffer poofed we can't work with it let alone remove it (someone else did).  It's unlocked at this point too. */
+  /* If the buffer poofed we can't work with it let alone remove it (someone else already did).  It's unlocked at this point too. */
   if (rv == E_BUFFER_POOFED)
-    return;
+    return E_OK;
   if (rv != 0)
     show_err("The list__remove function received an error when trying to victimize the buffer.\n", rv);
 
-  /* Store the lock id so we can unlock it below (because we're going NULL/free() the victimized buffer). */
+  /* We now have the list locked and the buffer fully victimized and locked.  Store the lock and begin searching for index. */
+  int low = 0, high = list->count, mid = 0;
+  rv = E_OK;
   lockid_t lock_id = (*buf)->lock_id;
-  Buffer *next = (*buf)->next;
-  Buffer *previous = (*buf)->previous;
+  if (list->is_sorted == 0) {
+    // It's not sorted, so we simply pop the 0th element by pulling the others downward.
+    for (int i=0; i<list->count; i++)
+      list->pool[i] = list->pool[i+1];
+  }
+  while(list->is_sorted > 0) {
+    // Reset mid and begin testing.
+    mid = (low + high)/2;
 
-  /* NOW we can safely lock the list so we can move pointers and set the buffer to NULL and free it.  Since this is a manipulation
-   * of just the ->next and ->previous pointers we only need the list lock, not the next/previous buffers' locks. */
-  pthread_mutex_lock(&list->lock);
-  previous->next = next;
-  next->previous = previous;
-  list->count--;
-  pthread_mutex_unlock(&list->lock);
-  lock__release(lock_id);
+    // If the pool[mid] ID matches, we found the right index.  Collapse downward and break out.
+    if (list->pool[mid]->id == buf->id) {
+      for (int i=mid; i<list->count; i++)
+        list->pool[i] = list->pool[i+1];
+      break;
+    }
 
-  /* Free()-ing is supposed to be threadsafe with -pthreads and gcc.  But this might fail with segfaults while readers try to read
-   * the buffer we're about to free if I'm wrong... so we'll see.  We can wrap a shared lock around this to test if need be. */
+    // If our current pool[mid] ID is too high, update low.
+    if (list->pool[mid]->id < buf->id) {
+      low = mid + 1;
+      continue;
+    }
+
+    // If the pool[mid] ID is too low, we need to update high.
+    if (list->pool[mid].id > buf->id) {
+      high = mid - 1;
+      continue;
+    }
+
+    // If low == high then mid also matches and we didn't find it.  This is a problem.
+    if (low == high) {
+      rv = E_BUFFER_NOT_FOUND;
+      break;
+    }
+  }
+
+  /* Update the count if everything is all good.  Then free the buf, null it out, and leave. */
+  if (rv == 0)
+    list->count--;
   free(*buf);
   *buf = NULL;
+  lock__release(lock_id);
+  pthread_cond_broadcast(&list->reader_condition);
+  pthread_mutex_unlock(&list->lock);
+  return rv;
 }
 
 
@@ -178,32 +201,60 @@ int list__remove(List *list, Buffer **buf) {
  * search for it.  When successfully found, we increment ref_count.
  */
 int list__search(List *list, Buffer **buf, bufferid_t id) {
-  int rv = 0;
-  if (list == NULL)
-    show_err("List specified is null.  This shouldn't ever happen.", E_GENERIC);
-  /* Lock the list to ensure the buffers we're scanning don't poof while we perform checks. */
-  pthread_mutex_lock(&list->lock);
-  Buffer *temp = list->head->next;
-  while (temp != list->head) {
-    if (temp->id == id) {
-      // Found it.  Grab the lock directly because we need to hold list lock to avoid a race condition.
-      lock__acquire(temp->lock_id);
-      pthread_mutex_unlock(&list->lock);
-      if (rv == E_BUFFER_POOFED)
-        return E_BUFFER_NOT_FOUND;
-      // If we're here we got a buffer (possibly victimized but that's ok).  Assign pointer and update refs.  Then quit. */
-      (*buf) = temp;
-      buffer__update_ref(temp, 1);
-      buffer__unlock(temp);  // We can release the lock because it's pinned now.
-      return rv;
+  /* Update the ref count so we can begin searching. */
+  list__update_ref(list, 1);
+
+  /* Begin searching the list. */
+  int rv = E_OK, low = 0, high = list->count, mid = 0;
+  if (list->is_sorted == 0) {
+    // The list isn't sorted, we need to scan sequentially.
+    for (int i=0; i<list->count; i++) {
+      if (list->pool[i]->id == id) {
+        *buf = list->pool[i];
+        break;
+      }
     }
-    temp = temp->next;
+    rv = E_BUFFER_NOT_FOUND;
   }
-  // Didn't find it... boo...  If rv isn't 0 (i.e.: victimized), we need to let the caller know.
-  pthread_mutex_unlock(&list->lock);
-  if (rv > 0)
-    return rv;
-  return E_BUFFER_NOT_FOUND;
+  while (list->is_sorted > 0) {
+    // Reset mid and begin testing.
+    mid = (low + high)/2;
+
+    // If the pool[mid] ID matches, we found the right index.  Hooray!
+    if (list->pool[mid]->id == buf->id) {
+      *buf = list->pool[mid];
+      break;
+    }
+
+    // If our current pool[mid] ID is too high, update low.
+    if (list->pool[mid]->id < buf->id) {
+      low = mid + 1;
+      continue;
+    }
+
+    // If the pool[mid] ID is too low, we need to update high.
+    if (list->pool[mid].id > buf->id) {
+      high = mid - 1;
+      continue;
+    }
+
+    // If low == high then mid also matches and we didn't find it.  Break out and let the caller know.
+    if (low == high) {
+      rv = E_BUFFER_NOT_FOUND;
+      break;
+    }
+  }
+
+  /* If we found it we need to update the buffer's ref count while we still own the list lock. */
+  if (rv == E_OK) {
+    buffer__lock(*buf);
+    buffer__update_ref(*buf, 1);
+    buffer__unlock(*buf);
+  }
+
+  /* Regardless of whether we found it we need to remove our pin on the list's ref count and let the caller know. */
+  list__update_ref(list, -1);
+  return rv;
 }
 
 
@@ -216,7 +267,7 @@ int list__update_ref(List *list, int delta) {
   /* Lock the list and check pending writers.  If non-zero and we're incrementing, wait on the reader condition. */
   int i_had_to_wait = 0;
   pthread_mutex_lock(&list->lock);
-  if(delta > 0) {
+  if (delta > 0) {
     while(list->pending_writers > 0) {
       i_had_to_wait = 1;
       pthread_cond_wait(&list->reader_condition, &list->lock);

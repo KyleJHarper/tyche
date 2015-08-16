@@ -18,7 +18,6 @@
 #define MAX_POPULARITY UINT8_MAX
 
 /* Build the typedef and structure for a Buffer */
-typedef struct list List;  //Need to tell buffer.h what a "list" is.  This is probably wrong...
 typedef uint32_t bufferid_t;
 typedef struct buffer Buffer;
 struct buffer {
@@ -27,16 +26,12 @@ struct buffer {
   uint16_t ref_count;    /* Number of references currently holding this buffer. */
   uint8_t popularity;    /* Rapidly decaying counter used for victim selection with clock sweep.  Ceiling of MAX_POPULARITY. */
   uint8_t victimized;    /* If the buffer has been victimized this is set non-zero.  Prevents incrementing of ref_count. */
+  lockid_t lock_id;      /* Lock ID from the locker_pool[], rather than having a pthread mutex & cond for each Buffer. */
 
   /* Cost values for each buffer when pulled from disk or compressed/decompressed. */
   uint32_t comp_cost;    /* Time spent, in ns, to compress and decompress a page during a polling period.  Using clock_gettime(3) */
   uint32_t io_cost;      /* Time spent, in ns, to read this buffer from the disk.  Using clock_gettime(3) */
   uint16_t comp_hits;    /* Number of times reclaimed from the compressed table during a polling period. */
-
-  /* We use a ring buffer so we track previous and next Buffers. */
-  Buffer *previous;      /* Pointer to the previous buffer for use in a circular queue. */
-  Buffer *next;          /* Pointer to the next buffer for use in a circular queue. */
-  lockid_t lock_id;      /* Lock ID from the locker_pool[], rather than having a pthread mutex & cond for each Buffer. */
 
   /* The actual payload we want to cache (i.e.: the page). */
   uint16_t data_length;  /* Number of bytes in data.  For raw tables, always PAGE_SIZE.  Compressed will vary. */
