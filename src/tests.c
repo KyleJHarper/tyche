@@ -21,10 +21,11 @@ extern const int E_BUFFER_IS_VICTIMIZED;
 
 // A global for testing cuz I'm bad
 const int LIST_COUNT       =  5000;
-const int WORKER_COUNT     =    50;
+const int WORKER_COUNT     =    40;
 const int READS_PER_WORKER =  1000;
 const int LIST_FLOOR       =  4900;
 const int SLEEP_DELAY      =  1234;
+
 
 void tests__synchronized_read() {
   List *raw_list = list__initialize();
@@ -37,23 +38,24 @@ void tests__synchronized_read() {
   }
 
   // Start worker threads which will try to read data at the same time.
+  printf("Starting readers\n");
   pthread_t workers[WORKER_COUNT];
   for (int i=0; i<WORKER_COUNT; i++)
     pthread_create(&workers[i], NULL, (void *) &tests__read, raw_list);
 
   // Start up a chaos monkey to remove some of the buffers.
-  pthread_t chaos_worker;
-  pthread_create(&chaos_worker, NULL, (void *) &tests__chaos, raw_list);
+  //pthread_t chaos_worker;
+  //pthread_create(&chaos_worker, NULL, (void *) &tests__chaos, raw_list);
 
   // Wait for them to finish.
   for (int i=0; i<WORKER_COUNT; i++)
     pthread_join(workers[i], NULL);
-  pthread_join(chaos_worker, NULL);
-
+  //	pthread_join(chaos_worker, NULL);
+  printf("grr\n");
   for (int i=0; i<raw_list->count; i++) {
+    printf("whee %d\n", i);
     if (temp->ref_count != 0)
       printf("Buffer number %d has non-zero ref_count: %d\n", temp->id, temp->ref_count);
-    //printf("Buffer id %03d has ref_count of %d\n", temp->id, temp->ref_count);
   }
 }
 void tests__read(List *raw_list) {
@@ -65,46 +67,38 @@ void tests__read(List *raw_list) {
   Buffer *selected;
   for (int i=0; i<READS_PER_WORKER; i++) {
     for(;;) {
-      id_to_get = rand() % LIST_COUNT + 1;
+      id_to_get = rand() % raw_list->count;
       rv = list__search(raw_list, &selected, id_to_get);
+printf("I've done %d reads.\n", i+1);
       if (rv == 0)
         break;
       if (rv == E_BUFFER_NOT_FOUND || rv == E_BUFFER_POOFED || E_BUFFER_IS_VICTIMIZED)
         continue;
       printf("We should never hit this (rv is %d).\n", rv);
     }
-    usleep(rand() % SLEEP_DELAY);  // This helps skew interlocking (letting ref_count go above 1)
-    //printf("Going to lock buffer %d\n", selected->id);
-    rv = buffer__lock(raw_list, selected);
+    usleep(rand() % SLEEP_DELAY);  // This just emulates some random time the reader will use this buffer.
+    rv = buffer__lock(selected);
     if (rv == E_OK || rv == E_BUFFER_IS_VICTIMIZED) {
       buffer__update_ref(selected, -1);
       buffer__unlock(selected);
     }
-    //printf("Released buffer id %02d.  Ref count is now %02d.\n", selected->id, selected->ref_count);
   }
   pthread_exit(0);
 }
 void tests__chaos(List *raw_list) {
-  // Remove a buffer from the list every so often until we're down to 5, just because.
+  // Remove a buffer from the list every so often until we're down to LIST_FLOOR, just because.
   Buffer *temp;
   int rv = 0;
   bufferid_t id_to_remove = 0;
   while(raw_list->count > LIST_FLOOR) {
     for(;;) {
-      id_to_remove = rand() % LIST_COUNT + 1;
+      id_to_remove = rand() % LIST_COUNT;
       rv = list__search(raw_list, &temp, id_to_remove);
       if (rv == 0)
         break;
       if (rv == E_BUFFER_NOT_FOUND || rv == E_BUFFER_POOFED)
         continue;
       printf("We should never hit this either.\n");
-    }
-    rv = buffer__lock(raw_list, temp);
-    if (rv == E_OK || rv == E_BUFFER_IS_VICTIMIZED){
-      buffer__update_ref(temp, -1);
-      buffer__unlock(temp);
-    } else {
-      printf("Grr %d\n", rv);
     }
     printf("Going to remove buffer id: %d (count is: %d, list size is: %d)\n", temp->id, temp->ref_count, raw_list->count);
     list__remove(raw_list, &temp);  // There's only one thread removing buffers so no checking required.
@@ -127,8 +121,6 @@ void tests__elem() {
 
   printf("Number of raw  elements: %d\n", raw_list->count);
   printf("Number of comp elements: %d\n", comp_list->count);
-  printf("Raw  Self: %p   Prev: %p   Next: %p\n", raw_list->head, raw_list->head->previous, raw_list->head->next);
-  printf("Comp Self: %p   Prev: %p   Next: %p\n", comp_list->head, comp_list->head->previous, comp_list->head->next);
 
   list__remove(raw_list, &elem1);
   list__remove(raw_list, &elem3);
@@ -136,7 +128,5 @@ void tests__elem() {
 
   printf("Number of raw  elements: %d\n", raw_list->count);
   printf("Number of comp elements: %d\n", comp_list->count);
-  printf("Raw  Self: %p   Prev: %p   Next: %p\n", raw_list->head, raw_list->head->previous, raw_list->head->next);
-  printf("Comp Self: %p   Prev: %p   Next: %p\n", comp_list->head, comp_list->head->previous, comp_list->head->next);
 }
 

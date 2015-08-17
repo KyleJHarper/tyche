@@ -9,6 +9,7 @@
 #define SRC_TESTS_H_
 
 void tests__synchronized_read();
+void tests__wake_up(List *raw_list);
 void tests__read(List *raw_list);
 void tests__chaos(List *raw_list);
 void tests__elem();

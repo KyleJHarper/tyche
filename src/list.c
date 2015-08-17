@@ -46,12 +46,11 @@ extern const int E_BUFFER_ALREADY_EXISTS;
 /* list__initialize
  * Creates the actual list that we're being given a pointer to.  We will also create the head of it as a reference point.
  */
-List* list__initialize(uint8_t is_sorted) {
+List* list__initialize() {
   /* Quick error checking, then initialize the list.  We don't need to lock it because it's synchronous. */
   List *list = (List *)malloc(sizeof(List));
   if (list == NULL)
     show_err("Failed to malloc a new list.", E_GENERIC);
-  list->is_sorted = is_sorted;
   list->count = 0;
   list->ref_count = 0;
   list->pending_writers = 0;
@@ -81,11 +80,7 @@ int list__add(List *list, Buffer *buf) {
 
   /* We now own the lock and no one should be scanning the list.  We can safely scan it ourselves and then edit it. */
   int rv = E_OK, low = 0, high = list->count, mid = 0;
-  if (list->is_sorted == 0) {
-    /* The list isn't sorted.  We can just assign buf to the index of list->count. */
-    list->pool[list->count] = buf;
-  }
-  while(list->is_sorted > 0) {
+  for(;;) {
     // Reset mid and begin testing.
     mid = (low + high)/2;
 
@@ -110,7 +105,7 @@ int list__add(List *list, Buffer *buf) {
     }
 
     // If the pool[mid] ID is too low, we need to update high.
-    if (list->pool[mid].id > buf->id) {
+    if (list->pool[mid]->id > buf->id) {
       high = mid - 1;
       continue;
     }
@@ -138,7 +133,7 @@ int list__remove(List *list, Buffer **buf) {
   list->pending_writers--;
 
   /* At this point we own the list lock.  Try to victimize the buffer so we can remove it. */
-  int rv = buffer__victimize(list, *buf);
+  int rv = buffer__victimize(*buf);
   /* If the buffer poofed we can't work with it let alone remove it (someone else already did).  It's unlocked at this point too. */
   if (rv == E_BUFFER_POOFED)
     return E_OK;
@@ -149,30 +144,25 @@ int list__remove(List *list, Buffer **buf) {
   int low = 0, high = list->count, mid = 0;
   rv = E_OK;
   lockid_t lock_id = (*buf)->lock_id;
-  if (list->is_sorted == 0) {
-    // It's not sorted, so we simply pop the 0th element by pulling the others downward.
-    for (int i=0; i<list->count; i++)
-      list->pool[i] = list->pool[i+1];
-  }
-  while(list->is_sorted > 0) {
+  for(;;) {
     // Reset mid and begin testing.
     mid = (low + high)/2;
 
     // If the pool[mid] ID matches, we found the right index.  Collapse downward and break out.
-    if (list->pool[mid]->id == buf->id) {
+    if (list->pool[mid]->id == (*buf)->id) {
       for (int i=mid; i<list->count; i++)
         list->pool[i] = list->pool[i+1];
       break;
     }
 
     // If our current pool[mid] ID is too high, update low.
-    if (list->pool[mid]->id < buf->id) {
+    if (list->pool[mid]->id < (*buf)->id) {
       low = mid + 1;
       continue;
     }
 
     // If the pool[mid] ID is too low, we need to update high.
-    if (list->pool[mid].id > buf->id) {
+    if (list->pool[mid]->id > (*buf)->id) {
       high = mid - 1;
       continue;
     }
@@ -206,40 +196,35 @@ int list__search(List *list, Buffer **buf, bufferid_t id) {
 
   /* Begin searching the list. */
   int rv = E_OK, low = 0, high = list->count, mid = 0;
-  if (list->is_sorted == 0) {
-    // The list isn't sorted, we need to scan sequentially.
-    for (int i=0; i<list->count; i++) {
-      if (list->pool[i]->id == id) {
-        *buf = list->pool[i];
-        break;
-      }
-    }
-    rv = E_BUFFER_NOT_FOUND;
-  }
-  while (list->is_sorted > 0) {
+  for(;;) {
     // Reset mid and begin testing.
     mid = (low + high)/2;
+//printf("Looping through search.  Low, mid, and high are %d, %d, %d\n", low, mid, high);
 
     // If the pool[mid] ID matches, we found the right index.  Hooray!
-    if (list->pool[mid]->id == buf->id) {
+    if (list->pool[mid]->id == id) {
+//printf("  Found it.  Breaking.\n");
       *buf = list->pool[mid];
       break;
     }
 
     // If our current pool[mid] ID is too high, update low.
-    if (list->pool[mid]->id < buf->id) {
+    if (list->pool[mid]->id < id) {
+//printf("  The mid ID (%d) is lower than the id_to_get (%d).  Setting low to mid+1\n", mid, id);
       low = mid + 1;
       continue;
     }
 
     // If the pool[mid] ID is too low, we need to update high.
-    if (list->pool[mid].id > buf->id) {
+    if (list->pool[mid]->id > id) {
+//printf("  The mid ID (%d) is higher then the id_to_get (%d).  Setting high to mid-1\n", mid, id);
       high = mid - 1;
       continue;
     }
 
     // If low == high then mid also matches and we didn't find it.  Break out and let the caller know.
     if (low == high) {
+//printf("  Buffer wasn't found.  Sad face.\n");
       rv = E_BUFFER_NOT_FOUND;
       break;
     }

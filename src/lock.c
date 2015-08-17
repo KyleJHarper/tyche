@@ -21,7 +21,7 @@
 
 /* Defines and global values */
 #define MAX_LOCK_VALUE UINT16_MAX
-lockid_t next_id;
+lockid_t next_id = 0;
 pthread_mutex_t next_id_mutex = PTHREAD_MUTEX_INITIALIZER;
 Lock locker_pool[MAX_LOCK_VALUE];
 

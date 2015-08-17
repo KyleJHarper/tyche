@@ -26,7 +26,6 @@
 /* Build the typedef and structure for a List */
 typedef struct list List;
 struct list {
-  uint8_t is_sorted;                /* Should this buffer be sorted? */
   uint32_t count;                   /* Number of buffers in the list. */
   pthread_mutex_t lock;             /* For operations requiring exclusive locking of the list (writing to it). */
   pthread_cond_t writer_condition;  /* The condition variable for writers to wait for when attempting to drain a list of refs. */
@@ -37,7 +36,7 @@ struct list {
 };
 
 /* Function prototypes.  Not required, but whatever. */
-List* list__initialize(uint8_t is_sorted);
+List* list__initialize();
 int list__add(List *list, Buffer *buf);
 int list__remove(List *list, Buffer **buf);
 int list__update_ref(List *list, int delta);
