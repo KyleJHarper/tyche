@@ -100,7 +100,6 @@ int buffer__victimize(Buffer *buf) {
   if (rv > 0 && rv != E_BUFFER_IS_VICTIMIZED)
     return rv;
   buf->victimized = 1;
-  printf("marked victim, ref count is %d, rv from lock is %d\n", buf->ref_count, rv);
   while(buf->ref_count != 0)
     pthread_cond_wait(&locker_pool[buf->lock_id].condition, &locker_pool[buf->lock_id].mutex);
   return E_OK;

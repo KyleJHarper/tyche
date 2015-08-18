@@ -38,7 +38,6 @@ extern const int E_OK;
 extern const int E_GENERIC;
 extern const int E_BUFFER_NOT_FOUND;
 extern const int E_BUFFER_POOFED;
-extern const int E_BUFFER_IS_VICTIMIZED;
 extern const int E_BUFFER_ALREADY_EXISTS;
 
 
@@ -85,7 +84,7 @@ int list__add(List *list, Buffer *buf) {
     mid = (low + high)/2;
 
     // If low == high then mid also matches and we didn't find it (which is good!).  We're safe to shift (if needed) and insert.
-    if (low == high) {
+    if (low == high || mid == list->count) {
       for(int i=list->count; i<mid; i--)
         list->pool[i] = list->pool[i-1];
       list->pool[mid] = buf;
@@ -131,7 +130,7 @@ int list__remove(List *list, Buffer **buf) {
   while(list->ref_count != 0)
     pthread_cond_wait(&list->writer_condition, &list->lock);
   list->pending_writers--;
-
+printf("Hmm...\n");
   /* At this point we own the list lock.  Try to victimize the buffer so we can remove it. */
   int rv = buffer__victimize(*buf);
   /* If the buffer poofed we can't work with it let alone remove it (someone else already did).  It's unlocked at this point too. */
@@ -145,8 +144,12 @@ int list__remove(List *list, Buffer **buf) {
   rv = E_OK;
   lockid_t lock_id = (*buf)->lock_id;
   for(;;) {
-    // Reset mid and begin testing.
+    // Reset mid and begin testing.  Start with boundary testing to break if we're done.
     mid = (low + high)/2;
+    if (high < low || low > high || mid >= list->count) {
+      rv = E_BUFFER_NOT_FOUND;
+      break;
+    }
 
     // If the pool[mid] ID matches, we found the right index.  Collapse downward and break out.
     if (list->pool[mid]->id == (*buf)->id) {
@@ -165,12 +168,6 @@ int list__remove(List *list, Buffer **buf) {
     if (list->pool[mid]->id > (*buf)->id) {
       high = mid - 1;
       continue;
-    }
-
-    // If low == high then mid also matches and we didn't find it.  This is a problem.
-    if (low == high) {
-      rv = E_BUFFER_NOT_FOUND;
-      break;
     }
   }
 
@@ -195,38 +192,30 @@ int list__search(List *list, Buffer **buf, bufferid_t id) {
   list__update_ref(list, 1);
 
   /* Begin searching the list. */
-  int rv = E_OK, low = 0, high = list->count, mid = 0;
+  int rv = E_BUFFER_NOT_FOUND, low = 0, high = list->count, mid = 0;
   for(;;) {
-    // Reset mid and begin testing.
+    // Reset mid and begin testing.  Start with boundary testing to break if we're done.
     mid = (low + high)/2;
-//printf("Looping through search.  Low, mid, and high are %d, %d, %d\n", low, mid, high);
+    if (high < low || low > high || mid >= list->count)
+      break;
 
     // If the pool[mid] ID matches, we found the right index.  Hooray!
     if (list->pool[mid]->id == id) {
-//printf("  Found it.  Breaking.\n");
+      rv = E_OK;
       *buf = list->pool[mid];
       break;
     }
 
     // If our current pool[mid] ID is too high, update low.
     if (list->pool[mid]->id < id) {
-//printf("  The mid ID (%d) is lower than the id_to_get (%d).  Setting low to mid+1\n", mid, id);
       low = mid + 1;
       continue;
     }
 
     // If the pool[mid] ID is too low, we need to update high.
     if (list->pool[mid]->id > id) {
-//printf("  The mid ID (%d) is higher then the id_to_get (%d).  Setting high to mid-1\n", mid, id);
       high = mid - 1;
       continue;
-    }
-
-    // If low == high then mid also matches and we didn't find it.  Break out and let the caller know.
-    if (low == high) {
-//printf("  Buffer wasn't found.  Sad face.\n");
-      rv = E_BUFFER_NOT_FOUND;
-      break;
     }
   }
 

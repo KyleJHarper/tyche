@@ -20,11 +20,12 @@ extern const int E_BUFFER_NOT_FOUND;
 extern const int E_BUFFER_IS_VICTIMIZED;
 
 // A global for testing cuz I'm bad
-const int LIST_COUNT       =  5000;
-const int WORKER_COUNT     =    40;
-const int READS_PER_WORKER =  1000;
-const int LIST_FLOOR       =  4900;
-const int SLEEP_DELAY      =  1234;
+const int LIST_COUNT       =   5000;
+const int WORKER_COUNT     =   1;
+const int CHAOS_MONKIES    =     10;
+const int READS_PER_WORKER =  10000;
+const int LIST_FLOOR       =   3900;
+const int SLEEP_DELAY      =    123;
 
 
 void tests__synchronized_read() {
@@ -43,17 +44,18 @@ void tests__synchronized_read() {
   for (int i=0; i<WORKER_COUNT; i++)
     pthread_create(&workers[i], NULL, (void *) &tests__read, raw_list);
 
-  // Start up a chaos monkey to remove some of the buffers.
-  //pthread_t chaos_worker;
-  //pthread_create(&chaos_worker, NULL, (void *) &tests__chaos, raw_list);
+  // Start up a chaos monkies for insanity.
+  pthread_t chaos_monkies[CHAOS_MONKIES];
+  for (int i=0; i<CHAOS_MONKIES; i++)
+    pthread_create(&chaos_monkies[i], NULL, (void *) &tests__chaos, raw_list);
 
   // Wait for them to finish.
   for (int i=0; i<WORKER_COUNT; i++)
     pthread_join(workers[i], NULL);
-  //	pthread_join(chaos_worker, NULL);
-  printf("grr\n");
+  for (int i=0; i<CHAOS_MONKIES; i++)
+    pthread_join(chaos_monkies[i], NULL);
+printf("All done.\n");
   for (int i=0; i<raw_list->count; i++) {
-    printf("whee %d\n", i);
     if (temp->ref_count != 0)
       printf("Buffer number %d has non-zero ref_count: %d\n", temp->id, temp->ref_count);
   }
@@ -69,7 +71,6 @@ void tests__read(List *raw_list) {
     for(;;) {
       id_to_get = rand() % raw_list->count;
       rv = list__search(raw_list, &selected, id_to_get);
-printf("I've done %d reads.\n", i+1);
       if (rv == 0)
         break;
       if (rv == E_BUFFER_NOT_FOUND || rv == E_BUFFER_POOFED || E_BUFFER_IS_VICTIMIZED)
@@ -83,6 +84,7 @@ printf("I've done %d reads.\n", i+1);
       buffer__unlock(selected);
     }
   }
+  printf("I'm a reader and I'm O-K!\n");
   pthread_exit(0);
 }
 void tests__chaos(List *raw_list) {
@@ -92,7 +94,8 @@ void tests__chaos(List *raw_list) {
   bufferid_t id_to_remove = 0;
   while(raw_list->count > LIST_FLOOR) {
     for(;;) {
-      id_to_remove = rand() % LIST_COUNT;
+//      id_to_remove = rand() % LIST_COUNT;
+      id_to_remove = 777;
       rv = list__search(raw_list, &temp, id_to_remove);
       if (rv == 0)
         break;
@@ -100,10 +103,13 @@ void tests__chaos(List *raw_list) {
         continue;
       printf("We should never hit this either.\n");
     }
+    // List search gave us a ref_count, need to decrement ourself.
+    buffer__lock(temp);
+    buffer__update_ref(temp, -1);
+    buffer__unlock(temp);
     printf("Going to remove buffer id: %d (count is: %d, list size is: %d)\n", temp->id, temp->ref_count, raw_list->count);
-    list__remove(raw_list, &temp);  // There's only one thread removing buffers so no checking required.
-    printf("Did it\n");
-    usleep(SLEEP_DELAY);
+    list__remove(raw_list, &temp);
+    usleep(1000);
   }
   printf("Removed all buffers.  Count is now %d\n", raw_list->count);
   pthread_exit(0);
