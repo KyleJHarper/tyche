@@ -97,6 +97,7 @@ int buffer__update_ref(Buffer *buf, int delta) {
 int buffer__victimize(Buffer *buf) {
   /* Try to lock the buffer.  If it returns already victimized then we don't need to do anything.  Any other non-zero, error. */
   int rv = buffer__lock(buf);
+  printf("buffer__lock returned %d\n", rv);
   if (rv > 0 && rv != E_BUFFER_IS_VICTIMIZED)
     return rv;
   buf->victimized = 1;

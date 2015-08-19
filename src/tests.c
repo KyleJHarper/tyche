@@ -20,11 +20,11 @@ extern const int E_BUFFER_NOT_FOUND;
 extern const int E_BUFFER_IS_VICTIMIZED;
 
 // A global for testing cuz I'm bad
-const int LIST_COUNT       =   5000;
-const int WORKER_COUNT     =   1;
-const int CHAOS_MONKIES    =     10;
+const int LIST_COUNT       =   800;
+const int WORKER_COUNT     =   0;
+const int CHAOS_MONKIES    =     2;
 const int READS_PER_WORKER =  10000;
-const int LIST_FLOOR       =   3900;
+const int LIST_FLOOR       =   700;
 const int SLEEP_DELAY      =    123;
 
 
@@ -94,8 +94,9 @@ void tests__chaos(List *raw_list) {
   bufferid_t id_to_remove = 0;
   while(raw_list->count > LIST_FLOOR) {
     for(;;) {
-//      id_to_remove = rand() % LIST_COUNT;
-      id_to_remove = 777;
+      //id_to_remove = rand() % LIST_COUNT;
+      //if (rand() % 2 == 1)
+        id_to_remove = 777;
       rv = list__search(raw_list, &temp, id_to_remove);
       if (rv == 0)
         break;
@@ -109,6 +110,7 @@ void tests__chaos(List *raw_list) {
     buffer__unlock(temp);
     printf("Going to remove buffer id: %d (count is: %d, list size is: %d)\n", temp->id, temp->ref_count, raw_list->count);
     list__remove(raw_list, &temp);
+    printf("Did it.\n");
     usleep(1000);
   }
   printf("Removed all buffers.  Count is now %d\n", raw_list->count);

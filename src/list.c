@@ -27,6 +27,7 @@
 #include <stdint.h>
 #include <pthread.h>
 #include <string.h>
+#include <time.h>
 #include "buffer.h"
 #include "lock.h"
 #include "error.h"
@@ -130,7 +131,13 @@ int list__remove(List *list, Buffer **buf) {
   while(list->ref_count != 0)
     pthread_cond_wait(&list->writer_condition, &list->lock);
   list->pending_writers--;
-printf("Hmm...\n");
+if (*buf == NULL)
+  printf("THIS IS NULL\n");
+printf("*Buf's pointer value is %zu\n", *buf);
+printf("Buf's pointer value is %zu\n", buf);
+printf("id: %d\n", (*buf)->id);
+printf("victimized: %d\n", (*buf)->victimized);
+printf("lock_id is %d\n", (*buf)->lock_id);
   /* At this point we own the list lock.  Try to victimize the buffer so we can remove it. */
   int rv = buffer__victimize(*buf);
   /* If the buffer poofed we can't work with it let alone remove it (someone else already did).  It's unlocked at this point too. */
@@ -146,15 +153,20 @@ printf("Hmm...\n");
   for(;;) {
     // Reset mid and begin testing.  Start with boundary testing to break if we're done.
     mid = (low + high)/2;
+    printf("High, Low, and Mid are: %d, %d, %d.  To get is: %d\n", high, mid, low, (*buf)->id);
     if (high < low || low > high || mid >= list->count) {
+printf("Didn't find it.\n");
       rv = E_BUFFER_NOT_FOUND;
       break;
     }
-
     // If the pool[mid] ID matches, we found the right index.  Collapse downward and break out.
     if (list->pool[mid]->id == (*buf)->id) {
-      for (int i=mid; i<list->count; i++)
+printf("Found it.  Shifting.\n");
+      for (int i=mid; i<list->count - 1; i++) {
+printf("Setting %zu (%d) to %zu (%d)\n", list->pool[i], list->pool[i]->id, list->pool[i+1], list->pool[i+1]->id);
         list->pool[i] = list->pool[i+1];
+      }
+printf("Mid now contains %d\n", list->pool[mid]->id);
       break;
     }
 
@@ -172,10 +184,11 @@ printf("Hmm...\n");
   }
 
   /* Update the count if everything is all good.  Then free the buf, null it out, and leave. */
-  if (rv == 0)
+  if (rv == E_OK) {
     list->count--;
-  free(*buf);
-  *buf = NULL;
+    free(*buf);
+    *buf = NULL;
+  }
   lock__release(lock_id);
   pthread_cond_broadcast(&list->reader_condition);
   pthread_mutex_unlock(&list->lock);
