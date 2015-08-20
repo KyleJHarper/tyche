@@ -42,6 +42,13 @@ Buffer* buffer__initialize(bufferid_t id) {
   new_buffer->ref_count = 0;
   new_buffer->removal_index = 0;
   new_buffer->id = id;
+  new_buffer->comp_cost = 0;
+  new_buffer->comp_hits = 0;
+  new_buffer->victimized = 0;
+  new_buffer->popularity = 0;
+  new_buffer->data_length = 0;
+  new_buffer->io_cost = 0;
+  new_buffer->removal_index = 0;
   return new_buffer;
 }
 
@@ -97,7 +104,6 @@ int buffer__update_ref(Buffer *buf, int delta) {
 int buffer__victimize(Buffer *buf) {
   /* Try to lock the buffer.  If it returns already victimized then we don't need to do anything.  Any other non-zero, error. */
   int rv = buffer__lock(buf);
-  printf("buffer__lock returned %d\n", rv);
   if (rv > 0 && rv != E_BUFFER_IS_VICTIMIZED)
     return rv;
   buf->victimized = 1;

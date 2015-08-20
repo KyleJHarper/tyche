@@ -27,7 +27,6 @@
 #include <stdint.h>
 #include <pthread.h>
 #include <string.h>
-#include <time.h>
 #include "buffer.h"
 #include "lock.h"
 #include "error.h"
@@ -131,13 +130,15 @@ int list__remove(List *list, Buffer **buf) {
   while(list->ref_count != 0)
     pthread_cond_wait(&list->writer_condition, &list->lock);
   list->pending_writers--;
-if (*buf == NULL)
-  printf("THIS IS NULL\n");
-printf("*Buf's pointer value is %zu\n", *buf);
-printf("Buf's pointer value is %zu\n", buf);
-printf("id: %d\n", (*buf)->id);
-printf("victimized: %d\n", (*buf)->victimized);
-printf("lock_id is %d\n", (*buf)->lock_id);
+
+if (*buf == NULL) {
+  pthread_cond_broadcast(&list->reader_condition);
+  pthread_mutex_unlock(&list->lock);
+  return E_OK;
+}
+printf("*Buf is %p and its ID is %d and victimized is %d\n", *buf, (*buf)->id, (*buf)->victimized);
+printf("List has ref_count of %d and pending_writers of %d\n", list->ref_count, list->pending_writers);
+
   /* At this point we own the list lock.  Try to victimize the buffer so we can remove it. */
   int rv = buffer__victimize(*buf);
   /* If the buffer poofed we can't work with it let alone remove it (someone else already did).  It's unlocked at this point too. */
@@ -153,20 +154,14 @@ printf("lock_id is %d\n", (*buf)->lock_id);
   for(;;) {
     // Reset mid and begin testing.  Start with boundary testing to break if we're done.
     mid = (low + high)/2;
-    printf("High, Low, and Mid are: %d, %d, %d.  To get is: %d\n", high, mid, low, (*buf)->id);
     if (high < low || low > high || mid >= list->count) {
-printf("Didn't find it.\n");
       rv = E_BUFFER_NOT_FOUND;
       break;
     }
     // If the pool[mid] ID matches, we found the right index.  Collapse downward and break out.
     if (list->pool[mid]->id == (*buf)->id) {
-printf("Found it.  Shifting.\n");
-      for (int i=mid; i<list->count - 1; i++) {
-printf("Setting %zu (%d) to %zu (%d)\n", list->pool[i], list->pool[i]->id, list->pool[i+1], list->pool[i+1]->id);
+      for (int i=mid; i<list->count - 1; i++)
         list->pool[i] = list->pool[i+1];
-      }
-printf("Mid now contains %d\n", list->pool[mid]->id);
       break;
     }
 
@@ -190,6 +185,7 @@ printf("Mid now contains %d\n", list->pool[mid]->id);
     *buf = NULL;
   }
   lock__release(lock_id);
+  printf("done\n");
   pthread_cond_broadcast(&list->reader_condition);
   pthread_mutex_unlock(&list->lock);
   return rv;
@@ -234,8 +230,11 @@ int list__search(List *list, Buffer **buf, bufferid_t id) {
 
   /* If we found it we need to update the buffer's ref count while we still own the list lock. */
   if (rv == E_OK) {
-    buffer__lock(*buf);
-    buffer__update_ref(*buf, 1);
+    int lock_rv = 0;
+    lock_rv = buffer__lock(*buf);
+    lock_rv = buffer__update_ref(*buf, 1);
+    if (lock_rv != E_OK)
+      rv = lock_rv;
     buffer__unlock(*buf);
   }
 
