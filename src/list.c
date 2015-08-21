@@ -39,6 +39,7 @@ extern const int E_GENERIC;
 extern const int E_BUFFER_NOT_FOUND;
 extern const int E_BUFFER_POOFED;
 extern const int E_BUFFER_ALREADY_EXISTS;
+extern const int E_BUFFER_IS_VICTIMIZED;
 
 
 /* Functions */
@@ -131,23 +132,21 @@ int list__remove(List *list, Buffer **buf) {
     pthread_cond_wait(&list->writer_condition, &list->lock);
   list->pending_writers--;
 
-if (*buf == NULL) {
-  pthread_cond_broadcast(&list->reader_condition);
-  pthread_mutex_unlock(&list->lock);
-  return E_OK;
-}
-printf("*Buf is %p and its ID is %d and victimized is %d\n", *buf, (*buf)->id, (*buf)->victimized);
-printf("List has ref_count of %d and pending_writers of %d\n", list->ref_count, list->pending_writers);
+  /* If the *buf is NULL then another thread already removed it from the list.  Signal, unlock, and leave happy. */
+  if (*buf == NULL) {
+    printf("*buf is null so I'm leaving %d\n", pthread_self());
+    pthread_cond_broadcast(&list->reader_condition);
+    pthread_mutex_unlock(&list->lock);
+    return E_OK;
+  }
+printf("%d : going to remove buf id %d for ptr %d  -- ref_count %d, lock_id %d\n", pthread_self(), (*buf)->id, *buf, (*buf)->ref_count, (*buf)->lock_id);
 
   /* At this point we own the list lock.  Try to victimize the buffer so we can remove it. */
   int rv = buffer__victimize(*buf);
-  /* If the buffer poofed we can't work with it let alone remove it (someone else already did).  It's unlocked at this point too. */
-  if (rv == E_BUFFER_POOFED)
-    return E_OK;
   if (rv != 0)
-    show_err("The list__remove function received an error when trying to victimize the buffer.\n", rv);
+    show_err("The list__remove function received an error when trying to victimize the buffer (%d).\n", rv);
 
-  /* We now have the list locked and the buffer fully victimized and locked.  Store the lock and begin searching for index. */
+  /* We now have the list locked and the buffer fully victimized and locked.  Store the lock_id and begin searching for index. */
   int low = 0, high = list->count, mid = 0;
   rv = E_OK;
   lockid_t lock_id = (*buf)->lock_id;
@@ -158,10 +157,16 @@ printf("List has ref_count of %d and pending_writers of %d\n", list->ref_count, 
       rv = E_BUFFER_NOT_FOUND;
       break;
     }
-    // If the pool[mid] ID matches, we found the right index.  Collapse downward and break out.
+
+    // If the pool[mid] ID matches, we found the right index.  Collapse downward, update the list, null out *buf, and leave.
     if (list->pool[mid]->id == (*buf)->id) {
       for (int i=mid; i<list->count - 1; i++)
         list->pool[i] = list->pool[i+1];
+      list->count--;
+      free(*buf);
+      *buf = NULL;
+      lock__release(lock_id);
+      printf("%d : free() and null done\n", pthread_self());
       break;
     }
 
@@ -178,14 +183,7 @@ printf("List has ref_count of %d and pending_writers of %d\n", list->ref_count, 
     }
   }
 
-  /* Update the count if everything is all good.  Then free the buf, null it out, and leave. */
-  if (rv == E_OK) {
-    list->count--;
-    free(*buf);
-    *buf = NULL;
-  }
-  lock__release(lock_id);
-  printf("done\n");
+  /* Release the lock and broadcast to readers. */
   pthread_cond_broadcast(&list->reader_condition);
   pthread_mutex_unlock(&list->lock);
   return rv;
@@ -208,10 +206,20 @@ int list__search(List *list, Buffer **buf, bufferid_t id) {
     if (high < low || low > high || mid >= list->count)
       break;
 
-    // If the pool[mid] ID matches, we found the right index.  Hooray!
+    // If the pool[mid] ID matches, we found the right index.  Hooray!  Update ref count if possible.  If not, let caller know.
     if (list->pool[mid]->id == id) {
       rv = E_OK;
       *buf = list->pool[mid];
+      rv = buffer__lock(*buf);
+      if (rv == E_BUFFER_POOFED) {
+        rv = E_BUFFER_NOT_FOUND;
+        break;
+      }
+      if (rv == E_BUFFER_IS_VICTIMIZED)
+        break;
+      // At this point the buffer is locked and not victimized so we can safely increment ref count.
+      buffer__update_ref(*buf, 1);
+      buffer__unlock(*buf);
       break;
     }
 
@@ -230,12 +238,6 @@ int list__search(List *list, Buffer **buf, bufferid_t id) {
 
   /* If we found it we need to update the buffer's ref count while we still own the list lock. */
   if (rv == E_OK) {
-    int lock_rv = 0;
-    lock_rv = buffer__lock(*buf);
-    lock_rv = buffer__update_ref(*buf, 1);
-    if (lock_rv != E_OK)
-      rv = lock_rv;
-    buffer__unlock(*buf);
   }
 
   /* Regardless of whether we found it we need to remove our pin on the list's ref count and let the caller know. */

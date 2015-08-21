@@ -92,29 +92,23 @@ void tests__chaos(List *raw_list) {
   Buffer *temp;
   int rv = 0;
   bufferid_t id_to_remove = 0;
-  while(raw_list->count > LIST_FLOOR) {
-    for(;;) {
-      //id_to_remove = rand() % LIST_COUNT;
-      //if (rand() % 2 == 1)
-      if(raw_list->count <= LIST_FLOOR)
-        break;
-      id_to_remove = 777;
-      rv = list__search(raw_list, &temp, id_to_remove);
-      if (rv == 0) {
-        // List search gave us a ref_count, need to decrement ourself.
-        buffer__lock(temp);
-        buffer__update_ref(temp, -1);
-        buffer__unlock(temp);
-        break;
-      }
-      if (rv == E_BUFFER_NOT_FOUND || rv == E_BUFFER_POOFED || rv == E_BUFFER_IS_VICTIMIZED)
-        continue;
-      printf("We should never hit this either.\n");
-    }
-    list__remove(raw_list, &temp);
-    usleep(1000);
+  id_to_remove = 777;
+  printf("%d : starting search\n", pthread_self());
+  rv = list__search(raw_list, &temp, id_to_remove);
+  printf("%d : done searching, rv is %d\n", pthread_self(), rv);
+  if (rv == 0) {
+    // List search gave us a ref_count, need to decrement ourself.
+    rv = buffer__lock(temp);
+    printf("%d : updating ref (rv is %d, vict is %d, count is %d)\n", pthread_self(), rv, temp->victimized, temp->ref_count);
+    buffer__update_ref(temp, -1);
+    printf("%d : updating ref (rv is %d, vict is %d, count is %d)\n", pthread_self(), rv, temp->victimized, temp->ref_count);
+    buffer__unlock(temp);
+    rv = list__remove(raw_list, &temp);
+    printf("%d : list__remove gave %d\n", pthread_self(), rv);
   }
-  printf("Removed all buffers.  Count is now %d\n", raw_list->count);
+  if (rv == 0)
+    printf("%d : removed a buffer\n", pthread_self());
+  usleep(1000);
   pthread_exit(0);
 }
 

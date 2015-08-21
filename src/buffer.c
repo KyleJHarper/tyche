@@ -62,6 +62,7 @@ int buffer__lock(Buffer *buf) {
   if (buf == NULL)
     return E_BUFFER_POOFED;
   pthread_mutex_lock(&locker_pool[buf->lock_id].mutex);
+  printf("%d : locked buffer\n", pthread_self());
   /* If a buffer is victimized we can still lock it, but the caller needs to know. This is safe because buffer__victimize locks. */
   if (buf->victimized != 0)
     return E_BUFFER_IS_VICTIMIZED;
@@ -74,6 +75,7 @@ int buffer__lock(Buffer *buf) {
  * of a block who already owns the lock, we don't need any special checking.
  */
 void buffer__unlock(Buffer *buf) {
+  printf("%d : unlocking buffer\n", pthread_self());
   pthread_mutex_unlock(&locker_pool[buf->lock_id].mutex);
 }
 
@@ -84,6 +86,7 @@ void buffer__unlock(Buffer *buf) {
  *   -1) Anyone is safe to remove their own ref because victimization blocks, preventing *poofing*.
  */
 int buffer__update_ref(Buffer *buf, int delta) {
+  printf("%d : buffer wants a delta of %d\n", pthread_self(), delta);
   if (delta > 0 && buf->victimized > 0)
     return E_BUFFER_IS_VICTIMIZED;
 
@@ -106,6 +109,7 @@ int buffer__victimize(Buffer *buf) {
   int rv = buffer__lock(buf);
   if (rv > 0 && rv != E_BUFFER_IS_VICTIMIZED)
     return rv;
+  printf("%d : marking buffer victimized\n", pthread_self());
   buf->victimized = 1;
   while(buf->ref_count != 0)
     pthread_cond_wait(&locker_pool[buf->lock_id].condition, &locker_pool[buf->lock_id].mutex);
