@@ -13,8 +13,9 @@ int main() {
   int *iptr = NULL;
   float *fptr = NULL;
   char *cptr = NULL;
-  //Buffer buf = (Buffer)malloc(sizeof(Buffer));
-
+  printf("((void *)0) is %d\n", sizeof((void *)0));
+  printf("NULL        is %d\n", sizeof(NULL));
+  printf("\n");
   printf("Size of Buffer->id           : %zu Bytes\n", sizeof((Buffer *)0)->id);
   printf("Size of Buffer->ref_count    : %zu Bytes\n", sizeof((Buffer *)0)->ref_count);
   printf("Size of Buffer->popularity   : %zu Bytes\n", sizeof((Buffer *)0)->popularity);
