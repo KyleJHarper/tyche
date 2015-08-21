@@ -101,10 +101,9 @@ void tests__chaos(List *raw_list) {
     rv = buffer__lock(temp);
     printf("%d : updating ref (rv is %d, vict is %d, count is %d)\n", pthread_self(), rv, temp->victimized, temp->ref_count);
     buffer__update_ref(temp, -1);
-    printf("%d : updating ref (rv is %d, vict is %d, count is %d)\n", pthread_self(), rv, temp->victimized, temp->ref_count);
     buffer__unlock(temp);
     rv = list__remove(raw_list, &temp);
-    printf("%d : list__remove gave %d\n", pthread_self(), rv);
+    printf("%d : list__remove gave return code %d\n", pthread_self(), rv);
   }
   if (rv == 0)
     printf("%d : removed a buffer\n", pthread_self());

@@ -27,6 +27,7 @@
 #include <stdint.h>
 #include <pthread.h>
 #include <string.h>
+#include <assert.h>
 #include "buffer.h"
 #include "lock.h"
 #include "error.h"
@@ -127,19 +128,25 @@ int list__add(List *list, Buffer *buf) {
 int list__remove(List *list, Buffer **buf) {
   /* Update the pending writers in case others are waiting. */
   pthread_mutex_lock(&list->lock);
+printf("%d : incrementing pending writers\n", pthread_self());
   list->pending_writers++;
   while(list->ref_count != 0)
     pthread_cond_wait(&list->writer_condition, &list->lock);
+printf("%d : decrementing pending writers\n", pthread_self());
   list->pending_writers--;
 
   /* If the *buf is NULL then another thread already removed it from the list.  Signal, unlock, and leave happy. */
   if (*buf == NULL) {
-    printf("*buf is null so I'm leaving %d\n", pthread_self());
-    pthread_cond_broadcast(&list->reader_condition);
+    printf("%d : *buf is null so I'm leaving\n", pthread_self());
+    if(list->pending_writers > 0) {
+      pthread_cond_broadcast(&list->writer_condition);
+    } else {
+      pthread_cond_broadcast(&list->reader_condition);
+    }
     pthread_mutex_unlock(&list->lock);
     return E_OK;
   }
-printf("%d : going to remove buf id %d for ptr %d  -- ref_count %d, lock_id %d\n", pthread_self(), (*buf)->id, *buf, (*buf)->ref_count, (*buf)->lock_id);
+printf("%d : going to remove buf id %d for pointer %d  -- ref_count %d, lock_id %d\n", pthread_self(), (*buf)->id, *buf, (*buf)->ref_count, (*buf)->lock_id);
 
   /* At this point we own the list lock.  Try to victimize the buffer so we can remove it. */
   int rv = buffer__victimize(*buf);
@@ -165,8 +172,8 @@ printf("%d : going to remove buf id %d for ptr %d  -- ref_count %d, lock_id %d\n
       list->count--;
       free(*buf);
       *buf = NULL;
-      lock__release(lock_id);
-      printf("%d : free() and null done\n", pthread_self());
+      assert(*buf == NULL);
+      printf("%d : pool shifted; free() and null assignment done\n", pthread_self());
       break;
     }
 
@@ -183,8 +190,13 @@ printf("%d : going to remove buf id %d for ptr %d  -- ref_count %d, lock_id %d\n
     }
   }
 
-  /* Release the lock and broadcast to readers. */
-  pthread_cond_broadcast(&list->reader_condition);
+  /* Release the lock and broadcast to readers or writers as needed.. */
+  lock__release(lock_id);
+  if(list->pending_writers > 0) {
+    pthread_cond_broadcast(&list->writer_condition);
+  } else {
+    pthread_cond_broadcast(&list->reader_condition);
+  }
   pthread_mutex_unlock(&list->lock);
   return rv;
 }
@@ -210,15 +222,8 @@ int list__search(List *list, Buffer **buf, bufferid_t id) {
     if (list->pool[mid]->id == id) {
       rv = E_OK;
       *buf = list->pool[mid];
-      rv = buffer__lock(*buf);
-      if (rv == E_BUFFER_POOFED) {
-        rv = E_BUFFER_NOT_FOUND;
-        break;
-      }
-      if (rv == E_BUFFER_IS_VICTIMIZED)
-        break;
-      // At this point the buffer is locked and not victimized so we can safely increment ref count.
-      buffer__update_ref(*buf, 1);
+      if (buffer__lock(*buf) == E_OK)
+        buffer__update_ref(*buf, 1);
       buffer__unlock(*buf);
       break;
     }
@@ -234,10 +239,6 @@ int list__search(List *list, Buffer **buf, bufferid_t id) {
       high = mid - 1;
       continue;
     }
-  }
-
-  /* If we found it we need to update the buffer's ref count while we still own the list lock. */
-  if (rv == E_OK) {
   }
 
   /* Regardless of whether we found it we need to remove our pin on the list's ref count and let the caller know. */

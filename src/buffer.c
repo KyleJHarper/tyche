@@ -62,7 +62,7 @@ int buffer__lock(Buffer *buf) {
   if (buf == NULL)
     return E_BUFFER_POOFED;
   pthread_mutex_lock(&locker_pool[buf->lock_id].mutex);
-  printf("%d : locked buffer\n", pthread_self());
+  printf("%d : locked buffer with lock_id of %d\n", pthread_self(), buf->lock_id);
   /* If a buffer is victimized we can still lock it, but the caller needs to know. This is safe because buffer__victimize locks. */
   if (buf->victimized != 0)
     return E_BUFFER_IS_VICTIMIZED;
@@ -75,7 +75,7 @@ int buffer__lock(Buffer *buf) {
  * of a block who already owns the lock, we don't need any special checking.
  */
 void buffer__unlock(Buffer *buf) {
-  printf("%d : unlocking buffer\n", pthread_self());
+  printf("%d : unlocking buffer with lock_id of %d\n", pthread_self(), buf->lock_id);
   pthread_mutex_unlock(&locker_pool[buf->lock_id].mutex);
 }
 
