@@ -49,6 +49,7 @@ Buffer* buffer__initialize(bufferid_t id) {
   new_buffer->data_length = 0;
   new_buffer->io_cost = 0;
   new_buffer->removal_index = 0;
+  new_buffer->data = NULL;
   return new_buffer;
 }
 

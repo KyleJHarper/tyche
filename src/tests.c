@@ -22,7 +22,7 @@ extern const int E_BUFFER_IS_VICTIMIZED;
 // A global for testing cuz I'm bad
 const int LIST_COUNT       =   800;
 const int WORKER_COUNT     =   0;
-const int CHAOS_MONKIES    =     2;
+const int CHAOS_MONKIES    =     5;
 const int READS_PER_WORKER =  10000;
 const int LIST_FLOOR       =   799;
 const int SLEEP_DELAY      =    123;
@@ -107,7 +107,6 @@ void tests__chaos(List *raw_list) {
   }
   if (rv == 0)
     printf("%d : removed a buffer\n", pthread_self());
-  usleep(1000);
   pthread_exit(0);
 }
 

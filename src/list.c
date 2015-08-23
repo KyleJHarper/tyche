@@ -170,10 +170,15 @@ printf("%d : going to remove buf id %d for pointer %d  -- ref_count %d, lock_id 
       for (int i=mid; i<list->count - 1; i++)
         list->pool[i] = list->pool[i+1];
       list->count--;
+      printf("Buf's data is currently: %d, NULL %d\n", (*buf)->data, NULL);
+      printf("List shows is currently: %d, NULL %d and count is %d\n", list->pool[mid]->data, NULL, list->count);
+      if((*buf)->data == NULL)
+        printf("Buf's data is null\n");
       free(*buf);
       *buf = NULL;
       assert(*buf == NULL);
       printf("%d : pool shifted; free() and null assignment done\n", pthread_self());
+      //sleep(3);
       break;
     }
 
