@@ -53,7 +53,7 @@ void starting_routine(List *list);
 void break_crap(List *list, Buffer **buf);
 
 int main() {
-  const int WORKERS = 2;
+  const int WORKERS = 5;
 
   List *list = (List *)malloc(sizeof(List));
   list->count = 0;
@@ -77,6 +77,7 @@ int main() {
   new_buffer->data = "some text, hooray for me";
 
   list->pool[0] = new_buffer;
+  printf("list->pool[0] has address %d\n", &list->pool[0]);
 
   pthread_t workers[WORKERS];
   for (int i=0; i<WORKERS; i++)
@@ -91,11 +92,11 @@ int main() {
 
 void starting_routine(List *list) {
   // Starting point a thread will use.
-  Buffer *selected_buf;
-  printf("%d : starting up.  selected currently %d, ", pthread_self(), selected_buf);
-  selected_buf = list->pool[0];
-  printf("and is now %d\n", selected_buf);
-  break_crap(list, &selected_buf);
+  Buffer *local_buf_ptr;
+  printf("%d : Thread starting up.  local_buf_ptr is currently %d, ", pthread_self(), local_buf_ptr);
+  local_buf_ptr = &list->pool[0];
+  printf("and is now %d\n", local_buf_ptr);
+  break_crap(list, local_buf_ptr);
   pthread_exit(0);
 }
 
@@ -103,7 +104,8 @@ void starting_routine(List *list) {
 void break_crap(List *list, Buffer **buf) {
   // Emulate the buffer removal.
   pthread_mutex_lock(&list->lock);
-  printf("%d : checking to see if *buf is null\n", pthread_self());
+  printf("%d : checking to see if *buf (ptr address %d) is null\n", pthread_self(), *buf);
+  sleep(1);
   if (*buf == NULL) {
     printf("%d : *buf is null so I'm leaving.\n", pthread_self());
     pthread_mutex_unlock(&list->lock);
