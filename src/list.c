@@ -38,9 +38,7 @@
 extern const int E_OK;
 extern const int E_GENERIC;
 extern const int E_BUFFER_NOT_FOUND;
-extern const int E_BUFFER_POOFED;
 extern const int E_BUFFER_ALREADY_EXISTS;
-extern const int E_BUFFER_IS_VICTIMIZED;
 
 
 /* Functions */
@@ -55,6 +53,8 @@ List* list__initialize() {
   list->count = 0;
   list->ref_count = 0;
   list->pending_writers = 0;
+  for (int i = 0; i < BUFFER_POOL_SIZE; i++)
+    list->pool[i] = NULL;
   if (pthread_mutex_init(&list->lock, NULL) != 0)
     show_err("Failed to initialize mutex for a list.  This is fatal.", E_GENERIC);
   if (pthread_cond_init(&list->reader_condition, NULL) != 0)
@@ -63,6 +63,19 @@ List* list__initialize() {
       show_err("Failed to initialize writer condition for a list.  This is fatal.", E_GENERIC);
 
   return list;
+}
+
+
+/* list__destroy
+ * Destroys the elements of a list, specifically the Buffer pointers in the pool.
+ */
+int list__destroy(List *list) {
+  for (int i = 0; i < list->count - 1; i++) {
+    free(list->pool[i]);
+    list->pool[i] = NULL;
+  }
+  free(list);
+  return E_OK;
 }
 
 
@@ -90,6 +103,7 @@ int list__add(List *list, Buffer *buf) {
       for(int i=list->count; i<mid; i--)
         list->pool[i] = list->pool[i-1];
       list->pool[mid] = buf;
+      list->count++;
       break;
     }
 
@@ -113,50 +127,31 @@ int list__add(List *list, Buffer *buf) {
   }
 
   /* Start the notification chain for reader_conditions, release the lock and leave with whatever rv is. */
-  if (rv == 0)
-    list->count++;
-  pthread_cond_broadcast(&list->reader_condition);
+  if(list->pending_writers > 0) {
+    pthread_cond_broadcast(&list->writer_condition);
+  } else {
+    pthread_cond_broadcast(&list->reader_condition);
+  }
   pthread_mutex_unlock(&list->lock);
   return rv;
 }
 
 
 /* list__remove
- * Removes the buffer from the list's pool while respecting the list lock and readers.
+ * Removes the buffer from the list's pool while respecting the list lock and readers.  Caller must grab and pass buffer_id before
+ * unlocking its reference to the buffer; this way we can rely on finding the ID even if the buffer is removed by another thread.
  * Note: this function is not responsible for managing list sizes or HCRS logic.  It just removes buffers.
  */
-int list__remove(List *list, Buffer **buf) {
+int list__remove(List *list, Buffer *buf, bufferid_t id) {
   /* Update the pending writers in case others are waiting. */
   pthread_mutex_lock(&list->lock);
-printf("%d : incrementing pending writers\n", pthread_self());
   list->pending_writers++;
   while(list->ref_count != 0)
     pthread_cond_wait(&list->writer_condition, &list->lock);
-printf("%d : decrementing pending writers\n", pthread_self());
   list->pending_writers--;
 
-  /* If the *buf is NULL then another thread already removed it from the list.  Signal, unlock, and leave happy. */
-  if (*buf == NULL) {
-    printf("%d : *buf is null so I'm leaving\n", pthread_self());
-    if(list->pending_writers > 0) {
-      pthread_cond_broadcast(&list->writer_condition);
-    } else {
-      pthread_cond_broadcast(&list->reader_condition);
-    }
-    pthread_mutex_unlock(&list->lock);
-    return E_OK;
-  }
-printf("%d : going to remove buf id %d for pointer %d  -- ref_count %d, lock_id %d\n", pthread_self(), (*buf)->id, *buf, (*buf)->ref_count, (*buf)->lock_id);
-
-  /* At this point we own the list lock.  Try to victimize the buffer so we can remove it. */
-  int rv = buffer__victimize(*buf);
-  if (rv != 0)
-    show_err("The list__remove function received an error when trying to victimize the buffer (%d).\n", rv);
-
-  /* We now have the list locked and the buffer fully victimized and locked.  Store the lock_id and begin searching for index. */
-  int low = 0, high = list->count, mid = 0;
-  rv = E_OK;
-  lockid_t lock_id = (*buf)->lock_id;
+  /* We now have the list locked and can begin searching for the index of id. */
+  int low = 0, high = list->count, mid = 0, rv = E_OK;
   for(;;) {
     // Reset mid and begin testing.  Start with boundary testing to break if we're done.
     mid = (low + high)/2;
@@ -165,38 +160,34 @@ printf("%d : going to remove buf id %d for pointer %d  -- ref_count %d, lock_id 
       break;
     }
 
-    // If the pool[mid] ID matches, we found the right index.  Collapse downward, update the list, null out *buf, and leave.
-    if (list->pool[mid]->id == (*buf)->id) {
+    // If the pool[mid] ID matches, we found the right index which means buf is a valid pointer.  Victimize the buffer, collapse array downward, & update the list.
+    if (list->pool[mid]->id == id) {
+      if (buffer__victimize(buf) != 0)
+        show_err("The list__remove function received an error when trying to victimize the buffer (%d).\n", rv);
+      lockid_t lock_id = buf->lock_id;
+      free(list->pool[mid]);
+      lock__release(lock_id);
       for (int i=mid; i<list->count - 1; i++)
         list->pool[i] = list->pool[i+1];
+      list->pool[list->count - 1] = NULL;
       list->count--;
-      printf("Buf's data is currently: %d, NULL %d\n", (*buf)->data, NULL);
-      printf("List shows is currently: %d, NULL %d and count is %d\n", list->pool[mid]->data, NULL, list->count);
-      if((*buf)->data == NULL)
-        printf("Buf's data is null\n");
-      free(*buf);
-      *buf = NULL;
-      assert(*buf == NULL);
-      printf("%d : pool shifted; free() and null assignment done\n", pthread_self());
-      //sleep(3);
       break;
     }
 
     // If our current pool[mid] ID is too high, update low.
-    if (list->pool[mid]->id < (*buf)->id) {
+    if (list->pool[mid]->id < id) {
       low = mid + 1;
       continue;
     }
 
     // If the pool[mid] ID is too low, we need to update high.
-    if (list->pool[mid]->id > (*buf)->id) {
+    if (list->pool[mid]->id > id) {
       high = mid - 1;
       continue;
     }
   }
 
   /* Release the lock and broadcast to readers or writers as needed.. */
-  lock__release(lock_id);
   if(list->pending_writers > 0) {
     pthread_cond_broadcast(&list->writer_condition);
   } else {
