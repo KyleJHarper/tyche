@@ -1,0 +1,51 @@
+All done.  I used 5000 workers performing a combined 25,000,000 reads with 10 chaos workers taking buffers from 1000 to 100
+
+real	0m36.050s
+user	0m11.501s
+sys	4m6.719s
+All done.  I used 5000 workers performing a combined 25,000,000 reads with 10 chaos workers taking buffers from 1000 to 100
+
+real	0m37.232s
+user	0m11.809s
+sys	4m10.920s
+All done.  I used 5000 workers performing a combined 25,000,000 reads with 10 chaos workers taking buffers from 1000 to 100
+
+real	0m53.652s
+user	0m14.973s
+sys	5m55.314s
+All done.  I used 5000 workers performing a combined 25,000,000 reads with 10 chaos workers taking buffers from 1000 to 100
+
+real	0m41.651s
+user	0m12.289s
+sys	4m49.014s
+All done.  I used 5000 workers performing a combined 25,000,000 reads with 10 chaos workers taking buffers from 1000 to 100
+
+real	0m45.236s
+user	0m13.309s
+sys	5m8.583s
+All done.  I used 5000 workers performing a combined 25,000,000 reads with 10 chaos workers taking buffers from 1000 to 100
+
+real	0m42.909s
+user	0m13.017s
+sys	4m55.762s
+All done.  I used 5000 workers performing a combined 25,000,000 reads with 10 chaos workers taking buffers from 1000 to 100
+
+real	0m41.467s
+user	0m12.633s
+sys	4m41.606s
+All done.  I used 5000 workers performing a combined 25,000,000 reads with 10 chaos workers taking buffers from 1000 to 100
+
+real	0m40.581s
+user	0m12.249s
+sys	4m39.345s
+All done.  I used 5000 workers performing a combined 25,000,000 reads with 10 chaos workers taking buffers from 1000 to 100
+
+real	0m44.431s
+user	0m12.653s
+sys	4m56.775s
+All done.  I used 5000 workers performing a combined 25,000,000 reads with 10 chaos workers taking buffers from 1000 to 100
+
+real	0m40.729s
+user	0m12.273s
+sys	4m40.022s
+

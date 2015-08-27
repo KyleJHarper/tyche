@@ -25,7 +25,7 @@ const int LIST_COUNT       =   1000;
 const int WORKER_COUNT     =   5000;
 const int CHAOS_MONKIES    =     10;
 const int READS_PER_WORKER =   5000;
-const int LIST_FLOOR       =    100;
+const int LIST_FLOOR       =    975;
 const int SLEEP_DELAY      =    123;
 
 
@@ -107,7 +107,6 @@ void tests__chaos(List *raw_list) {
     buffer__unlock(temp);
     rv = list__remove(raw_list, temp, id_to_remove);
     usleep(SLEEP_DELAY);
-    printf("list__remove gave return code %d, and count is %d\n", rv, raw_list->count);
   }
   pthread_exit(0);
 }
