@@ -1,0 +1,31 @@
+Re-evaluate the name of the theory, both for accuracy and posterity.
+
+Rename and archive the locking tests to make things cleaner for future testing.
+
+Decide if pool partitioning should be used so that searching can be threaded.  Probably not but might want to at lest make a note somewhere that it could be an optimization in another implementation.
+
+When lists are managed and lz4 is working, branch date__adaptive
+
+Put sample data into git for demonstrative purposes.
+
+Branches / Bigger Steps
+1.  Read From Disk
+      a) Buffers should read from disk
+      b) io time should be stored
+      c) Getopts should handle test parameters for tyche.
+      d) Rename bin/main to tyche.
+2.  Compression
+      a) Compression (lz4) should be added via lz4.h/lz4.c and modified to suit needs (fix params).
+      b) A buffer given compressed data should store it properly and set data length.
+      c) Compression time should be stored in buffer.
+      d) Decompression should yield proper results.
+      e) Comp time and comp hits should be updated to track CPU time and avoided io time.
+3.  List management: create raw and compressed lists and ensure they're managing themselves upon updates.
+      a) Lists should probably know if they're raw or compressed, and raw needs to know who to dump overflow to.
+      b) Raw pool size should configurable and enforced in list__add().
+      c) Compressed list should maintain a count of its size and list__pop()/push() when not enough room is available.
+      d) Removal from raw should send to compressed list.
+4.  Adaptations
+      a) Not sure what all is needed, but need a monitor thread to adjust list sizes on-the-fly based on statistics.
+         Could prove difficult since we're array-based (pool[]) now.  I'm sure a list->max attribute can fix that.
+
