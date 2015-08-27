@@ -10,7 +10,7 @@ This will be open source (as will the HCRS theory) but I am still going to enfor
 **[2015-08-25]**
 *The new lock subsystem is in effect.  Concurrent read/write is working and our MPMC tests are good.  Performance is non-linear (scales with CPU) by means of reference counters protected by locks rather than blocking readers with the locks alone. The following table demonstrates this to an extent; but the short-lived nature of the readers in this test prevented better scaling (in other words, the time 'using' the buffer was so short we were spending a large percentage of time handling buffer locks and the list lock.*
 | CPUs |      Reads | Avg Time | Reads/sec | Reads/sec/CPU | Contention |
-| ----:| ----------:| --------:| ---------:| -------------:| ---------- |
+| ---: | ---------: | -------: | --------: | ------------: | ---------- |
 |    1 | 25,000,000 |    43.73 |   571,648 |       571,648 | High(1)    |
 |    2 | 25,000,000 |    33.41 |   748,196 |       374,098 | High       |
 |    4 | 25,000,000 |    28.36 |   881,461 |       220,365 | High       |
