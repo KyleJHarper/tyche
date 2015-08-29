@@ -20,6 +20,88 @@ extern const int E_BUFFER_POOFED;
 extern const int E_BUFFER_NOT_FOUND;
 extern const int E_BUFFER_IS_VICTIMIZED;
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+/* ------------------------------------------------------------------------------------------------------------------------------
+ * Older Tests Below Here
+   ------------------------------------------------------------------------------------------------------------------------------*/
 // A global for testing cuz I'm bad
 const int LIST_COUNT       =   1000;
 const int WORKER_COUNT     =   5000;
@@ -29,7 +111,7 @@ const int LIST_FLOOR       =    975;
 const int SLEEP_DELAY      =    123;
 
 
-void tests__synchronized_read() {
+void tests__synchronized_readwrite() {
   List *raw_list = list__initialize();
   Buffer *temp;
   // Create LIST_COUNT buffers with some data in them.
@@ -112,7 +194,7 @@ void tests__chaos(List *raw_list) {
 }
 
 
-void tests__elem() {
+void tests__elements() {
   List *raw_list = list__initialize();
   List *comp_list = list__initialize();
   Buffer *elem1 = buffer__initialize(1);  list__add(raw_list, elem1);

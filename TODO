@@ -9,6 +9,8 @@ When lists are managed and lz4 is working, branch date__adaptive
 Put sample data into git for demonstrative purposes.
 
 Branches / Bigger Steps
+0.  List Writer Functions
+      a) Writers should share the same function to ensure everyone follows the same locking, broadcasting, & updating.
 1.  Read From Disk
       a) Buffers should read from disk
       b) io time should be stored
