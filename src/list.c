@@ -79,18 +79,49 @@ int list__destroy(List *list) {
 }
 
 
+/* list__acquire_write_lock
+ * Drains the list of references so we don't modify the list while another thread is scanning it.  The combination of conditions
+ * and mutexes should provide perfect consistency/synchronization.  Readers all use list__update_ref which respects these same
+ * precepts.
+ */
+int list__acquire_write_lock(List *list) {
+  /* Block until we get the list lock, then we can safely update pending writers. */
+  pthread_mutex_lock(&list->lock);
+  list->pending_writers++;
+  /* Begin a predicate check while under the protection of the mutex.  Block if the predicate remains true. */
+  while(list->ref_count != 0)
+    pthread_cond_wait(&list->writer_condition, &list->lock);
+  /* We now have the lock again and our predicate is guaranteed protected (it respects the list lock); decrement and leave. */
+  list->pending_writers--;
+  return E_OK;
+}
+
+
+/* list__release_write_lock
+ * Unlocks the mutex for a list.  Begin the broadcast chain for either writesr or readers, depending on the predicate others are
+ * blocking on.  Readers all use list__update_ref which respects these same precepts.
+ */
+int list__release_write_lock(List *list) {
+  /* Determine if we need to notify other writers, or just the readers. */
+  if(list->pending_writers > 0) {
+    pthread_cond_broadcast(&list->writer_condition);
+  } else {
+    pthread_cond_broadcast(&list->reader_condition);
+  }
+  /* Release the lock now that the proper broadcast is out there.  Releasing AFTER a broadcast is supported and safe. */
+  pthread_mutex_unlock(&list->lock);
+  return E_OK;
+}
+
+
 /* list__add
  * Adds a node to the list specified.  Buffer must be created by caller.  We will lock the list here so insertion is guaranteed
  * to be sort-ordered.  We will also fail safely if the buffer already exists because we don't want duplicates.
  * Note: this function is not responsible for managing list sizes or HCRS logic.  It just adds buffers.
  */
 int list__add(List *list, Buffer *buf) {
-  /* Drain the list of references so we don't modify the list while another thread is scanning it. */
-  pthread_mutex_lock(&list->lock);
-  list->pending_writers++;
-  while(list->ref_count != 0)
-    pthread_cond_wait(&list->writer_condition, &list->lock);
-  list->pending_writers--;
+  /* Get a write lock, which guarantees flushing all readers first. */
+  list__acquire_write_lock(list);
 
   /* We now own the lock and no one should be scanning the list.  We can safely scan it ourselves and then edit it. */
   int rv = E_OK, low = 0, high = list->count, mid = 0;
@@ -126,13 +157,8 @@ int list__add(List *list, Buffer *buf) {
     }
   }
 
-  /* Start the notification chain for reader_conditions, release the lock and leave with whatever rv is. */
-  if(list->pending_writers > 0) {
-    pthread_cond_broadcast(&list->writer_condition);
-  } else {
-    pthread_cond_broadcast(&list->reader_condition);
-  }
-  pthread_mutex_unlock(&list->lock);
+  /* Let go of the write lock we acquired. */
+  list__release_write_lock(list);
   return rv;
 }
 
@@ -143,12 +169,8 @@ int list__add(List *list, Buffer *buf) {
  * Note: this function is not responsible for managing list sizes or HCRS logic.  It just removes buffers.
  */
 int list__remove(List *list, Buffer *buf, bufferid_t id) {
-  /* Update the pending writers in case others are waiting. */
-  pthread_mutex_lock(&list->lock);
-  list->pending_writers++;
-  while(list->ref_count != 0)
-    pthread_cond_wait(&list->writer_condition, &list->lock);
-  list->pending_writers--;
+  /* Get a write lock, which guarantees flushing all readers first. */
+  list__acquire_write_lock(list);
 
   /* We now have the list locked and can begin searching for the index of id. */
   int low = 0, high = list->count, mid = 0, rv = E_OK;
@@ -187,13 +209,8 @@ int list__remove(List *list, Buffer *buf, bufferid_t id) {
     }
   }
 
-  /* Release the lock and broadcast to readers or writers as needed.. */
-  if(list->pending_writers > 0) {
-    pthread_cond_broadcast(&list->writer_condition);
-  } else {
-    pthread_cond_broadcast(&list->reader_condition);
-  }
-  pthread_mutex_unlock(&list->lock);
+  /* Let go of the write lock we acquired. */
+  list__release_write_lock(list);
   return rv;
 }
 
