@@ -58,9 +58,9 @@ List* list__initialize() {
   if (pthread_mutex_init(&list->lock, NULL) != 0)
     show_err("Failed to initialize mutex for a list.  This is fatal.", E_GENERIC);
   if (pthread_cond_init(&list->reader_condition, NULL) != 0)
-      show_err("Failed to initialize reader condition for a list.  This is fatal.", E_GENERIC);
+    show_err("Failed to initialize reader condition for a list.  This is fatal.", E_GENERIC);
   if (pthread_cond_init(&list->writer_condition, NULL) != 0)
-      show_err("Failed to initialize writer condition for a list.  This is fatal.", E_GENERIC);
+    show_err("Failed to initialize writer condition for a list.  This is fatal.", E_GENERIC);
 
   return list;
 }

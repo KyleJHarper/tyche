@@ -13,7 +13,7 @@ Branches / Bigger Steps
       a) Buffers should read from disk
       b) io time should be stored
       c) Getopts should handle test parameters for tyche.
-      d) Rename bin/main to tyche.
+      d) Rename bin/main to tyche.  (done)
 2.  Compression
       a) Compression (lz4) should be added via lz4.h/lz4.c and modified to suit needs (fix params).
       b) A buffer given compressed data should store it properly and set data length.
