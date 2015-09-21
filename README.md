@@ -20,7 +20,9 @@ This will be open-source (as will the ACCRS theory) and free but I am still goin
 |   ^8 | 25,000,000 |    30.41 |   822,052 |       102,756 | Minimal    |
 
 ^ The test platform was a VM.  8 vCPU started running into pCPU scheduling overhead and did more harm than good.  Even 4 vCPU was starting to show signs of inefficiency.
-(1) High contention means I purpose created a high worker-to-buffer pool size.  In other words I made thousands of worker threads and they could only select from 100 buffers.  Draining the list this low also resulted in huge (99%+) cache "misses".  This helped demonstrate ref count improvements over global locking.
+
+(1) High contention means I purposely created a high worker-to-buffer pool size.  In other words I made thousands of worker threads and they could only select from 100 buffers.  Draining the list this low also resulted in huge (99%+) cache "misses".  This helped demonstrate ref count improvements over global locking.
+
 (2) Minimal contention does the opposite of high.  Lots of buffers to choose from compared to workers, and hit rates closer to 95%+ successful.
 
 *(Additional logs found in changelog)*
