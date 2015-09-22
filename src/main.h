@@ -10,7 +10,8 @@
 
 
 /* Prototypes, because reasons! */
-int main(int argc, char **argv);
+int main();
+void get_options(int argc, char **argv, char **pages_directory);
 void show_help();
 
 #endif /* SRC_MAIN_H_ */

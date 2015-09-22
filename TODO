@@ -1,5 +1,3 @@
-Re-evaluate the name of the theory, both for accuracy and posterity.
-
 Rename and archive the locking tests to make things cleaner for future testing.
 
 Decide if pool partitioning should be used so that searching can be threaded.  Probably not but might want to at lest make a note somewhere that it could be an optimization in another implementation.
@@ -10,9 +8,9 @@ Put sample data into git for demonstrative purposes.
 
 Branches / Bigger Steps
 1.  Read From Disk
-      a) Buffers should read from disk
-      b) io time should be stored
-      c) Getopts should handle test parameters for tyche.
+      a) Buffers should read from disk.
+      b) io time should be stored.
+      c) Getopts should handle test parameters for tyche. (done)
       d) Rename bin/main to tyche.  (done)
 2.  Compression
       a) Compression (lz4) should be added via lz4.h/lz4.c and modified to suit needs (fix params).

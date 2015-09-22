@@ -19,7 +19,10 @@
 #include <string.h>
 #include <stdint.h>
 #include <ctype.h>
-#include <unistd.h>    /* for getopt */
+#include <unistd.h>       /* for getopt */
+#include <stdlib.h>       /* for exit() */
+#include <dirent.h>       /* for opendir() */
+#include <errno.h>
 #include "error_codes.h"
 #include "error.h"
 #include "list.h"
@@ -36,40 +39,58 @@ extern const int E_GENERIC;
  * Initial logic to start tyche.
  */
 int main(int argc, char **argv) {
-  /* Get options, then verify them. */
-  char *pages_directory = NULL;
-  int c = 0, index = 0;
-  opterr = 0;
-  while ((c = getopt(argc, argv, "d:h")) != -1) {
-    switch (c) {
-      case 'd':
-        pages_directory = optarg;
-        break;
-      case 'h':
-        show_help();
-        return E_OK;
-        break;
-      case '?':
-        show_help();
-        if (optopt == 'd')
-          fprintf (stderr, "Option -%c requires an argument.\n", optopt);
-        else if (isprint (optopt))
-          fprintf (stderr, "Unknown option `-%c'.\n", optopt);
-        else
-          fprintf (stderr, "Unknown option character `\\x%x'.\n", optopt);
-        return E_GENERIC;
-      default:
-        show_help();
-        return E_GENERIC;
-    }
-  }
-  /* Pre-flight Checks */
+  /* Get options & verify them. */
+  char *data_dir = NULL;
+  get_options(argc, argv, &data_dir);
 
   /* Initialize locker and lists here. */
   lock__initialize();
 
   printf("Main finished.\n");
   return 0;
+}
+
+
+/* get_options
+ * A snippet from main() to get all the options sent via CLI, then verifies them.
+ */
+void get_options(int argc, char **argv, char **data_dir) {
+  int c = 0, index = 0;
+  opterr = 0;
+  while ((c = getopt(argc, argv, "d:ht:")) != -1) {
+    switch (c) {
+      case 'd':
+        *data_dir = optarg;
+        break;
+      case 'h':
+        show_help();
+        exit(E_OK);
+        break;
+      case '?':
+        show_help();
+        if (optopt == 'd')
+          fprintf(stderr, "Option -%c requires an argument.\n", optopt);
+        else if (isprint (optopt))
+          fprintf(stderr, "Unknown option `-%c'.\n", optopt);
+        else
+          fprintf(stderr, "Unknown option character `\\x%x'.\n", optopt);
+        exit(E_GENERIC);
+      default:
+        show_help();
+        exit(E_GENERIC);
+    }
+  }
+
+  /* Pre-flight Checks */
+  // -- A directory is always required.
+  if (*data_dir == NULL)
+    show_error("You must specify a data directory.\n", E_GENERIC);
+  DIR *fh_data_dir = opendir(*data_dir);
+  if (errno != 0) {
+    show_file_error(*data_dir, errno);
+    exit(E_GENERIC);
+  }
+  closedir(fh_data_dir);
 }
 
 

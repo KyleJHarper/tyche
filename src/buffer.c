@@ -37,7 +37,7 @@ extern const int E_BUFFER_IS_VICTIMIZED;
 Buffer* buffer__initialize(bufferid_t id) {
   Buffer *new_buffer = (Buffer *)malloc(sizeof(Buffer));
   if (new_buffer == NULL)
-      show_err("Error malloc-ing a new buffer in buffer__initialize.", E_GENERIC);
+      show_error("Error malloc-ing a new buffer in buffer__initialize.", E_GENERIC);
   lock__assign_next_id(&new_buffer->lock_id);
   new_buffer->ref_count = 0;
   new_buffer->removal_index = 0;
