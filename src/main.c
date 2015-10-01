@@ -21,13 +21,12 @@
 #include <ctype.h>
 #include <unistd.h>       /* for getopt */
 #include <stdlib.h>       /* for exit() */
-#include <dirent.h>       /* for opendir() */
-#include <errno.h>
 #include "error_codes.h"
 #include "error.h"
 #include "list.h"
 #include "lock.h"
 #include "tests.h"
+#include "io.h"
 #include "main.h"
 
 /* Extern error codes */
@@ -43,7 +42,12 @@ int main(int argc, char **argv) {
   char *data_dir = NULL;
   get_options(argc, argv, &data_dir);
 
-  /* Initialize locker and lists here. */
+  /* Get a list of the pages we have to work with. */
+  const uint PAGE_COUNT = io__get_page_count(data_dir);
+  char *pages[PAGE_COUNT];
+  io__build_pages_array(data_dir, pages);
+
+  /* Initialize the locker. */
   lock__initialize();
 
   printf("Main finished.\n");
@@ -85,12 +89,7 @@ void get_options(int argc, char **argv, char **data_dir) {
   // -- A directory is always required.
   if (*data_dir == NULL)
     show_error("You must specify a data directory.\n", E_GENERIC);
-  DIR *fh_data_dir = opendir(*data_dir);
-  if (errno != 0) {
-    show_file_error(*data_dir, errno);
-    exit(E_GENERIC);
-  }
-  closedir(fh_data_dir);
+  return;
 }
 
 

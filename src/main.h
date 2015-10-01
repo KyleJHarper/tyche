@@ -10,7 +10,7 @@
 
 
 /* Prototypes, because reasons! */
-int main();
+int main(int argc, char **argv);
 void get_options(int argc, char **argv, char **pages_directory);
 void show_help();
 

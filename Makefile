@@ -20,6 +20,7 @@ build:
 		$(SRCDIR)/buffer.c  \
 		$(SRCDIR)/lock.c    \
 		$(SRCDIR)/error.c   \
+		$(SRCDIR)/io.c      \
 		$(SRCDIR)/tests.c   \
 		$(SRCDIR)/main.c
 
