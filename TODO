@@ -8,10 +8,10 @@ Put sample data into git for demonstrative purposes.
 
 Branches / Bigger Steps
 1.  Read From Disk
-      a) Buffers should read from disk.
-      b) io time should be stored.
-      c) Getopts should handle test parameters for tyche. (done)
-      d) Rename bin/main to tyche.  (done)
+      a) [done] Buffers should read from disk.
+      b) [done] io time should be stored.
+      c) [done] Getopts should handle test parameters for tyche.
+      d) [done] Rename bin/main to tyche.
 2.  Compression
       a) Compression (lz4) should be added via lz4.h/lz4.c and modified to suit needs (fix params).
       b) A buffer given compressed data should store it properly and set data length.

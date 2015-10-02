@@ -37,16 +37,17 @@ struct buffer {
 
   /* The actual payload we want to cache (i.e.: the page). */
   uint16_t data_length;           /* Number of bytes in data.  For raw tables, always PAGE_SIZE.  Compressed will vary. */
-  char *data;                     /* Pointer to the character array holding the page data. */
+  unsigned char *data;            /* Pointer to the character array holding the page data. */
 };
 
 
 /* Prototypes */
-Buffer* buffer__initialize();
+Buffer* buffer__initialize(bufferid_t id, char *page_filespec);
 int buffer__lock(Buffer *buf);
 void buffer__unlock(Buffer *buf);
 int buffer__update_ref(Buffer *buf, int delta);
 int buffer__victimize(Buffer *buf);
+
 
 
 #endif /* SRC_BUFFER_H_ */

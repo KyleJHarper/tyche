@@ -10,9 +10,13 @@
 #include <pthread.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <time.h>     /* for gettimeofday() */
 #include "lock.h"
 #include "error.h"
 #include "buffer.h"
+
+/* We need to know what one billion is for clock timing. */
+#define BILLION 1000000000L
 
 /* Give extern access to locker_pool[] to us, even though I'm sure this is a no no and someone will yell at me. */
 extern Lock locker_pool[];
@@ -32,9 +36,10 @@ extern const int E_BUFFER_IS_VICTIMIZED;
 /* Functions */
 /* buffer__initialize
  * Creates a new buffer, simply put.  We have to create a new buffer (with a new pointer) and return its address because we NULL
- * out existing buffers' pointers when we remove them from their pools.
+ * out existing buffers' pointers when we remove them from their pools.  The *page_filespec is the path to the file (page) we're
+ * going to read into the buffer's ()->data member.
  */
-Buffer* buffer__initialize(bufferid_t id) {
+Buffer* buffer__initialize(bufferid_t id, char *page_filespec) {
   Buffer *new_buffer = (Buffer *)malloc(sizeof(Buffer));
   if (new_buffer == NULL)
       show_error("Error malloc-ing a new buffer in buffer__initialize.", E_GENERIC);
@@ -50,6 +55,23 @@ Buffer* buffer__initialize(bufferid_t id) {
   new_buffer->io_cost = 0;
   new_buffer->removal_index = 0;
   new_buffer->data = NULL;
+  if (page_filespec == NULL)
+    return new_buffer;
+  /* Use *page to try to read the page from the disk.  Time the operation.*/
+  struct timespec start, end;
+  clock_gettime(CLOCK_MONOTONIC, &start);
+  FILE *fh = fopen(page_filespec, "rb");
+  if (fh == NULL)
+    show_error("Unable to open file.\n", E_GENERIC);
+  fseek(fh, 0, SEEK_END);
+  new_buffer->data_length = ftell(fh);
+  rewind(fh);
+  new_buffer->data = malloc(new_buffer->data_length);
+  fread(new_buffer->data, new_buffer->data_length, 1, fh);
+  fclose(fh);
+  clock_gettime(CLOCK_MONOTONIC, &end);
+  new_buffer->io_cost = BILLION *(end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec;
+
   return new_buffer;
 }
 

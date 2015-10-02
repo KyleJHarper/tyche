@@ -12,6 +12,7 @@ INCLUDES := $(wildcard $(SRCDIR)/*.h)
 OBJECTS  := $(SOURCES:$(SRCDIR)/%.c=$(OBJDIR)/%.o)
 
 # Targets
+# The clock_gettime() on this gcc version requires -lrt.
 build:
 	$(CC) -o $(BINDIR)/hello $(SRCDIR)/hello.c
 	$(CC) -o $(BINDIR)/sizes $(SRCDIR)/sizes.c
@@ -22,7 +23,8 @@ build:
 		$(SRCDIR)/error.c   \
 		$(SRCDIR)/io.c      \
 		$(SRCDIR)/tests.c   \
-		$(SRCDIR)/main.c
+		$(SRCDIR)/main.c    \
+		-lrt
 
 clean:
 	rm -f $(BINDIR)/*

@@ -112,7 +112,7 @@ void tests__synchronized_readwrite() {
   Buffer *temp;
   // Create LIST_COUNT buffers with some data in them.
   for (bufferid_t i=1; i<=LIST_COUNT; i++) {
-    temp = buffer__initialize(i);
+    temp = buffer__initialize(i, NULL);
     temp->data = "some text, hooray for me";
     list__add(raw_list, temp);
   }
@@ -193,11 +193,11 @@ void tests__chaos(List *raw_list) {
 void tests__elements() {
   List *raw_list = list__initialize();
   List *comp_list = list__initialize();
-  Buffer *elem1 = buffer__initialize(1);  list__add(raw_list, elem1);
-  Buffer *elem2 = buffer__initialize(2);  list__add(raw_list, elem2);
-  Buffer *elem3 = buffer__initialize(3);  list__add(raw_list, elem3);
-  Buffer *rawr1 = buffer__initialize(10);  list__add(comp_list, rawr1);
-  Buffer *rawr2 = buffer__initialize(11);  list__add(comp_list, rawr2);
+  Buffer *elem1 = buffer__initialize(1, NULL);  list__add(raw_list, elem1);
+  Buffer *elem2 = buffer__initialize(2, NULL);  list__add(raw_list, elem2);
+  Buffer *elem3 = buffer__initialize(3, NULL);  list__add(raw_list, elem3);
+  Buffer *rawr1 = buffer__initialize(10, NULL);  list__add(comp_list, rawr1);
+  Buffer *rawr2 = buffer__initialize(11, NULL);  list__add(comp_list, rawr2);
 
   printf("Number of raw  elements: %d\n", raw_list->count);
   printf("Number of comp elements: %d\n", comp_list->count);
