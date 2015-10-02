@@ -5,6 +5,13 @@ The tyche project (prefer to keep it lower case) is actually just an implementat
 
 This will be open-source (as will the ACCRS theory) and free but I am still going to enforce the Apache 2.0 software license to it for now, as well as retain copyright on the theory.
 
+====
+Latest Changelog Entries
+
+**[2015-10-01]**
+*The buffer initialization now accepts a char pointer to use as the file-spec for reading from the disk.  IO cost is stored in the buffer as a result of this.  (Passing NULL allows you to skip this, and as a result IO time is still 0, obviously.)*
+
+
 **[2015-08-25]**
 *The new lock subsystem is in effect.  Concurrent read/write is working and our MPMC tests are good.  Performance is non-linear (scales with CPU) by means of reference counters protected by locks rather than blocking readers with the locks alone. The following table demonstrates this to an extent; but the short-lived nature of the readers in this test prevented better scaling (in other words, the time 'using' the buffer was so short we were spending a large percentage of time handling buffer locks and the list lock anyway.)*
 
