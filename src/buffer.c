@@ -14,6 +14,8 @@
 #include "lock.h"
 #include "error.h"
 #include "buffer.h"
+#include "lz4.h"
+
 
 /* We need to know what one billion is for clock timing. */
 #define BILLION 1000000000L
@@ -29,8 +31,10 @@ pthread_mutex_t next_removal_index_mutex = PTHREAD_MUTEX_INITIALIZER;
 /* Extern the error codes we'll use. */
 extern const int E_OK;
 extern const int E_GENERIC;
+extern const int E_BUFFER_NOT_FOUND;
 extern const int E_BUFFER_POOFED;
 extern const int E_BUFFER_IS_VICTIMIZED;
+extern const int E_BUFFER_MISSING_DATA;
 
 
 /* Functions */
@@ -147,4 +151,28 @@ void buffer__assign_next_removal_index(removal_index_t *referring_id_ptr) {
   next_removal_index++;
   *referring_id_ptr = next_removal_index;
   pthread_mutex_unlock(&next_removal_index_mutex);
+}
+
+
+/* buffer__compress
+ * Compresses the buffer's ->data element.  This is done with lz4 from https://github.com/Cyan4973/lz4
+ */
+int buffer__compress(Buffer *buf) {
+  /* Make sure we have a valid buffer with valid data element. */
+  if (buf == NULL)
+    return E_BUFFER_NOT_FOUND;
+  if (buf->data == NULL)
+    return E_BUFFER_MISSING_DATA;
+  if (buf->data_length == 0)
+    return E_BUFFER_MISSING_DATA;
+
+  /* Data looks good, time to compress. */
+  char *compressed_data;
+  LZ4_compress_default(buf->data, compressed_data, buf->data_length, buf->data_length);
+
+  /* Now free buf->data and modify the pointer to look at *compressed_data now. */
+  free(buf->data);
+  buf->data = compressed_data;
+
+  return E_OK;
 }

@@ -18,6 +18,7 @@ build:
 	$(CC) -o $(BINDIR)/sizes $(SRCDIR)/sizes.c
 	$(CC) -o $(BINDIR)/tyche     \
 		$(SRCDIR)/list.c    \
+		$(SRCDIR)/lz4.c     \
 		$(SRCDIR)/buffer.c  \
 		$(SRCDIR)/lock.c    \
 		$(SRCDIR)/error.c   \

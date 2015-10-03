@@ -50,6 +50,11 @@ int main(int argc, char **argv) {
   /* Initialize the locker. */
   lock__initialize();
 
+  Buffer *buf = buffer__initialize(205, NULL);
+  buf->data = "1234567890";
+  buf->data_length = 10;
+  buffer__compress(buf);
+
   printf("Main finished.\n");
   return 0;
 }
@@ -59,6 +64,7 @@ int main(int argc, char **argv) {
  * A snippet from main() to get all the options sent via CLI, then verifies them.
  */
 void get_options(int argc, char **argv, char **data_dir) {
+  // Shamelessly copied from gcc example docs.  No need to get fancy.
   int c = 0, index = 0;
   opterr = 0;
   while ((c = getopt(argc, argv, "d:ht:")) != -1) {

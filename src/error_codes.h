@@ -23,6 +23,7 @@ const int E_BUFFER_NOT_FOUND       = 120;  // When searching for a buffer, throw
 const int E_BUFFER_POOFED          = 121;  // Some operations cause buffers to *poof* as we swap them around.  Handle appropriately.
 const int E_BUFFER_IS_VICTIMIZED   = 122;  // When buffers are victimized, callers need to know this.  For ex: lowering ref counts.
 const int E_BUFFER_ALREADY_EXISTS  = 123;  // When trying to add a buffer to a list, we return this if it already exists.
+const int E_BUFFER_MISSING_DATA    = 124;  // Operations attempting to read data from a buffer might find it has none at the time.
 
 
 #endif /* SRC_ERROR_CODES_H_ */

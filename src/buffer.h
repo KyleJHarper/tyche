@@ -47,6 +47,7 @@ int buffer__lock(Buffer *buf);
 void buffer__unlock(Buffer *buf);
 int buffer__update_ref(Buffer *buf, int delta);
 int buffer__victimize(Buffer *buf);
+int buffer__compress(Buffer *buf);
 
 
 

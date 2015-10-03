@@ -18,6 +18,7 @@ Branches / Bigger Steps
       c) Compression time should be stored in buffer.
       d) Decompression should yield proper results.
       e) Comp time and comp hits should be updated to track CPU time and avoided io time.
+      f) Try to optimize the (de)compression operations the way multipleFilenames() functions work (LZIO cRess/dRess).
 3.  List management: create raw and compressed lists and ensure they're managing themselves upon updates.
       a) Lists should probably know if they're raw or compressed, and raw needs to know who to dump overflow to.
       b) Raw pool size should configurable and enforced in list__add().
@@ -26,4 +27,7 @@ Branches / Bigger Steps
 4.  Adaptations
       a) Not sure what all is needed, but need a monitor thread to adjust list sizes on-the-fly based on statistics.
          Could prove difficult since we're array-based (pool[]) now.  I'm sure a list->max attribute can fix that.
+5.  Bug Fixes To-Date
+      a) There needs to be a buffer__destroy() function to free() memory to avoid a leak when list__remove()-ing.
+         It's possible list__remove() should do this... and it might already... hmm.
 
