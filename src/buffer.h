@@ -48,7 +48,7 @@ void buffer__unlock(Buffer *buf);
 int buffer__update_ref(Buffer *buf, int delta);
 int buffer__victimize(Buffer *buf);
 int buffer__compress(Buffer *buf);
-
+int buffer__decompress(Buffer *buf);
 
 
 #endif /* SRC_BUFFER_H_ */

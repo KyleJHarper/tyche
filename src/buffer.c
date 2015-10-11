@@ -167,12 +167,40 @@ int buffer__compress(Buffer *buf) {
     return E_BUFFER_MISSING_DATA;
 
   /* Data looks good, time to compress. */
-  char *compressed_data;
-  LZ4_compress_default(buf->data, compressed_data, buf->data_length, buf->data_length);
+  char *compressed_data = (char *)malloc(LZ4_compressBound(buf->data_length));
+  int rv = LZ4_compress_default(buf->data, compressed_data, buf->data_length, buf->data_length);
+  printf("comp rv is %d\n", rv);
 
-  /* Now free buf->data and modify the pointer to look at *compressed_data now. */
+  /* Find the true number of bytes returned to *compressed data and realloc() it to free up space. */
+
+  /* Now free buf->data and modify the pointer to look at *compressed_data. */
   free(buf->data);
   buf->data = compressed_data;
+
+  return E_OK;
+}
+
+
+/* buffer__decompress
+ * Decompresses the buffer's ->data element.  This is done with lz4 from https://github.com/Cyan4973/lz4
+ */
+int buffer__decompress(Buffer *buf) {
+  /* Make sure we have a valid buffer with valid data element. */
+  if (buf == NULL)
+    return E_BUFFER_NOT_FOUND;
+  if (buf->data == NULL)
+    return E_BUFFER_MISSING_DATA;
+  if (buf->data_length == 0)
+    return E_BUFFER_MISSING_DATA;
+
+  /* Data looks good, time to decompress. */
+  char *decompressed_data = (char *)malloc(buf->data_length);
+  int rv = LZ4_decompress_fast(buf->data, decompressed_data, buf->data_length);
+  printf("decomp rv is %d\n", rv);
+
+  /* Now free buf->data and modify the pointer to look at *decompressed_data now. */
+  free(buf->data);
+  buf->data = decompressed_data;
 
   return E_OK;
 }

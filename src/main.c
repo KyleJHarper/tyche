@@ -51,9 +51,23 @@ int main(int argc, char **argv) {
   lock__initialize();
 
   Buffer *buf = buffer__initialize(205, NULL);
-  buf->data = "1234567890";
+  buf->data = (unsigned char *)malloc(100);
+  unsigned char *raw_data = "1234567890abcde";
   buf->data_length = 10;
+  memcpy(buf->data, raw_data, buf->data_length);
+  printf("Buf's memcpy'd data is: '%s'\n", buf->data);
+
   buffer__compress(buf);
+  printf("Buf's compressed data is: '%s'\n", buf->data);
+  FILE *fh = fopen("/tmp/rawrc", "wb");
+  fwrite(buf->data, 1, buf->data_length, fh);
+  fclose(fh);
+
+  buffer__decompress(buf);
+  printf("Buf's decompressed data is: '%s'\n", buf->data);
+  FILE *fhd = fopen("/tmp/rawrd", "wb");
+  fwrite(buf->data, 1, buf->data_length, fhd);
+  fclose(fhd);
 
   printf("Main finished.\n");
   return 0;
