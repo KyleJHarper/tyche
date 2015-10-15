@@ -14,6 +14,8 @@
 #include "list.h"
 #include "buffer.h"
 #include "tests.h"
+#include "lz4.h"
+
 
 extern const int E_OK;
 extern const int E_BUFFER_POOFED;
@@ -24,8 +26,40 @@ extern const int E_BUFFER_IS_VICTIMIZED;
 
 
 
+/*
+ * Ensures basic compression and decompression works.
+ */
+void tests__compression() {
+  /* Test 1:  make sure the LZ4_* functions can compress and decompress data. */
+  // -- Compress
+  FILE *fh_c = fopen("/tmp/rawr_c", "wb");
+  FILE *fh_d = fopen("/tmp/rawr_d", "wb");
+  FILE *fh_raw = fopen("/tmp/rawr_raw", "wb");
+  char *src = "1234567890abcdef";
+  int src_size = 16;
+  int dst_max_size = 10000;
+  fwrite(src, 1, src_size, fh_raw);
+  fclose(fh_raw);
+  char *dst = (char *)malloc(10000);
+  int rv = LZ4_compress_default(src, dst, src_size, dst_max_size);
+  if (rv < 0) {
+    printf("The rv was negative: %d\n", rv);
+    exit(rv);
+  }
+  fwrite(dst, 1, rv, fh_c);
+  fclose(fh_c);
+  // -- Decompress
+  char *new_src = (char *)malloc(src_size);
+  rv = LZ4_decompress_fast(dst, new_src, src_size);
+  fwrite(new_src, 1, src_size, fh_d);
+  fclose(fh_d);
 
+  /* Test 2:  the LZ4 compression function needs to return the size of the compressed data. */
 
+  /* Test 3:  The compression and size functions should work on a buffer->data element. */
+
+  return;
+}
 
 
 
