@@ -23,7 +23,7 @@ extern const int E_GENERIC;
 
 /* io__build_pages_array
  * Uses the io__scan_for_pages function to first enumerate all the available pages on disk, then stores them in an array of
- * pointers for use by the caller.
+ * pointers for use by the caller.  Return value is the size of the first page found.
  */
 void io__build_pages_array(char *dir_name, char *pages[]) {
   PageFilespec *head = NULL;

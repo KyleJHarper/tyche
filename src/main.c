@@ -40,7 +40,8 @@ extern const int E_GENERIC;
 int main(int argc, char **argv) {
   /* Get options & verify them. */
   char *data_dir = NULL;
-  get_options(argc, argv, &data_dir);
+  uint16_t PAGE_SIZE = 0;
+  get_options(argc, argv, &data_dir, &PAGE_SIZE);
 
   /* Get a list of the pages we have to work with. */
   const uint PAGE_COUNT = io__get_page_count(data_dir);
@@ -51,24 +52,6 @@ int main(int argc, char **argv) {
   lock__initialize();
 
   tests__compression();
-//  Buffer *buf = buffer__initialize(205, NULL);
-//  buf->data = (unsigned char *)malloc(100);
-//  unsigned char *raw_data = "1234567890abcde";
-//  buf->data_length = 10;
-//  memcpy(buf->data, raw_data, buf->data_length);
-//  printf("Buf's memcpy'd data is: '%s'\n", buf->data);
-//
-//  buffer__compress(buf);
-//  printf("Buf's compressed data is: '%s'\n", buf->data);
-//  FILE *fh = fopen("/tmp/rawrc", "wb");
-//  fwrite(buf->data, 1, buf->data_length, fh);
-//  fclose(fh);
-//
-//  buffer__decompress(buf);
-//  printf("Buf's decompressed data is: '%s'\n", buf->data);
-//  FILE *fhd = fopen("/tmp/rawrd", "wb");
-//  fwrite(buf->data, 1, buf->data_length, fhd);
-//  fclose(fhd);
 
   printf("Main finished.\n");
   return 0;
@@ -78,11 +61,11 @@ int main(int argc, char **argv) {
 /* get_options
  * A snippet from main() to get all the options sent via CLI, then verifies them.
  */
-void get_options(int argc, char **argv, char **data_dir) {
+void get_options(int argc, char **argv, char **data_dir, uint16_t *page_size) {
   // Shamelessly copied from gcc example docs.  No need to get fancy.
   int c = 0, index = 0;
   opterr = 0;
-  while ((c = getopt(argc, argv, "d:ht:")) != -1) {
+  while ((c = getopt(argc, argv, "d:hs:")) != -1) {
     switch (c) {
       case 'd':
         *data_dir = optarg;
@@ -90,6 +73,9 @@ void get_options(int argc, char **argv, char **data_dir) {
       case 'h':
         show_help();
         exit(E_OK);
+        break;
+      case 's':
+        *page_size = atoi(optarg);
         break;
       case '?':
         show_help();
@@ -110,6 +96,9 @@ void get_options(int argc, char **argv, char **data_dir) {
   // -- A directory is always required.
   if (*data_dir == NULL)
     show_error("You must specify a data directory.\n", E_GENERIC);
+  // -- The page_size cannot be 0.  If so, atoi failed.
+  if (*page_size == 0)
+    show_error("The page size is still zero; this means your -s option was missing or wrong.", E_GENERIC);
   return;
 }
 

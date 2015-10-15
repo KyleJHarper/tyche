@@ -31,7 +31,7 @@ struct buffer {
   removal_index_t removal_index;  /* When a buffer is victimized we need to compare it's removal index (higher == newer/fresher). */
 
   /* Cost values for each buffer when pulled from disk or compressed/decompressed. */
-  uint32_t comp_cost;             /* Time spent, in ns, to compress and decompress a page during a polling period.  Using clock_gettime(3) */
+  uint32_t comp_cost;             /* Time spent, in ns, to compress and decompress a page.  Using clock_gettime(3) */
   uint32_t io_cost;               /* Time spent, in ns, to read this buffer from the disk.  Using clock_gettime(3) */
   uint16_t comp_hits;             /* Number of times reclaimed from the compressed table during a polling period. */
 

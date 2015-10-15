@@ -31,32 +31,79 @@ extern const int E_BUFFER_IS_VICTIMIZED;
  */
 void tests__compression() {
   /* Test 1:  make sure the LZ4_* functions can compress and decompress data. */
-  // -- Compress
-  FILE *fh_c = fopen("/tmp/rawr_c", "wb");
-  FILE *fh_d = fopen("/tmp/rawr_d", "wb");
-  FILE *fh_raw = fopen("/tmp/rawr_raw", "wb");
-  char *src = "1234567890abcdef";
+  // -- Basic stuff
+  unsigned char *src = "1234567890abcdef";
+  unsigned char *dst = (unsigned char *)malloc(10000);
   int src_size = 16;
   int dst_max_size = 10000;
+  int rv = 0;
+  unsigned char *new_src = (unsigned char *)malloc(src_size);
+    // -- Compress
+  FILE *fh_c = fopen("/tmp/char_ptr_c", "wb");
+  FILE *fh_d = fopen("/tmp/char_ptr_d", "wb");
+  FILE *fh_raw = fopen("/tmp/char_ptr_raw", "wb");
   fwrite(src, 1, src_size, fh_raw);
   fclose(fh_raw);
-  char *dst = (char *)malloc(10000);
-  int rv = LZ4_compress_default(src, dst, src_size, dst_max_size);
+  rv = LZ4_compress_default(src, dst, src_size, dst_max_size);
   if (rv < 0) {
-    printf("The rv was negative: %d\n", rv);
+    printf("The rv was negative when compressing a char pointer, indicating an error: %d\n", rv);
     exit(rv);
   }
   fwrite(dst, 1, rv, fh_c);
   fclose(fh_c);
   // -- Decompress
-  char *new_src = (char *)malloc(src_size);
   rv = LZ4_decompress_fast(dst, new_src, src_size);
+  if (rv < 0) {
+    printf("The rv was negative when decompressing a char pointer, indicating an error: %d\n", rv);
+    exit(rv);
+  }
   fwrite(new_src, 1, src_size, fh_d);
   fclose(fh_d);
 
   /* Test 2:  the LZ4 compression function needs to return the size of the compressed data. */
+  // This is automatically done by the function as noted by rv above.
 
-  /* Test 3:  The compression and size functions should work on a buffer->data element. */
+  /* Test 3:  The compression and decompression functions should work on a buffer->data element. */
+  Buffer *buf = buffer__initialize(205, NULL);
+  buf->data = (unsigned char *)malloc(src_size);
+  buf->data_length = src_size;
+  memcpy(buf->data, src, buf->data_length);
+  // -- Compress
+  FILE *fh_buf_c = fopen("/tmp/buf_member_c", "wb");
+  FILE *fh_buf_d = fopen("/tmp/buf_member_d", "wb");
+  rv = LZ4_compress_default(src, buf->data, buf->data_length, dst_max_size);
+  if (rv < 0) {
+    printf("The rv was negative when compressing a buffer element, indicating an error: %d\n", rv);
+    exit(rv);
+  }
+  fwrite(buf->data, 1, rv, fh_buf_c);
+  fclose(fh_buf_c);
+  // -- Decompress
+  new_src = (char *)malloc(buf->data_length);
+  rv = LZ4_decompress_fast(buf->data, new_src, buf->data_length);
+  if (rv < 0) {
+    printf("The rv was negative when decompressing a buffer element, indicating an error: %d\n", rv);
+    exit(rv);
+  }
+  fwrite(new_src, 1, buf->data_length, fh_buf_d);
+  fclose(fh_buf_d);
+
+  // Print the notice that tests 1 - 3 are done.
+  printf("Tests 1 - 3 are done.  Compare MD5 sums in /tmp/*\n");
+
+  /* Test 4:  using the buffer__compress/buffer__decompress functions should work and store comp_time. */
+  Buffer *buf2 = buffer__initialize(123, NULL);
+  buf2->data = (unsigned char *)malloc(src_size);
+  buf2->data_length = src_size;
+  memcpy(buf2->data, src, buf2->data_length);
+  // -- Compress
+  rv = buffer__compress(buf2);
+  if (rv != E_OK) {
+    printf("buffer__compress gave a result of of: %d\n", rv);
+    exit(rv);
+  }
+  printf("Compression gave an OK response.  Comp time is %d ns, and size is %d bytes\n", buf2->comp_cost, buf2->data_length);
+  //TODO finish the buffer__decompress function so we can wrap up this test.
 
   return;
 }

@@ -11,6 +11,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <time.h>     /* for gettimeofday() */
+#include <string.h>   /* for memcpy() */
 #include "lock.h"
 #include "error.h"
 #include "buffer.h"
@@ -46,7 +47,7 @@ extern const int E_BUFFER_MISSING_DATA;
 Buffer* buffer__initialize(bufferid_t id, char *page_filespec) {
   Buffer *new_buffer = (Buffer *)malloc(sizeof(Buffer));
   if (new_buffer == NULL)
-      show_error("Error malloc-ing a new buffer in buffer__initialize.", E_GENERIC);
+    show_error("Error malloc-ing a new buffer in buffer__initialize.", E_GENERIC);
   lock__assign_next_id(&new_buffer->lock_id);
   new_buffer->ref_count = 0;
   new_buffer->removal_index = 0;
@@ -61,6 +62,7 @@ Buffer* buffer__initialize(bufferid_t id, char *page_filespec) {
   new_buffer->data = NULL;
   if (page_filespec == NULL)
     return new_buffer;
+
   /* Use *page to try to read the page from the disk.  Time the operation.*/
   struct timespec start, end;
   clock_gettime(CLOCK_MONOTONIC, &start);
@@ -106,7 +108,7 @@ void buffer__unlock(Buffer *buf) {
 
 
 /* buffer__update_ref
- * Updates a buffer's ref_count.  This will only ever be +1 or -1.  Caller MUST lock the buffer.
+ * Updates a buffer's ref_count.  This will only ever be +1 or -1.  Caller MUST lock the buffer to handle victimization properly.
  *   +1) When adding, only list__search can be the caller which maintains proper list-locking to prevent buffer *poofing*.
  *   -1) Anyone is safe to remove their own ref because victimization blocks, preventing *poofing*.
  */
@@ -156,6 +158,7 @@ void buffer__assign_next_removal_index(removal_index_t *referring_id_ptr) {
 
 /* buffer__compress
  * Compresses the buffer's ->data element.  This is done with lz4 from https://github.com/Cyan4973/lz4
+ * Whatever is in ->data will be obliterated without any checking (free()'d).
  */
 int buffer__compress(Buffer *buf) {
   /* Make sure we have a valid buffer with valid data element. */
@@ -166,16 +169,33 @@ int buffer__compress(Buffer *buf) {
   if (buf->data_length == 0)
     return E_BUFFER_MISSING_DATA;
 
-  /* Data looks good, time to compress. */
-  char *compressed_data = (char *)malloc(LZ4_compressBound(buf->data_length));
-  int rv = LZ4_compress_default(buf->data, compressed_data, buf->data_length, buf->data_length);
-  printf("comp rv is %d\n", rv);
+  /* Data looks good, time to compress.  Lock the buffer, start the timer, and start working. */
+  int rv = buffer__lock(buf);
+  if (rv != E_OK)
+    return rv;
+  struct timespec start, end;
+  clock_gettime(CLOCK_MONOTONIC, &start);
+  int max_compressed_size = LZ4_compressBound(buf->data_length);
+  unsigned char *compressed_data = (unsigned char *)malloc(max_compressed_size);
+  int compressed_bytes = LZ4_compress_default(buf->data, compressed_data, buf->data_length, max_compressed_size);
+  if (compressed_bytes < 1) {
+    printf("buffer__compress returned a negative result from LZ4_compress_default: %d\n.", rv);
+    return E_GENERIC;
+  }
 
-  /* Find the true number of bytes returned to *compressed data and realloc() it to free up space. */
-
-  /* Now free buf->data and modify the pointer to look at *compressed_data. */
+  /* Now free buf->data and modify the pointer to look at *compressed_data.  We cannot simply assign the pointer address of
+   * compressed_data to buf->data because it'll waste space.  We need to malloc on the heap, memcpy data, and then free. */
   free(buf->data);
+  buf->data_length = compressed_bytes;
+  buf->data = (unsigned char *)malloc(buf->data_length);
   buf->data = compressed_data;
+  memcpy(buf->data, compressed_data, buf->data_length);
+  free(compressed_data);
+
+  /* At this point we've compressed the raw data and saved it in a tightly allocated section of heap.  Save time and unlock. */
+  clock_gettime(CLOCK_MONOTONIC, &end);
+  buf->comp_cost += BILLION *(end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec;
+  buffer__unlock(buf);
 
   return E_OK;
 }
