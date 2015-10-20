@@ -40,8 +40,7 @@ extern const int E_GENERIC;
 int main(int argc, char **argv) {
   /* Get options & verify them. */
   char *data_dir = NULL;
-  uint16_t PAGE_SIZE = 0;
-  get_options(argc, argv, &data_dir, &PAGE_SIZE);
+  get_options(argc, argv, &data_dir);
 
   /* Get a list of the pages we have to work with. */
   const uint PAGE_COUNT = io__get_page_count(data_dir);
@@ -51,6 +50,7 @@ int main(int argc, char **argv) {
   /* Initialize the locker. */
   lock__initialize();
 
+  /* Current test we're working on */
   tests__compression();
 
   printf("Main finished.\n");
@@ -61,11 +61,11 @@ int main(int argc, char **argv) {
 /* get_options
  * A snippet from main() to get all the options sent via CLI, then verifies them.
  */
-void get_options(int argc, char **argv, char **data_dir, uint16_t *page_size) {
+void get_options(int argc, char **argv, char **data_dir) {
   // Shamelessly copied from gcc example docs.  No need to get fancy.
   int c = 0, index = 0;
   opterr = 0;
-  while ((c = getopt(argc, argv, "d:hs:")) != -1) {
+  while ((c = getopt(argc, argv, "d:h")) != -1) {
     switch (c) {
       case 'd':
         *data_dir = optarg;
@@ -73,9 +73,6 @@ void get_options(int argc, char **argv, char **data_dir, uint16_t *page_size) {
       case 'h':
         show_help();
         exit(E_OK);
-        break;
-      case 's':
-        *page_size = atoi(optarg);
         break;
       case '?':
         show_help();
@@ -96,9 +93,7 @@ void get_options(int argc, char **argv, char **data_dir, uint16_t *page_size) {
   // -- A directory is always required.
   if (*data_dir == NULL)
     show_error("You must specify a data directory.\n", E_GENERIC);
-  // -- The page_size cannot be 0.  If so, atoi failed.
-  if (*page_size == 0)
-    show_error("The page size is still zero; this means your -s option was missing or wrong.", E_GENERIC);
+
   return;
 }
 

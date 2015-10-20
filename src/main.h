@@ -11,7 +11,7 @@
 
 /* Prototypes, because reasons! */
 int main(int argc, char **argv);
-void get_options(int argc, char **argv, char **pages_directory, uint16_t *page_size);
+void get_options(int argc, char **argv, char **pages_directory);
 void show_help();
 
 #endif /* SRC_MAIN_H_ */

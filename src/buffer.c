@@ -57,6 +57,7 @@ Buffer* buffer__initialize(bufferid_t id, char *page_filespec) {
   new_buffer->victimized = 0;
   new_buffer->popularity = 0;
   new_buffer->data_length = 0;
+  new_buffer->comp_length = 0;
   new_buffer->io_cost = 0;
   new_buffer->removal_index = 0;
   new_buffer->data = NULL;
@@ -73,6 +74,8 @@ Buffer* buffer__initialize(bufferid_t id, char *page_filespec) {
   new_buffer->data_length = ftell(fh);
   rewind(fh);
   new_buffer->data = malloc(new_buffer->data_length);
+  if (new_buffer->data == NULL)
+    show_error("Unable to allocate memory when loading a buffer's data member.", E_GENERIC);
   fread(new_buffer->data, new_buffer->data_length, 1, fh);
   fclose(fh);
   clock_gettime(CLOCK_MONOTONIC, &end);
@@ -177,19 +180,21 @@ int buffer__compress(Buffer *buf) {
   clock_gettime(CLOCK_MONOTONIC, &start);
   int max_compressed_size = LZ4_compressBound(buf->data_length);
   unsigned char *compressed_data = (unsigned char *)malloc(max_compressed_size);
+  if (compressed_data == NULL)
+    show_error("Failed to allocate memory during buffer__compress() operation for compressed_data pointer.", E_GENERIC);
   int compressed_bytes = LZ4_compress_default(buf->data, compressed_data, buf->data_length, max_compressed_size);
   if (compressed_bytes < 1) {
     printf("buffer__compress returned a negative result from LZ4_compress_default: %d\n.", rv);
+    buffer__unlock(buf);
     return E_GENERIC;
   }
 
   /* Now free buf->data and modify the pointer to look at *compressed_data.  We cannot simply assign the pointer address of
    * compressed_data to buf->data because it'll waste space.  We need to malloc on the heap, memcpy data, and then free. */
   free(buf->data);
-  buf->data_length = compressed_bytes;
-  buf->data = (unsigned char *)malloc(buf->data_length);
-  buf->data = compressed_data;
-  memcpy(buf->data, compressed_data, buf->data_length);
+  buf->comp_length = compressed_bytes;
+  buf->data = (unsigned char *)malloc(buf->comp_length);
+  memcpy(buf->data, compressed_data, buf->comp_length);
   free(compressed_data);
 
   /* At this point we've compressed the raw data and saved it in a tightly allocated section of heap.  Save time and unlock. */
@@ -213,14 +218,33 @@ int buffer__decompress(Buffer *buf) {
   if (buf->data_length == 0)
     return E_BUFFER_MISSING_DATA;
 
-  /* Data looks good, time to decompress. */
+  /* Data looks good, time to decompress.  Lock the buffer for safety of course. */
+  int rv = buffer__lock(buf);
+  if (rv != E_OK)
+    return rv;
+  struct timespec start, end;
+  clock_gettime(CLOCK_MONOTONIC, &start);
   char *decompressed_data = (char *)malloc(buf->data_length);
-  int rv = LZ4_decompress_fast(buf->data, decompressed_data, buf->data_length);
-  printf("decomp rv is %d\n", rv);
+  if (decompressed_data == NULL)
+    show_error("Failed to allocate memory for buffer__decompress() for the decompressed_data pointer.", E_GENERIC);
+  rv = LZ4_decompress_fast(buf->data, decompressed_data, buf->data_length);
+  if (rv < 0) {
+    printf("Failed to decompress the data in buffer %d, rv was %d.\n", buf->id, rv);
+    buffer__unlock(buf);
+    return E_GENERIC;
+  }
 
-  /* Now free buf->data and modify the pointer to look at *decompressed_data now. */
+  /* Now free buf->data of it's compressed information and modify the pointer to look at *decompressed_data now. We can aviod using
+   * memcpy because we kept a record of how long the original data_length was, so no guess work. */
   free(buf->data);
   buf->data = decompressed_data;
+
+  /* At this point we've decompressed the data and replaced buf->data with it.  Update tracking counters and move on. */
+  clock_gettime(CLOCK_MONOTONIC, &end);
+  buf->comp_hits++;
+  buf->comp_length = 0;
+  buf->comp_cost += BILLION *(end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec;
+  buffer__unlock(buf);
 
   return E_OK;
 }

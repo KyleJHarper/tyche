@@ -8,6 +8,7 @@
 #ifndef SRC_TESTS_H_
 #define SRC_TESTS_H_
 
+void tests__io(char *pages[], const int PAGE_COUNT);
 void tests__compression();
 void tests__synchronized_readwrite();
 void tests__wake_up(List *raw_list);

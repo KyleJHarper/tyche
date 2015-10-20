@@ -26,87 +26,6 @@ extern const int E_BUFFER_IS_VICTIMIZED;
 
 
 
-/*
- * Ensures basic compression and decompression works.
- */
-void tests__compression() {
-  /* Test 1:  make sure the LZ4_* functions can compress and decompress data. */
-  // -- Basic stuff
-  unsigned char *src = "1234567890abcdef";
-  unsigned char *dst = (unsigned char *)malloc(10000);
-  int src_size = 16;
-  int dst_max_size = 10000;
-  int rv = 0;
-  unsigned char *new_src = (unsigned char *)malloc(src_size);
-    // -- Compress
-  FILE *fh_c = fopen("/tmp/char_ptr_c", "wb");
-  FILE *fh_d = fopen("/tmp/char_ptr_d", "wb");
-  FILE *fh_raw = fopen("/tmp/char_ptr_raw", "wb");
-  fwrite(src, 1, src_size, fh_raw);
-  fclose(fh_raw);
-  rv = LZ4_compress_default(src, dst, src_size, dst_max_size);
-  if (rv < 0) {
-    printf("The rv was negative when compressing a char pointer, indicating an error: %d\n", rv);
-    exit(rv);
-  }
-  fwrite(dst, 1, rv, fh_c);
-  fclose(fh_c);
-  // -- Decompress
-  rv = LZ4_decompress_fast(dst, new_src, src_size);
-  if (rv < 0) {
-    printf("The rv was negative when decompressing a char pointer, indicating an error: %d\n", rv);
-    exit(rv);
-  }
-  fwrite(new_src, 1, src_size, fh_d);
-  fclose(fh_d);
-
-  /* Test 2:  the LZ4 compression function needs to return the size of the compressed data. */
-  // This is automatically done by the function as noted by rv above.
-
-  /* Test 3:  The compression and decompression functions should work on a buffer->data element. */
-  Buffer *buf = buffer__initialize(205, NULL);
-  buf->data = (unsigned char *)malloc(src_size);
-  buf->data_length = src_size;
-  memcpy(buf->data, src, buf->data_length);
-  // -- Compress
-  FILE *fh_buf_c = fopen("/tmp/buf_member_c", "wb");
-  FILE *fh_buf_d = fopen("/tmp/buf_member_d", "wb");
-  rv = LZ4_compress_default(src, buf->data, buf->data_length, dst_max_size);
-  if (rv < 0) {
-    printf("The rv was negative when compressing a buffer element, indicating an error: %d\n", rv);
-    exit(rv);
-  }
-  fwrite(buf->data, 1, rv, fh_buf_c);
-  fclose(fh_buf_c);
-  // -- Decompress
-  new_src = (char *)malloc(buf->data_length);
-  rv = LZ4_decompress_fast(buf->data, new_src, buf->data_length);
-  if (rv < 0) {
-    printf("The rv was negative when decompressing a buffer element, indicating an error: %d\n", rv);
-    exit(rv);
-  }
-  fwrite(new_src, 1, buf->data_length, fh_buf_d);
-  fclose(fh_buf_d);
-
-  // Print the notice that tests 1 - 3 are done.
-  printf("Tests 1 - 3 are done.  Compare MD5 sums in /tmp/*\n");
-
-  /* Test 4:  using the buffer__compress/buffer__decompress functions should work and store comp_time. */
-  Buffer *buf2 = buffer__initialize(123, NULL);
-  buf2->data = (unsigned char *)malloc(src_size);
-  buf2->data_length = src_size;
-  memcpy(buf2->data, src, buf2->data_length);
-  // -- Compress
-  rv = buffer__compress(buf2);
-  if (rv != E_OK) {
-    printf("buffer__compress gave a result of of: %d\n", rv);
-    exit(rv);
-  }
-  printf("Compression gave an OK response.  Comp time is %d ns, and size is %d bytes\n", buf2->comp_cost, buf2->data_length);
-  //TODO finish the buffer__decompress function so we can wrap up this test.
-
-  return;
-}
 
 
 
@@ -291,3 +210,122 @@ void tests__elements() {
   printf("Number of comp elements: %d\n", comp_list->count);
 }
 
+
+/*
+ * IO either works or doesn't.  You'll get an error on CLI if you mess up options or provide bad data.  This functino will simply
+ * attempt to read a file into a buffer with buffer__initialize(valid_id, valid_path).  Requires a pointer to the pages array and
+ * the PAGE_COUNT const.
+ */
+void tests__io(char *pages[], const int PAGE_COUNT) {
+  int id_to_get = 128;
+  while (id_to_get >= PAGE_COUNT && id_to_get != 0)
+    id_to_get /= 2;
+  if (id_to_get == 0) {
+    printf("The tests__io function reached id_to_get value of 0... are you sure you pointed tyche to a directory with pages?");
+    exit(1);
+  }
+
+  // Looks like we have a valid ID to get.  Let's see if it actually works...
+  Buffer *buf = buffer__initialize(id_to_get, pages[id_to_get - 1]);
+  printf("Found a buffer and loaded it.  ID is %d, data length is %d, and io_cost is %d.\n", buf->id, buf->data_length, buf->io_cost);
+  free(buf->data);
+  free(buf);
+  return;
+}
+
+
+/*
+ * Ensures basic compression and decompression works.
+ */
+void tests__compression(char *pages[], const int PAGE_COUNT) {
+  /* Test 1:  make sure the LZ4_* functions can compress and decompress data. */
+  // -- Basic stuff
+  unsigned char *src = "1234567890abcdef";
+  unsigned char *dst = (unsigned char *)malloc(10000);
+  int src_size = 16;
+  int dst_max_size = 10000;
+  int rv = 0;
+  unsigned char *new_src = (unsigned char *)malloc(src_size);
+    // -- Compress
+  FILE *fh_c = fopen("/tmp/char_ptr_c", "wb");
+  FILE *fh_d = fopen("/tmp/char_ptr_d", "wb");
+  FILE *fh_raw = fopen("/tmp/char_ptr_raw", "wb");
+  fwrite(src, 1, src_size, fh_raw);
+  fclose(fh_raw);
+  rv = LZ4_compress_default(src, dst, src_size, dst_max_size);
+  if (rv < 0) {
+    printf("The rv was negative when compressing a char pointer, indicating an error: %d\n", rv);
+    exit(rv);
+  }
+  fwrite(dst, 1, rv, fh_c);
+  fclose(fh_c);
+  // -- Decompress
+  rv = LZ4_decompress_fast(dst, new_src, src_size);
+  if (rv < 0) {
+    printf("The rv was negative when decompressing a char pointer, indicating an error: %d\n", rv);
+    exit(rv);
+  }
+  fwrite(new_src, 1, src_size, fh_d);
+  fclose(fh_d);
+
+  /* Test 2:  the LZ4 compression function needs to return the size of the compressed data. */
+  // This is automatically done by the function as noted by rv above.
+
+  /* Test 3:  The compression and decompression functions should work on a buffer->data element. */
+  Buffer *buf = buffer__initialize(205, NULL);
+  buf->data = (unsigned char *)malloc(src_size);
+  buf->data_length = src_size;
+  memcpy(buf->data, src, buf->data_length);
+  // -- Compress
+  FILE *fh_buf_c = fopen("/tmp/buf_member_c", "wb");
+  FILE *fh_buf_d = fopen("/tmp/buf_member_d", "wb");
+  rv = LZ4_compress_default(src, buf->data, buf->data_length, dst_max_size);
+  if (rv < 0) {
+    printf("The rv was negative when compressing a buffer element, indicating an error: %d\n", rv);
+    exit(rv);
+  }
+  fwrite(buf->data, 1, rv, fh_buf_c);
+  fclose(fh_buf_c);
+  // -- Decompress
+  new_src = (char *)malloc(buf->data_length);
+  rv = LZ4_decompress_fast(buf->data, new_src, buf->data_length);
+  if (rv < 0) {
+    printf("The rv was negative when decompressing a buffer element, indicating an error: %d\n", rv);
+    exit(rv);
+  }
+  fwrite(new_src, 1, buf->data_length, fh_buf_d);
+  fclose(fh_buf_d);
+
+  /* Test 4:  using the buffer__compress/buffer__decompress functions should work and store comp_time. */
+  FILE *fh_buf2_c = fopen("/tmp/buf2_member_c", "wb");
+  FILE *fh_buf2_d = fopen("/tmp/buf2_member_d", "wb");
+  Buffer *buf2 = buffer__initialize(123, NULL);
+  buf2->data = (unsigned char *)malloc(src_size);
+  buf2->data_length = src_size;
+  memcpy(buf2->data, src, buf2->data_length);
+  // -- Compress
+  rv = buffer__compress(buf2);
+  if (rv != E_OK) {
+    printf("buffer__compress gave a result of: %d\n", rv);
+    exit(rv);
+  }
+  fwrite(buf2->data, 1, buf2->comp_length, fh_buf2_c);
+  fclose(fh_buf2_c);
+  printf("Compression gave an OK response.    comp_time is %d ns, comp_hits is %d, data_legnth is %d, and comp_length is %d bytes\n", buf2->comp_cost, buf2->comp_hits, buf2->data_length, buf2->comp_length);
+  // -- Decompress
+  rv = buffer__decompress(buf2);
+  if (rv != E_OK) {
+    printf("buffer__decompress gave a result of: %d\n", rv);
+    exit(rv);
+  }
+  fwrite(buf2->data, 1, buf2->data_length, fh_buf2_d);
+  fclose(fh_buf2_d);
+  printf("Decompression gave an OK response.  comp_time is %d ns, comp_hits is %d, data_legnth is %d, and comp_length is %d bytes\n", buf2->comp_cost, buf2->comp_hits, buf2->data_length, buf2->comp_length);
+
+  /* All Done! */
+  printf("The following table should contain the same MD5 Sums for each comp/decomp file generated:\n");
+  system("md5sum /tmp/buf*_c /tmp/char*_c /tmp/buf*_d /tmp/char*_d");
+  printf("tests__compression() finished!\n");
+
+  return;
+}

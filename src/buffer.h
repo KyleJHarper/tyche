@@ -36,7 +36,8 @@ struct buffer {
   uint16_t comp_hits;             /* Number of times reclaimed from the compressed table during a polling period. */
 
   /* The actual payload we want to cache (i.e.: the page). */
-  uint16_t data_length;           /* Number of bytes in data.  For raw tables, always PAGE_SIZE.  Compressed will vary. */
+  uint16_t data_length;           /* Number of bytes originally in *data. */
+  uint16_t comp_length;           /* Number of bytes in *data if it was compressed.  Set to 0 when not used. */
   unsigned char *data;            /* Pointer to the character array holding the page data. */
 };
 

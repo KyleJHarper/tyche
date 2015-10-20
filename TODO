@@ -13,11 +13,11 @@ Branches / Bigger Steps
       c) [done] Getopts should handle test parameters for tyche.
       d) [done] Rename bin/main to tyche.
 2.  Compression
-      a) Compression (lz4) should be added via lz4.h/lz4.c and modified to suit needs (fix params).
-      b) A buffer given compressed data should store it properly and set data length.
-      c) Compression time should be stored in buffer.
-      d) Decompression should yield proper results.
-      e) Comp time and comp hits should be updated to track CPU time and avoided io time.
+      a) [done] Compression (lz4) should be added via lz4.h/lz4.c and modified to suit needs (fix params).
+      b) [done] A buffer given compressed data should store it properly and set data length.
+      c) [done] Compression time should be stored in buffer.
+      d) [done] Decompression should yield proper results.
+      e) [done] Comp time and comp hits should be updated to track CPU time and avoided io time.
       f) Try to optimize the (de)compression operations the way multipleFilenames() functions work (LZIO cRess/dRess).
 3.  List management: create raw and compressed lists and ensure they're managing themselves upon updates.
       a) Lists should probably know if they're raw or compressed, and raw needs to know who to dump overflow to.
@@ -27,7 +27,11 @@ Branches / Bigger Steps
 4.  Adaptations
       a) Not sure what all is needed, but need a monitor thread to adjust list sizes on-the-fly based on statistics.
          Could prove difficult since we're array-based (pool[]) now.  I'm sure a list->max attribute can fix that.
-5.  Bug Fixes To-Date
+5.  Testing
+      a) All tests should create headers and spacing footers.
+      b) Tests should be grouped up and reorganized to be more user friendly.
+      c) There should be a switch to run all the tests (with the performance one scaled down?).
+6.  Bug Fixes To-Date
       a) There needs to be a buffer__destroy() function to free() memory to avoid a leak when list__remove()-ing.
          It's possible list__remove() should do this... and it might already... hmm.
 
