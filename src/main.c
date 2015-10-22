@@ -63,7 +63,7 @@ int main(int argc, char **argv) {
  */
 void get_options(int argc, char **argv, char **data_dir) {
   // Shamelessly copied from gcc example docs.  No need to get fancy.
-  int c = 0, index = 0;
+  int c = 0;
   opterr = 0;
   while ((c = getopt(argc, argv, "d:h")) != -1) {
     switch (c) {

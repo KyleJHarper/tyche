@@ -235,7 +235,8 @@ void tests__io(char *pages[], const int PAGE_COUNT) {
 
 
 /*
- * Ensures basic compression and decompression works.
+ * Ensures basic compression and decompression works.  We should NOT read buffers from the disk.  It would be a more comprehensive
+ * test but it would preclude us from testing JUST compression, which is the point here.
  */
 void tests__compression(char *pages[], const int PAGE_COUNT) {
   /* Test 1:  make sure the LZ4_* functions can compress and decompress data. */

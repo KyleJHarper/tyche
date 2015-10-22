@@ -79,8 +79,6 @@ uint io__get_page_count(char *dir_name) {
  * Void return type because if this fails, we're toast and will show_error() out.
  */
 void io__scan_for_pages(char *dir_name, PageFilespec **head) {
-  PageFilespec *new_page = NULL;
-
   // Open the data directory.
   DIR *dir = opendir(dir_name);
   if (errno != 0) {

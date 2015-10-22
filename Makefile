@@ -1,7 +1,8 @@
 # Hooray, a make file.
 
-CC     = gcc -std=gnu99 -pthread -g
-CFLAGS += -Wall
+CC     = gcc
+CFLAGS += -Wno-pointer-sign  # For now because lz4 uses char instead of unsigned char pointers
+CFLAGS += -Wall -std=gnu99 -pthread -g
 
 SRCDIR = src
 OBJDIR = obj
@@ -14,9 +15,9 @@ OBJECTS  := $(SOURCES:$(SRCDIR)/%.c=$(OBJDIR)/%.o)
 # Targets
 # The clock_gettime() on this gcc version requires -lrt.
 build:
-	$(CC) -o $(BINDIR)/hello $(SRCDIR)/hello.c
-	$(CC) -o $(BINDIR)/sizes $(SRCDIR)/sizes.c
-	$(CC) -o $(BINDIR)/tyche     \
+	$(CC) $(CFLAGS) -o $(BINDIR)/hello $(SRCDIR)/hello.c
+	$(CC) $(CFLAGS) -o $(BINDIR)/sizes $(SRCDIR)/sizes.c
+	$(CC) $(CFLAGS) -o $(BINDIR)/tyche     \
 		$(SRCDIR)/list.c    \
 		$(SRCDIR)/lz4.c     \
 		$(SRCDIR)/buffer.c  \
