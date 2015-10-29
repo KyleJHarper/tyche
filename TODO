@@ -18,7 +18,8 @@ Branches / Bigger Steps
       c) [done] Compression time should be stored in buffer.
       d) [done] Decompression should yield proper results.
       e) [done] Comp time and comp hits should be updated to track CPU time and avoided io time.
-      f) Try to optimize the (de)compression operations the way multipleFilenames() functions work (LZIO cRess/dRess).
+      f) [done] Try to optimize the (de)compression operations the way multipleFilenames() functions work (LZIO cRess/dRess).
+      g) [done] We should use memcmp() instead of writing everything to disk and running system(md5sum).
 3.  List management: create raw and compressed lists and ensure they're managing themselves upon updates.
       a) Lists should probably know if they're raw or compressed, and raw needs to know who to dump overflow to.
       b) Raw pool size should configurable and enforced in list__add().

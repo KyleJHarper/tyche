@@ -162,24 +162,28 @@ void buffer__assign_next_removal_index(removal_index_t *referring_id_ptr) {
 /* buffer__compress
  * Compresses the buffer's ->data element.  This is done with lz4 from https://github.com/Cyan4973/lz4
  * Whatever is in ->data will be obliterated without any checking (free()'d).
+ * Compression only happens when a buffer is found to be useless and is prime for victimization and moved to the compressed list.
+ * The list__migrate function will handle list locking; it will also invoke the buffer__victimize function to drain the buffer of
+ * references before attempting to compress its ->data member and move it to the compressed list.  Since the buffer is victimized
+ * and list__search is blocked we can be assured no one gets a bad read of ->data.
  */
 int buffer__compress(Buffer *buf) {
   /* Make sure we have a valid buffer with valid data element. */
   if (buf == NULL)
     return E_BUFFER_NOT_FOUND;
-  if (buf->data == NULL)
-    return E_BUFFER_MISSING_DATA;
-  if (buf->data_length == 0)
-    return E_BUFFER_MISSING_DATA;
-
-  /* Data looks good, time to compress.  Lock the buffer, start the timer, and start working. */
   int rv = buffer__lock(buf);
   if (rv != E_OK)
     return rv;
+  if (buf->data == NULL || buf->data_length == 0 || buf->comp_length != 0) {
+    buffer__unlock(buf);
+    return E_BUFFER_MISSING_DATA;
+  }
+
+  /* Data looks good, time to compress. */
   struct timespec start, end;
   clock_gettime(CLOCK_MONOTONIC, &start);
   int max_compressed_size = LZ4_compressBound(buf->data_length);
-  unsigned char *compressed_data = (unsigned char *)malloc(max_compressed_size);
+  void *compressed_data = (void *)malloc(max_compressed_size);
   if (compressed_data == NULL)
     show_error("Failed to allocate memory during buffer__compress() operation for compressed_data pointer.", E_GENERIC);
   int compressed_bytes = LZ4_compress_default(buf->data, compressed_data, buf->data_length, max_compressed_size);
@@ -193,7 +197,7 @@ int buffer__compress(Buffer *buf) {
    * compressed_data to buf->data because it'll waste space.  We need to malloc on the heap, memcpy data, and then free. */
   free(buf->data);
   buf->comp_length = compressed_bytes;
-  buf->data = (unsigned char *)malloc(buf->comp_length);
+  buf->data = (void *)malloc(buf->comp_length);
   memcpy(buf->data, compressed_data, buf->comp_length);
   free(compressed_data);
 
@@ -208,23 +212,37 @@ int buffer__compress(Buffer *buf) {
 
 /* buffer__decompress
  * Decompresses the buffer's ->data element.  This is done with lz4 from https://github.com/Cyan4973/lz4
+ * The only way a buffer can be decompressed is if a list__search on an uncompressed list fails and the buffer is found in the
+ * compressed list.  When this happens, list__migrate is invoked to handle list locking which prevents 2 threads from reaching this
+ * this function at the same time.  The resident buffer__lock(buf) should protect the buffer itself from anyone who might be trying
+ * to lock it for whatever reason.  Since no one is reading ->data (it's compressed) and we don't care about dirty reads from race
+ * conditions with this buffer's other members, we don't need to victimize or drain it of refs.
  */
 int buffer__decompress(Buffer *buf) {
   /* Make sure we have a valid buffer with valid data element. */
   if (buf == NULL)
     return E_BUFFER_NOT_FOUND;
-  if (buf->data == NULL)
-    return E_BUFFER_MISSING_DATA;
-  if (buf->data_length == 0)
-    return E_BUFFER_MISSING_DATA;
-
-  /* Data looks good, time to decompress.  Lock the buffer for safety of course. */
   int rv = buffer__lock(buf);
   if (rv != E_OK)
     return rv;
+  if (buf->data == NULL) {
+    buffer__unlock(buf);
+    return E_BUFFER_MISSING_DATA;
+  }
+  if (buf->data_length == 0) {
+    buffer__unlock(buf);
+    return E_BUFFER_MISSING_DATA;
+  }
+  if (buf->comp_length == 0) {
+    // Someone beat us to it...
+    buffer__unlock(buf);
+    return E_OK;
+  }
+
+  /* Data looks good, time to decompress.  Lock the buffer for safety. */
   struct timespec start, end;
   clock_gettime(CLOCK_MONOTONIC, &start);
-  char *decompressed_data = (char *)malloc(buf->data_length);
+  void *decompressed_data = (void *)malloc(buf->data_length);
   if (decompressed_data == NULL)
     show_error("Failed to allocate memory for buffer__decompress() for the decompressed_data pointer.", E_GENERIC);
   rv = LZ4_decompress_fast(buf->data, decompressed_data, buf->data_length);
@@ -234,7 +252,7 @@ int buffer__decompress(Buffer *buf) {
     return E_GENERIC;
   }
 
-  /* Now free buf->data of it's compressed information and modify the pointer to look at *decompressed_data now. We can aviod using
+  /* Now free buf->data of it's compressed information and modify the pointer to look at *decompressed_data now. We can avoid using
    * memcpy because we kept a record of how long the original data_length was, so no guess work. */
   free(buf->data);
   buf->data = decompressed_data;

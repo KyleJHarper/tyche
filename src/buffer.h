@@ -38,7 +38,7 @@ struct buffer {
   /* The actual payload we want to cache (i.e.: the page). */
   uint16_t data_length;           /* Number of bytes originally in *data. */
   uint16_t comp_length;           /* Number of bytes in *data if it was compressed.  Set to 0 when not used. */
-  unsigned char *data;            /* Pointer to the character array holding the page data. */
+  void *data;                     /* Pointer to the memory holding the page data, whether raw or compressed. */
 };
 
 

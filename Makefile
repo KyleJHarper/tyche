@@ -1,7 +1,7 @@
 # Hooray, a make file.
 
 CC     = gcc
-CFLAGS += -Wno-pointer-sign  # For now because lz4 uses char instead of unsigned char pointers
+#CFLAGS += -Wno-pointer-sign  # For now because lz4 uses char instead of unsigned char pointers
 CFLAGS += -Wall -std=gnu99 -pthread -g
 
 SRCDIR = src
