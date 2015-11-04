@@ -13,9 +13,9 @@ Latest Changelog Entries
 
 *Decompression is similar in that comp_time is updated to include decompression time.  It also updates the comp_hits member so that the (future) evaluation engine can make determinations on compression efficacy for the life of the buffer.*
 
-*The next step is to write functionality to manage the lists so that buffers can be moved between them.  This is cost that should be accounted for but it's not specific to a single buffer; so we'll probably end up tracking this at globally or at the list-level.*
+*The next step is to write functionality to manage the lists so that buffers can be moved between them.  This is cost that should be accounted for but it's not specific to a single buffer; so we'll probably end up tracking this globally or at the list-level.*
 
-*Overall, preliminary tests are hopeful.  A full comp/decomp cycle with a 4KB (4096 byte) data set (Lorem Ipsum text) takes approximately 100,000 ns on my test VM with a Core i7 4790 (single core).  This equates to 100 microseconds (us) or 0.1 millisecond (ms).  Of this, 85% was spent compressing while only 15% was decompression; so when we need the buffer it can be ready in 0.15 * 100,000 ns, or 0.015 ms.  This favors the theory we're investigating because compression can be theoretically "offline", doing work while it happens; while decompression is always giong to be "on demand", meaning someone needs it now.*
+*Overall, preliminary tests are hopeful.  A full comp/decomp cycle with a 4KB (4096 byte) data set (Lorem Ipsum text) takes approximately 100,000 ns on my test VM with a Core i7 4790 (single core) on DD3-1600 RAM (9-9-9-24).  This equates to 100 microseconds (us) or 0.1 millisecond (ms).  Of this, 85% was spent compressing while only 15% was decompressing; so when we need the buffer it can be ready in 0.15 * 100,000 ns, or 0.015 ms.  This favors the theory we're investigating because compression can be theoretically "offline", doing work while it happens; while decompression is always giong to be "on demand", meaning someone needs it now.*
 
 *Comparing this to storage retrieval options:*
 
@@ -26,8 +26,11 @@ Latest Changelog Entries
 |           SSD 150 MB/s |     0.126 | 0.1 seek + 0.00 rl + 0.026 transfer |
 |           SSD 300 MB/s |     0.113 | 0.1 seek + 0.00 rl + 0.013 transfer |
 |           SSD 600 MB/s |     0.107 | 0.1 seek + 0.00 rl + 0.007 transfer |
+
 (rl == rotational latency)
+
 Sources: basic math and wikipedia.org articles.
+
 Note: Transfer time is from platter to sector buffer and doesn't account for interface transfer time (e.g.: SATA speed/latency).  This can become more significant as storage fabrics come into play; e.g.: iSCSI, Fiber Channel, and so forth.
 
 *The above table is far from a perfect analysis, but that's what tyche is all about: real world testing when it's done.  So far, our total compression/decompression time is competitive with the fastest SSD on a local bus.  When we compare decompression time for respone time we're drastically faster than even the fastest SSD.  For now, I'm satisfied that the theory is still plausible.*
