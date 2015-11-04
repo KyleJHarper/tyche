@@ -18,6 +18,7 @@ Latest Changelog Entries
 *Overall, preliminary tests are hopeful.  A full comp/decomp cycle with a 4KB (4096 byte) data set (Lorem Ipsum text) takes approximately 100,000 ns on my test VM with a Core i7 4790 (single core).  This equates to 100 microseconds (us) or 0.1 millisecond (ms).  Of this, 85% was spent compressing while only 15% was decompression; so when we need the buffer it can be ready in 0.15 * 100,000 ns, or 0.015 ms.  This favors the theory we're investigating because compression can be theoretically "offline", doing work while it happens; while decompression is always giong to be "on demand", meaning someone needs it now.*
 
 *Comparing this to storage retrieval options:*
+
 | Medium                 | Time (ms) | Times per Operation (ms)            |
 | ---------------------- | --------: | ----------------------------------- |
 |  7200 RPM HDD 120 MB/s |    13.203 | 9.0 seek + 4.17 rl + 0.033 transfer |
