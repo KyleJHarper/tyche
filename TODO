@@ -24,7 +24,9 @@ Branches / Bigger Steps
       a) Lists should probably know if they're raw or compressed, and raw needs to know who to dump overflow to.
       b) Raw pool size should configurable and enforced in list__add().
       c) Compressed list should maintain a count of its size and list__pop()/push() when not enough room is available.
-      d) Removal from raw should send to compressed list.
+      d) Removal from raw should send to compressed list.  list__migrate().
+      e) A dedicated function might be necessary such as list__sweep() or list__balance() to remove buffers from both lists
+         so that new data can come in.  This should accept a target to hit (e.g. 5% free) and a default should be provided.
 4.  Adaptations
       a) Not sure what all is needed, but need a monitor thread to adjust list sizes on-the-fly based on statistics.
          Could prove difficult since we're array-based (pool[]) now.  I'm sure a list->max attribute can fix that.
@@ -33,6 +35,4 @@ Branches / Bigger Steps
       b) Tests should be grouped up and reorganized to be more user friendly.
       c) There should be a switch to run all the tests (with the performance one scaled down?).
 6.  Bug Fixes To-Date
-      a) There needs to be a buffer__destroy() function to free() memory to avoid a leak when list__remove()-ing.
-         It's possible list__remove() should do this... and it might already... hmm.
 

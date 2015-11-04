@@ -10,9 +10,6 @@
 #include "buffer.h"
 
 int main() {
-  int *iptr = NULL;
-  float *fptr = NULL;
-  char *cptr = NULL;
   printf("\n");
   printf("Size of Buffer->id           : %zu Bytes\n", sizeof((Buffer *)0)->id);
   printf("Size of Buffer->ref_count    : %zu Bytes\n", sizeof((Buffer *)0)->ref_count);
@@ -24,6 +21,7 @@ int main() {
   printf("Size of Buffer->io_cost      : %zu Bytes\n", sizeof((Buffer *)0)->io_cost);
   printf("Size of Buffer->comp_hits    : %zu Bytes\n", sizeof((Buffer *)0)->comp_hits);
   printf("Size of Buffer->data_length  : %zu Bytes\n", sizeof((Buffer *)0)->data_length);
+  printf("Size of Buffer->comp_length  : %zu Bytes\n", sizeof((Buffer *)0)->comp_length);
   printf("Size of Buffer->data         : %zu Bytes\n", sizeof((Buffer *)0)->data);
   printf("Size of Buffer               : %zu Bytes\n", sizeof(Buffer));
 

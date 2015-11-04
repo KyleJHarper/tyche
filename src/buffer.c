@@ -245,7 +245,7 @@ int buffer__decompress(Buffer *buf) {
   void *decompressed_data = (void *)malloc(buf->data_length);
   if (decompressed_data == NULL)
     show_error("Failed to allocate memory for buffer__decompress() for the decompressed_data pointer.", E_GENERIC);
-  rv = LZ4_decompress_fast(buf->data, decompressed_data, buf->data_length);
+  rv = LZ4_decompress_safe(buf->data, decompressed_data, buf->comp_length, buf->data_length);
   if (rv < 0) {
     printf("Failed to decompress the data in buffer %d, rv was %d.\n", buf->id, rv);
     buffer__unlock(buf);
