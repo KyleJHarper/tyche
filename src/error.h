@@ -9,7 +9,7 @@
 #define SRC_ERROR_H_
 
 /* Function Prototypes */
-void show_error(char *message, int exit_code);
+void show_error(int exit_code, char *format, ...);
 void show_file_error(char *filespec, int error_code);
 
 

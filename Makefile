@@ -25,7 +25,7 @@ build:
 		$(SRCDIR)/error.c   \
 		$(SRCDIR)/io.c      \
 		$(SRCDIR)/tests.c   \
-		$(SRCDIR)/main.c    \
+		$(SRCDIR)/tyche.c   \
 		-lrt
 
 clean:

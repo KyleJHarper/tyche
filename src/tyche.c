@@ -1,5 +1,5 @@
 /*
- * main.c
+ * tyche.c
  *
  *  Created on: Jun 18, 2015
  *      Author: Kyle Harper
@@ -15,23 +15,29 @@
  */
 
 /* Headers */
+#include <ctype.h>
+#include <inttypes.h>     /* for PRIuXX format codes */
+#include <stdlib.h>       /* for exit() */
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
-#include <stdint.h>
-#include <ctype.h>
 #include <unistd.h>       /* for getopt */
-#include <stdlib.h>       /* for exit() */
 #include "error_codes.h"
 #include "error.h"
 #include "list.h"
 #include "lock.h"
 #include "tests.h"
 #include "io.h"
-#include "main.h"
+#include "tyche.h"
+
+/* Define a few things, mostly for sanity checking later. */
+#define MIN_MEMORY 1048576    /* 1 MB */
+#define INITIAL_RAW 80        /* 80% */
+
 
 /* Extern error codes */
 extern const int E_OK;
-extern const int E_GENERIC;
+extern const int E_BAD_CLI;
 
 
 /* main
@@ -39,19 +45,24 @@ extern const int E_GENERIC;
  */
 int main(int argc, char **argv) {
   /* Get options & verify them. */
-  char *data_dir = NULL;
-  get_options(argc, argv, &data_dir);
+  char *DATA_DIR = NULL;
+  uint64_t MAX_MEMORY = 0;
+  get_options(argc, argv, &DATA_DIR, &MAX_MEMORY);
+
+  /* Build the two lists we're going to use. */
+  List *raw_list = list__initialize();
+  List *comp_list = list__initialize();
+  raw_list->max_size = MAX_MEMORY * INITIAL_RAW / 100;
+  comp_list->max_size = MAX_MEMORY * (100 - INITIAL_RAW) / 100;
+  raw_list->offload_to = comp_list;
 
   /* Get a list of the pages we have to work with. */
-  const uint PAGE_COUNT = io__get_page_count(data_dir);
+  const uint PAGE_COUNT = io__get_page_count(DATA_DIR);
   char *pages[PAGE_COUNT];
-  io__build_pages_array(data_dir, pages);
+  io__build_pages_array(DATA_DIR, pages);
 
   /* Initialize the locker. */
   lock__initialize();
-
-  /* Current test we're working on */
-  tests__compression();
 
   printf("Main finished.\n");
   return 0;
@@ -61,11 +72,11 @@ int main(int argc, char **argv) {
 /* get_options
  * A snippet from main() to get all the options sent via CLI, then verifies them.
  */
-void get_options(int argc, char **argv, char **data_dir) {
+void get_options(int argc, char **argv, char **data_dir, uint64_t *max_memory) {
   // Shamelessly copied from gcc example docs.  No need to get fancy.
   int c = 0;
   opterr = 0;
-  while ((c = getopt(argc, argv, "d:h")) != -1) {
+  while ((c = getopt(argc, argv, "d:hm:")) != -1) {
     switch (c) {
       case 'd':
         *data_dir = optarg;
@@ -73,6 +84,11 @@ void get_options(int argc, char **argv, char **data_dir) {
       case 'h':
         show_help();
         exit(E_OK);
+        break;
+      case 'm':
+        if (optarg == NULL)
+          show_error(E_BAD_CLI, "You specified -m but didn't actually provide an argument... tsk tsk");
+        *max_memory = atoi(optarg);
         break;
       case '?':
         show_help();
@@ -82,17 +98,20 @@ void get_options(int argc, char **argv, char **data_dir) {
           fprintf(stderr, "Unknown option `-%c'.\n", optopt);
         else
           fprintf(stderr, "Unknown option character `\\x%x'.\n", optopt);
-        exit(E_GENERIC);
+        exit(E_BAD_CLI);
       default:
         show_help();
-        exit(E_GENERIC);
+        exit(E_BAD_CLI);
     }
   }
 
   /* Pre-flight Checks */
   // -- A directory is always required.
   if (*data_dir == NULL)
-    show_error("You must specify a data directory.\n", E_GENERIC);
+    show_error(E_BAD_CLI, "You must specify a data directory.");
+  // -- Memory needs to be at least MIN_MEMORY
+  if (*max_memory < MIN_MEMORY)
+    show_error(E_BAD_CLI, "The memory argument you supplied (-m) is too low.  You sent %"PRIu64", but a minimum of %"PRIu64" is required.", *max_memory, MIN_MEMORY);
 
   return;
 }

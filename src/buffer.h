@@ -17,6 +17,7 @@
 /* Defines used by this header. */
 #define MAX_POPULARITY UINT8_MAX
 
+
 /* Build the typedef and structure for a Buffer */
 typedef uint32_t bufferid_t;
 typedef uint16_t removal_index_t;
@@ -50,6 +51,7 @@ int buffer__update_ref(Buffer *buf, int delta);
 int buffer__victimize(Buffer *buf);
 int buffer__compress(Buffer *buf);
 int buffer__decompress(Buffer *buf);
+int buffer__copy(Buffer *src, Buffer *dst);
 
 
 #endif /* SRC_BUFFER_H_ */

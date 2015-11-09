@@ -40,6 +40,9 @@ extern const int E_GENERIC;
 extern const int E_BUFFER_NOT_FOUND;
 extern const int E_BUFFER_ALREADY_EXISTS;
 
+/* We need some information from the buffer header */
+extern const int BUFFER_OVERHEAD;
+
 
 /* Functions */
 /* list__initialize
@@ -49,18 +52,32 @@ List* list__initialize() {
   /* Quick error checking, then initialize the list.  We don't need to lock it because it's synchronous. */
   List *list = (List *)malloc(sizeof(List));
   if (list == NULL)
-    show_error("Failed to malloc a new list.", E_GENERIC);
+    show_error(E_GENERIC, "Failed to malloc a new list.");
+
+  /* Size and Counter Members */
   list->count = 0;
+  list->current_size = 0;
+  list->max_size = 0;
+
+  /* Locking, Reference Counters, and Similar Members */
+  if (pthread_mutex_init(&list->lock, NULL) != 0)
+    show_error(E_GENERIC, "Failed to initialize mutex for a list.  This is fatal.");
+  list->lock_owner = NULL;
+  if (pthread_cond_init(&list->writer_condition, NULL) != 0)
+    show_error(E_GENERIC, "Failed to initialize writer condition for a list.  This is fatal.");
+  if (pthread_cond_init(&list->reader_condition, NULL) != 0)
+    show_error(E_GENERIC, "Failed to initialize reader condition for a list.  This is fatal.");
   list->ref_count = 0;
   list->pending_writers = 0;
+
+  /* Management and Administration Members */
+  list->offload_to = NULL;
+  list->clock_hand_index = 0;
+  list->sweep_goal = 1;
+
+  /* Buffer Array Itself */
   for (int i = 0; i < BUFFER_POOL_SIZE; i++)
     list->pool[i] = NULL;
-  if (pthread_mutex_init(&list->lock, NULL) != 0)
-    show_error("Failed to initialize mutex for a list.  This is fatal.", E_GENERIC);
-  if (pthread_cond_init(&list->reader_condition, NULL) != 0)
-    show_error("Failed to initialize reader condition for a list.  This is fatal.", E_GENERIC);
-  if (pthread_cond_init(&list->writer_condition, NULL) != 0)
-    show_error("Failed to initialize writer condition for a list.  This is fatal.", E_GENERIC);
 
   return list;
 }
@@ -85,12 +102,18 @@ int list__destroy(List *list) {
  * precepts.
  */
 int list__acquire_write_lock(List *list) {
+  /* Check to see if the current lock owner is us; this is free of race conditions because it's only a race when we own it... */
+  if (pthread_equal(list->lock_owner, pthread_self()))
+    return E_OK;
+
   /* Block until we get the list lock, then we can safely update pending writers. */
   pthread_mutex_lock(&list->lock);
   list->pending_writers++;
   /* Begin a predicate check while under the protection of the mutex.  Block if the predicate remains true. */
   while(list->ref_count != 0)
     pthread_cond_wait(&list->writer_condition, &list->lock);
+  /* Set ourself to the lock owner in case future paths function calls try to ensure this thread has the list locked. */
+  list->lock_owner = pthread_self();
   /* We now have the lock again and our predicate is guaranteed protected (it respects the list lock); decrement and leave. */
   list->pending_writers--;
   return E_OK;
@@ -108,6 +131,8 @@ int list__release_write_lock(List *list) {
   } else {
     pthread_cond_broadcast(&list->reader_condition);
   }
+  /* Remove ourself as the lock owner so another can take our place.  Don't have to... just NULL-ing for safety. */
+  list->lock_owner = NULL;
   /* Release the lock now that the proper broadcast is out there.  Releasing AFTER a broadcast is supported and safe. */
   pthread_mutex_unlock(&list->lock);
   return E_OK;
@@ -123,7 +148,15 @@ int list__add(List *list, Buffer *buf) {
   /* Get a write lock, which guarantees flushing all readers first. */
   list__acquire_write_lock(list);
 
-  /* We now own the lock and no one should be scanning the list.  We can safely scan it ourselves and then edit it. */
+  /* Make sure we have room to add a new buffer before we proceed. */
+  const uint BUFFER_SIZE = BUFFER_OVERHEAD + (buf->comp_length == 0 ? buf->data_length : buf->comp_length);
+  if (list->max_size < list->current_size + BUFFER_SIZE) {
+    const uint BYTES_FREED = list__sweep(list);
+    if (BYTES_FREED < BUFFER_SIZE)
+      show_error(E_GENERIC, "The list__sweep() function was couldn't free enough bytes to store the buffer.  Bytes reclaimed: %d, needed, %d.", BYTES_FREED, BUFFER_SIZE);
+  }
+
+  /* We now own the lock and no one should be scanning the list.  We have bytes free to hold it.  We can safely scan and edit. */
   int rv = E_OK, low = 0, high = list->count, mid = 0;
   for(;;) {
     // Reset mid and begin testing.
@@ -135,6 +168,7 @@ int list__add(List *list, Buffer *buf) {
         list->pool[i] = list->pool[i-1];
       list->pool[mid] = buf;
       list->count++;
+      list->current_size += BUFFER_SIZE;
       break;
     }
 
@@ -173,6 +207,7 @@ int list__remove(List *list, Buffer *buf, bufferid_t id) {
   list__acquire_write_lock(list);
 
   /* We now have the list locked and can begin searching for the index of id. */
+  const uint BUFFER_SIZE = BUFFER_OVERHEAD + (buf->comp_length == 0 ? buf->data_length : buf->comp_length);
   int low = 0, high = list->count, mid = 0, rv = E_OK;
   for(;;) {
     // Reset mid and begin testing.  Start with boundary testing to break if we're done.
@@ -185,7 +220,7 @@ int list__remove(List *list, Buffer *buf, bufferid_t id) {
     // If the pool[mid] ID matches, we found the right index which means buf is a valid pointer.  Victimize the buffer, collapse array downward, & update the list.
     if (list->pool[mid]->id == id) {
       if (buffer__victimize(buf) != 0)
-        show_error("The list__remove function received an error when trying to victimize the buffer (%d).\n", rv);
+        show_error(rv, "The list__remove function received an error when trying to victimize the buffer (%d).\n", rv);
       lockid_t lock_id = buf->lock_id;
       free(list->pool[mid]);
       lock__release(lock_id);
@@ -193,6 +228,7 @@ int list__remove(List *list, Buffer *buf, bufferid_t id) {
         list->pool[i] = list->pool[i+1];
       list->pool[list->count - 1] = NULL;
       list->count--;
+      list->current_size -= BUFFER_SIZE;
       break;
     }
 
@@ -288,4 +324,45 @@ int list__update_ref(List *list, int delta) {
   /* Release the lock, which will also finally unblock any threads we woke up with broadcast above.  Then leave happy. */
   pthread_mutex_unlock(&list->lock);
   return E_OK;
+}
+
+
+/* list__sweep
+ * Attempts to run the sweep algorithm on the list to find space to free up.  Only a raw list should ever call this.  Removal of
+ * compressed buffers is handled by list__pop().
+ * Note:  We attempt to free a percentage of ->current_size, NOT ->max_size!  There are pros/cons to both; in normal usage the
+ * current size should always be high enough to avoid errors because sweeping shouldn't be called until we're low on memory.
+ * The caller MUST acquire the list lock BEFORE calling this!!!
+ */
+uint list__sweep(List *list) {
+  uint bytes_freed = 0;
+  const uint BYTES_NEEDED = list->current_size * list->sweep_goal / 100;
+  Buffer *buf = NULL;
+  List temp_list = list__initialize();
+
+  // Sanity Checks
+  if (list->offload_to == NULL)
+    show_error(E_GENERIC, "The list__sweep() function was given a list that doesn't have an offload_to target.  This is definitely a problem.");
+
+  while (BYTES_NEEDED > bytes_freed) {
+    // Start sweeping until we find a buffer to remove.  Popularity is halved until a victim is found.
+    for(;;) {
+      if (list->clock_hand_index >= list->count)
+        list->clock_hand_index = 0;
+      if (list->pool[list->clock_hand_index]->popularity == 0)
+        break;
+      list->pool[list->clock_hand_index]->popularity = list->pool[list->clock_hand_index]->popularity >> 1;
+      list->clock_hand_index++;
+    }
+    // We only reach this when an unpopular victim id is found.  Let's get to work.
+    buffer__copy(list->pool[list->clock_hand_index], buf);
+
+    // make a copy of the buffer
+    // compress the new buffer
+    // assign the new buffer to the temp_list with list__add()
+    // bytes_freed += sizeof(list->pool[bufferid])
+    // call list__remove() to victimize and safely nuke the buffer
+    // if compressed list doesn't have room, list__pop(list->offload_to) until there is enough room.
+  }
+  return bytes_freed;
 }

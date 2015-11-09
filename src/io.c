@@ -61,7 +61,7 @@ uint io__get_page_count(char *dir_name) {
 
   // Build a count of the number of elements so we can build our array below.
   if (head == NULL)
-    show_error("Head is still null which means we found no pages in the root directory.\n", E_GENERIC);
+    show_error(E_GENERIC, "Head is still null which means we found no pages in the root directory.\n");
   current = head;
   for(;;) {
     count++;

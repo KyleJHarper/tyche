@@ -37,6 +37,10 @@ extern const int E_BUFFER_POOFED;
 extern const int E_BUFFER_IS_VICTIMIZED;
 extern const int E_BUFFER_MISSING_DATA;
 
+/* Store the overhead of a Buffer for others to use for calculations */
+const int BUFFER_OVERHEAD = sizeof(Buffer);
+
+
 
 /* Functions */
 /* buffer__initialize
@@ -47,7 +51,7 @@ extern const int E_BUFFER_MISSING_DATA;
 Buffer* buffer__initialize(bufferid_t id, char *page_filespec) {
   Buffer *new_buffer = (Buffer *)malloc(sizeof(Buffer));
   if (new_buffer == NULL)
-    show_error("Error malloc-ing a new buffer in buffer__initialize.", E_GENERIC);
+    show_error(E_GENERIC, "Error malloc-ing a new buffer in buffer__initialize.");
   lock__assign_next_id(&new_buffer->lock_id);
   new_buffer->ref_count = 0;
   new_buffer->removal_index = 0;
@@ -69,13 +73,13 @@ Buffer* buffer__initialize(bufferid_t id, char *page_filespec) {
   clock_gettime(CLOCK_MONOTONIC, &start);
   FILE *fh = fopen(page_filespec, "rb");
   if (fh == NULL)
-    show_error("Unable to open file.\n", E_GENERIC);
+    show_error(E_GENERIC, "Unable to open file: %s.\n", page_filespec);
   fseek(fh, 0, SEEK_END);
   new_buffer->data_length = ftell(fh);
   rewind(fh);
   new_buffer->data = malloc(new_buffer->data_length);
   if (new_buffer->data == NULL)
-    show_error("Unable to allocate memory when loading a buffer's data member.", E_GENERIC);
+    show_error(E_GENERIC, "Unable to allocate memory when loading a buffer's data member.");
   fread(new_buffer->data, new_buffer->data_length, 1, fh);
   fclose(fh);
   clock_gettime(CLOCK_MONOTONIC, &end);
@@ -123,6 +127,11 @@ int buffer__update_ref(Buffer *buf, int delta) {
   buf->ref_count += delta;
   if (buf->victimized != 0 && buf->ref_count == 0)
     pthread_cond_broadcast(&locker_pool[buf->lock_id].condition);
+
+  // If we're incrementing we need to update popularity too.
+  if (delta > 0)
+    buf->popularity++;
+
   return E_OK;
 }
 
@@ -185,7 +194,7 @@ int buffer__compress(Buffer *buf) {
   int max_compressed_size = LZ4_compressBound(buf->data_length);
   void *compressed_data = (void *)malloc(max_compressed_size);
   if (compressed_data == NULL)
-    show_error("Failed to allocate memory during buffer__compress() operation for compressed_data pointer.", E_GENERIC);
+    show_error(E_GENERIC, "Failed to allocate memory during buffer__compress() operation for compressed_data pointer.");
   int compressed_bytes = LZ4_compress_default(buf->data, compressed_data, buf->data_length, max_compressed_size);
   if (compressed_bytes < 1) {
     printf("buffer__compress returned a negative result from LZ4_compress_default: %d\n.", rv);
@@ -244,7 +253,7 @@ int buffer__decompress(Buffer *buf) {
   clock_gettime(CLOCK_MONOTONIC, &start);
   void *decompressed_data = (void *)malloc(buf->data_length);
   if (decompressed_data == NULL)
-    show_error("Failed to allocate memory for buffer__decompress() for the decompressed_data pointer.", E_GENERIC);
+    show_error(E_GENERIC, "Failed to allocate memory for buffer__decompress() for the decompressed_data pointer.");
   rv = LZ4_decompress_safe(buf->data, decompressed_data, buf->comp_length, buf->data_length);
   if (rv < 0) {
     printf("Failed to decompress the data in buffer %d, rv was %d.\n", buf->id, rv);
@@ -263,6 +272,38 @@ int buffer__decompress(Buffer *buf) {
   buf->comp_length = 0;
   buf->comp_cost += BILLION *(end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec;
   buffer__unlock(buf);
+
+  return E_OK;
+}
+
+
+/* buffer__copy
+ * Simple function to copy the contents of one buffer and all its elements to another.
+ */
+int buffer__copy(Buffer *src, Buffer *dst) {
+  /* Attributes for typical buffer organization and management. */
+  dst->id = src->id;
+  dst->ref_count = src->ref_count;
+  dst->popularity = src->popularity;
+  dst->victimized = src->victimized;
+  dst->lock_id = src->lock_id;
+  dst->removal_index = src-
+  bufferid_t id;                  /* Identifier of the page. Should come from the system providing the data itself (e.g.: inode). */
+  uint16_t ref_count;             /* Number of references currently holding this buffer. */
+  uint8_t popularity;             /* Rapidly decaying counter used for victim selection with clock sweep.  Ceiling of MAX_POPULARITY. */
+  uint8_t victimized;             /* If the buffer has been victimized this is set non-zero.  Prevents incrementing of ref_count. */
+  lockid_t lock_id;               /* Lock ID from the locker_pool[], rather than having a pthread mutex & cond for each Buffer. */
+  removal_index_t removal_index;  /* When a buffer is victimized we need to compare it's removal index (higher == newer/fresher). */
+
+  /* Cost values for each buffer when pulled from disk or compressed/decompressed. */
+  uint32_t comp_cost;             /* Time spent, in ns, to compress and decompress a page.  Using clock_gettime(3) */
+  uint32_t io_cost;               /* Time spent, in ns, to read this buffer from the disk.  Using clock_gettime(3) */
+  uint16_t comp_hits;             /* Number of times reclaimed from the compressed table during a polling period. */
+
+  /* The actual payload we want to cache (i.e.: the page). */
+  uint16_t data_length;           /* Number of bytes originally in *data. */
+  uint16_t comp_length;           /* Number of bytes in *data if it was compressed.  Set to 0 when not used. */
+  void *data;                     /* Pointer to the memory holding the page data, whether raw or compressed. */
 
   return E_OK;
 }
