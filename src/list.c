@@ -63,6 +63,7 @@ List* list__initialize() {
   if (pthread_mutex_init(&list->lock, NULL) != 0)
     show_error(E_GENERIC, "Failed to initialize mutex for a list.  This is fatal.");
   list->lock_owner = NULL;
+  list->lock_depth = 0;
   if (pthread_cond_init(&list->writer_condition, NULL) != 0)
     show_error(E_GENERIC, "Failed to initialize writer condition for a list.  This is fatal.");
   if (pthread_cond_init(&list->reader_condition, NULL) != 0)
@@ -103,19 +104,24 @@ int list__destroy(List *list) {
  */
 int list__acquire_write_lock(List *list) {
   /* Check to see if the current lock owner is us; this is free of race conditions because it's only a race when we own it... */
-  if (pthread_equal(list->lock_owner, pthread_self()))
+  if (pthread_equal(list->lock_owner, pthread_self())) {
+    list->lock_depth++;
     return E_OK;
+  }
 
   /* Block until we get the list lock, then we can safely update pending writers. */
   pthread_mutex_lock(&list->lock);
+  if (list->lock_depth != 0)
+    show_error(E_GENERIC, "A new lock chain is being established but someone else left the list with a non-zero depth.  This is fatal.");
   list->pending_writers++;
   /* Begin a predicate check while under the protection of the mutex.  Block if the predicate remains true. */
   while(list->ref_count != 0)
     pthread_cond_wait(&list->writer_condition, &list->lock);
+  /* We now have the lock again and our predicate is guaranteed protected (it respects the list lock). */
+  list->pending_writers--;
   /* Set ourself to the lock owner in case future paths function calls try to ensure this thread has the list locked. */
   list->lock_owner = pthread_self();
-  /* We now have the lock again and our predicate is guaranteed protected (it respects the list lock); decrement and leave. */
-  list->pending_writers--;
+  list->lock_depth++;
   return E_OK;
 }
 
@@ -125,6 +131,11 @@ int list__acquire_write_lock(List *list) {
  * blocking on.  Readers all use list__update_ref which respects these same precepts.
  */
 int list__release_write_lock(List *list) {
+  /* Decrement the lock depth.  If the lock depth is more than 0 we aren't done with the lock yet. */
+  list->lock_depth--;
+  if (list->lock_depth != 0)
+    return E_OK;
+
   /* Determine if we need to notify other writers, or just the readers. */
   if(list->pending_writers > 0) {
     pthread_cond_broadcast(&list->writer_condition);
@@ -169,6 +180,8 @@ int list__add(List *list, Buffer *buf) {
       list->pool[mid] = buf;
       list->count++;
       list->current_size += BUFFER_SIZE;
+      if (list->clock_hand_index >= mid)
+        list->clock_hand_index++;
       break;
     }
 
@@ -229,6 +242,8 @@ int list__remove(List *list, Buffer *buf, bufferid_t id) {
       list->pool[list->count - 1] = NULL;
       list->count--;
       list->current_size -= BUFFER_SIZE;
+      if (list->clock_hand_index >= mid)
+        list->clock_hand_index--;
       break;
     }
 
@@ -332,13 +347,17 @@ int list__update_ref(List *list, int delta) {
  * compressed buffers is handled by list__pop().
  * Note:  We attempt to free a percentage of ->current_size, NOT ->max_size!  There are pros/cons to both; in normal usage the
  * current size should always be high enough to avoid errors because sweeping shouldn't be called until we're low on memory.
- * The caller MUST acquire the list lock BEFORE calling this!!!
  */
 uint list__sweep(List *list) {
+  // Acquire a list lock just to ensure we're operating safely.
+  list__acquire_write_lock(list);
+
   uint bytes_freed = 0;
   const uint BYTES_NEEDED = list->current_size * list->sweep_goal / 100;
   Buffer *buf = NULL;
   List temp_list = list__initialize();
+  temp_list->max_size = BYTES_NEEDED * 2;
+  int rv = 0;
 
   // Sanity Checks
   if (list->offload_to == NULL)
@@ -354,15 +373,92 @@ uint list__sweep(List *list) {
       list->pool[list->clock_hand_index]->popularity = list->pool[list->clock_hand_index]->popularity >> 1;
       list->clock_hand_index++;
     }
-    // We only reach this when an unpopular victim id is found.  Let's get to work.
+    // We only reach this when an unpopular victim id is found.  Let's get to work copying the buffer and compressing it.
+    buf = buffer__initialize(0, NULL);
     buffer__copy(list->pool[list->clock_hand_index], buf);
+    rv = buffer__compress(buf);
+    if (rv != E_OK)
+      show_error(rv, "Failed to compress a buffer when performing list__sweep().  This shouldn't happen.  Return code was %d.", rv);
 
-    // make a copy of the buffer
-    // compress the new buffer
-    // assign the new buffer to the temp_list with list__add()
-    // bytes_freed += sizeof(list->pool[bufferid])
-    // call list__remove() to victimize and safely nuke the buffer
-    // if compressed list doesn't have room, list__pop(list->offload_to) until there is enough room.
+    // Assign the new buffer to the temp_list, track the size difference, and remove the original buffer.
+    rv = list__add(temp_list, buf);
+    if (rv != E_OK)
+      show_error(rv, "Failed to send buf to the temp_list while sweeping.  Not sure how.  Return code is %d.", rv);
+    rv = list__remove(list, list->pool[list->clock_hand_index], list->pool[list->clock_hand_index]->id);
+    if (rv != E_OK)
+      show_error(rv, "Failed to remove the selected victim while sweeping.  Not sure how.  Return code is %d", rv);
+    bytes_freed += buf->data_length - buf->comp_length;
   }
+
+  // Now that we've freed up memory, move stuff from the temp_list to the offload (compressed) list.
+  if (temp_list->current_size + list->offload_to->current_size > list->offload_to->max_size)
+    list__pop(list->offload_to, temp_list->current_size);
+  // This function is the ONLY one who should ever decrement popularity, creating "generations" for list__pop()-ing later.
+  for (int i=0; i<list->count; i++)
+    list->offload_to->pool[i]->popularity--;
+  for (int i=0; i<temp_list->count; i++)
+    list__push(list->offload_to, temp_list->pool[i]);
+
+  list__release_write_lock(list);
   return bytes_freed;
+}
+
+
+/* list__push
+ * A wrapper that will prepare a compressed buffer for "pushing" to the specified list.  For searching purposes we actually
+ * maintain sorted lists; so we need to ensure that certain things are done to the buffer's members before list__add()-ing it.
+ * See: list__pop() for this function's counterpart.
+ */
+int list__push(List *list, Buffer *buf) {
+  // Quick error checking.
+  if (list == NULL || buf == NULL)
+    show_error(E_GENERIC, "The list__push function was given a null List or Buffer.  This is fatal.");
+
+  // The caller will usually lock the list, but we'll do it just to be safe.
+  list__acquire_write_lock(list);
+
+  // Buffers being recently pushed are popular with regard to other items in a compressed list.  This helps emulate FIFO.
+  buf->popularity = MAX_POPULARITY;
+
+  // That's really all for now.  The list__add() function will handle list size tracking and so forth.
+  list__add(list, buf);
+  list__release_write_lock(list);
+
+  return E_OK;
+}
+
+
+/* list__pop
+ * A wrapper to scan for the least popular buffer(s) in a compressed list and have it/them removed until bytes_needed is satisfied.
+ * To prevent excessive looping and work, we scan for the lowest popularity once, then remove ALL buffers with that popularity.  If
+ * our goal still isn't met, the low-threshold is incremented and we do it again.  This doesn't give true FIFO, but it give FIFO in
+ * regard to "generations" of buffers.  Each generation is added with list__push() calls (from list__sweep()) and their popularity
+ * is set to MAX_POPULARITY; at the end of each list__sweep() we decrement all buffers' popularity members.
+ * See:  list__push() for this function's counterpart.
+ */
+int list__pop(List *list, uint64_t bytes_needed) {
+  // Quick error checking.
+  if (list == NULL)
+    show_error(E_GENERIC, "The list__pop function was given a null list.  This is fatal.");
+
+  // The caller will usually lock the list, but we'll do it just to be safe.
+  list__acquire_write_lock(list);
+
+  // Loop through and eliminate buffers until we have enough space to add everything.  First, find the lowest value.
+  uint8_t lowest_popularity = 0;
+  for(uint32_t i = 0; i < list->count; i++)
+    lowest_popularity = lowest_popularity < list->pool[i]->popularity ? lowest_popularity : list->pool[i]->popularity;
+  while (bytes_needed > list->max_size - list->current_size) {
+    // Just for safety...
+    if (lowest_popularity > MAX_POPULARITY)
+      show_error(E_GENERIC, "The list__pop() function reached MAX_POPULARITY (%d) without freeing enough memory.  This is fatal.", MAX_POPULARITY);
+    // Remove all buffers with the lowest priority
+    for (uint32_t i = 0; i < list->count; i++)
+      if (list->pool[i]->popularity == lowest_popularity)
+        list__remove(list, list->pool[list->clock_hand_index], list->pool[list->clock_hand_index]->id);
+    lowest_popularity++;
+  }
+
+  list__release_write_lock(list);
+  return E_OK;
 }

@@ -16,7 +16,6 @@ int main() {
   printf("Size of Buffer->popularity   : %zu Bytes\n", sizeof((Buffer *)0)->popularity);
   printf("Size of Buffer->victimized   : %zu Bytes\n", sizeof((Buffer *)0)->victimized);
   printf("Size of Buffer->lock_id      : %zu Bytes\n", sizeof((Buffer *)0)->lock_id);
-  printf("Size of Buffer->removal_index: %zu Bytes\n", sizeof((Buffer *)0)->removal_index);
   printf("Size of Buffer->comp_cost    : %zu Bytes\n", sizeof((Buffer *)0)->comp_cost);
   printf("Size of Buffer->io_cost      : %zu Bytes\n", sizeof((Buffer *)0)->io_cost);
   printf("Size of Buffer->comp_hits    : %zu Bytes\n", sizeof((Buffer *)0)->comp_hits);

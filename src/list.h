@@ -50,6 +50,7 @@ struct list {
   /* Locking, Reference Counters, and Similar Members */
   pthread_mutex_t lock;             /* For operations requiring exclusive locking of the list (writing to it). */
   pthread_t lock_owner;             /* Stores the pthread_self() value to avoid double/dead locking. */
+  uint8_t lock_depth;               /* The depth of functions which have locked us, to ensure deeper calls don't release locks. */
   pthread_cond_t writer_condition;  /* The condition variable for writers to wait for when attempting to drain a list of refs. */
   pthread_cond_t reader_condition;  /* The condition variable for readers to wait for when attempting to increment ref count. */
   uint32_t ref_count;               /* Number of threads pinning this list (searching it) */
@@ -74,5 +75,7 @@ int list__destroy(List *list);
 int list__acquire_write_lock(List *list);
 int list__release_write_lock(List *list);
 uint list__sweep(List *list);
+int list__push(List *list, Buffer *buf);
+int list__pop(List *list, uint64_t bytes_needed);
 
 #endif /* SRC_LIST_H_ */

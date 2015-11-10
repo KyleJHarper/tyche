@@ -20,7 +20,6 @@
 
 /* Build the typedef and structure for a Buffer */
 typedef uint32_t bufferid_t;
-typedef uint16_t removal_index_t;
 typedef struct buffer Buffer;
 struct buffer {
   /* Attributes for typical buffer organization and management. */
@@ -29,7 +28,6 @@ struct buffer {
   uint8_t popularity;             /* Rapidly decaying counter used for victim selection with clock sweep.  Ceiling of MAX_POPULARITY. */
   uint8_t victimized;             /* If the buffer has been victimized this is set non-zero.  Prevents incrementing of ref_count. */
   lockid_t lock_id;               /* Lock ID from the locker_pool[], rather than having a pthread mutex & cond for each Buffer. */
-  removal_index_t removal_index;  /* When a buffer is victimized we need to compare it's removal index (higher == newer/fresher). */
 
   /* Cost values for each buffer when pulled from disk or compressed/decompressed. */
   uint32_t comp_cost;             /* Time spent, in ns, to compress and decompress a page.  Using clock_gettime(3) */

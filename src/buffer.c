@@ -24,10 +24,6 @@
 /* Give extern access to locker_pool[] to us, even though I'm sure this is a no no and someone will yell at me. */
 extern Lock locker_pool[];
 
-/* Set up the next_removal_index to aid with keeping lists sorted but keeping freshest data. */
-#define MAX_REMOVAL_INDEX_VALUE UINT16_MAX
-removal_index_t next_removal_index = 0;
-pthread_mutex_t next_removal_index_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 /* Extern the error codes we'll use. */
 extern const int E_OK;
@@ -52,19 +48,23 @@ Buffer* buffer__initialize(bufferid_t id, char *page_filespec) {
   Buffer *new_buffer = (Buffer *)malloc(sizeof(Buffer));
   if (new_buffer == NULL)
     show_error(E_GENERIC, "Error malloc-ing a new buffer in buffer__initialize.");
-  lock__assign_next_id(&new_buffer->lock_id);
-  new_buffer->ref_count = 0;
-  new_buffer->removal_index = 0;
+  /* Attributes for typical buffer organization and management. */
   new_buffer->id = id;
-  new_buffer->comp_cost = 0;
-  new_buffer->comp_hits = 0;
-  new_buffer->victimized = 0;
+  new_buffer->ref_count = 0;
   new_buffer->popularity = 0;
+  new_buffer->victimized = 0;
+  lock__assign_next_id(&new_buffer->lock_id);
+
+  /* Cost values for each buffer when pulled from disk or compressed/decompressed. */
+  new_buffer->comp_cost = 0;
+  new_buffer->io_cost = 0;
+  new_buffer->comp_hits = 0;
+
+  /* The actual payload we want to cache (i.e.: the page). */
   new_buffer->data_length = 0;
   new_buffer->comp_length = 0;
-  new_buffer->io_cost = 0;
-  new_buffer->removal_index = 0;
   new_buffer->data = NULL;
+
   if (page_filespec == NULL)
     return new_buffer;
 
@@ -151,20 +151,6 @@ int buffer__victimize(Buffer *buf) {
   while(buf->ref_count != 0)
     pthread_cond_wait(&locker_pool[buf->lock_id].condition, &locker_pool[buf->lock_id].mutex);
   return E_OK;
-}
-
-
-/* buffer__assign_next_removal_index
- * This will assign the next available removal_index to the caller (via the pointer sent).  Checks for max value and circles back to
- * zero.  Only functions moving items from the raw list to the compressed list should use this.
- */
-void buffer__assign_next_removal_index(removal_index_t *referring_id_ptr) {
-  pthread_mutex_lock(&next_removal_index_mutex);
-  if (next_removal_index == MAX_REMOVAL_INDEX_VALUE)
-    next_removal_index = 0;
-  next_removal_index++;
-  *referring_id_ptr = next_removal_index;
-  pthread_mutex_unlock(&next_removal_index_mutex);
 }
 
 
@@ -281,29 +267,26 @@ int buffer__decompress(Buffer *buf) {
  * Simple function to copy the contents of one buffer and all its elements to another.
  */
 int buffer__copy(Buffer *src, Buffer *dst) {
+  /* Make sure the buffer is real.  Caller must initialize. */
+  if (dst == NULL)
+    show_error(E_GENERIC, "The buffer__copy function was given a dst buffer pointer that was NULL.  This shouldn't happen.  Ever.");
+
   /* Attributes for typical buffer organization and management. */
-  dst->id = src->id;
-  dst->ref_count = src->ref_count;
+  dst->id         = src->id;
+  dst->ref_count  = src->ref_count;
   dst->popularity = src->popularity;
   dst->victimized = src->victimized;
-  dst->lock_id = src->lock_id;
-  dst->removal_index = src-
-  bufferid_t id;                  /* Identifier of the page. Should come from the system providing the data itself (e.g.: inode). */
-  uint16_t ref_count;             /* Number of references currently holding this buffer. */
-  uint8_t popularity;             /* Rapidly decaying counter used for victim selection with clock sweep.  Ceiling of MAX_POPULARITY. */
-  uint8_t victimized;             /* If the buffer has been victimized this is set non-zero.  Prevents incrementing of ref_count. */
-  lockid_t lock_id;               /* Lock ID from the locker_pool[], rather than having a pthread mutex & cond for each Buffer. */
-  removal_index_t removal_index;  /* When a buffer is victimized we need to compare it's removal index (higher == newer/fresher). */
+  dst->lock_id    = src->lock_id;
 
   /* Cost values for each buffer when pulled from disk or compressed/decompressed. */
-  uint32_t comp_cost;             /* Time spent, in ns, to compress and decompress a page.  Using clock_gettime(3) */
-  uint32_t io_cost;               /* Time spent, in ns, to read this buffer from the disk.  Using clock_gettime(3) */
-  uint16_t comp_hits;             /* Number of times reclaimed from the compressed table during a polling period. */
+  dst->comp_cost = src->comp_cost;
+  dst->io_cost   = src->io_cost;
+  dst->comp_hits = src->comp_hits;
 
   /* The actual payload we want to cache (i.e.: the page). */
-  uint16_t data_length;           /* Number of bytes originally in *data. */
-  uint16_t comp_length;           /* Number of bytes in *data if it was compressed.  Set to 0 when not used. */
-  void *data;                     /* Pointer to the memory holding the page data, whether raw or compressed. */
+  dst->data_length = src->data_length;
+  dst->comp_length = src->comp_length;
+  memcpy(dst->data, src->data, (src->comp_length > 0 ? src->comp_length : src->data_length));
 
   return E_OK;
 }
