@@ -102,7 +102,6 @@ int buffer__destroy(Buffer *buf) {
   /* Free the members which are pointers to other data locations. */
   free(buf->data);
   buf->data = NULL;
-
   /* All remaining members will die when free is invoked against the buffer itself. */
   free(buf);
   // Setting buf to NULL here is useless because it's not a double pointer, on purpose.  Caller needs to NULL their own pointers.

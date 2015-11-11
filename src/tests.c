@@ -116,10 +116,14 @@ void tests__synchronized_readwrite() {
   raw_list->offload_to = comp_list;
   raw_list->max_size = 100 * 1024 * 1024;
   Buffer *temp;
+  char *sample_data = "some text, hooray for me";
+
   // Create LIST_COUNT buffers with some data in them.
   for (bufferid_t i=1; i<=LIST_COUNT; i++) {
     temp = buffer__initialize(i, NULL);
-    temp->data = "some text, hooray for me";
+    temp->data = malloc(strlen(sample_data) + 1);
+    strcpy(temp->data, sample_data);
+    temp->data_length = strlen(temp->data) + 1;
     list__add(raw_list, temp);
   }
 

@@ -55,6 +55,7 @@ int main(int argc, char **argv) {
   raw_list->max_size = MAX_MEMORY * INITIAL_RAW / 100;
   comp_list->max_size = MAX_MEMORY * (100 - INITIAL_RAW) / 100;
   raw_list->offload_to = comp_list;
+  comp_list->restore_to = raw_list;
 
   /* Get a list of the pages we have to work with. */
   const uint PAGE_COUNT = io__get_page_count(DATA_DIR);
@@ -64,7 +65,8 @@ int main(int argc, char **argv) {
   /* Initialize the locker. */
   lock__initialize();
 
-  tests__move_buffers(PAGE_COUNT, pages);
+  //tests__move_buffers(PAGE_COUNT, pages);
+  tests__synchronized_readwrite();
 
   printf("Main finished.\n");
   return 0;
