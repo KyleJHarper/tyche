@@ -64,6 +64,8 @@ int main(int argc, char **argv) {
   /* Initialize the locker. */
   lock__initialize();
 
+  tests__move_buffers(PAGE_COUNT, pages);
+
   printf("Main finished.\n");
   return 0;
 }

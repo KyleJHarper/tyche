@@ -89,6 +89,27 @@ Buffer* buffer__initialize(bufferid_t id, char *page_filespec) {
 }
 
 
+/* buffer__destroy
+ * A concise function to completely free up the memory used by a buffer.
+ * Caller MUST have victimized the buffer before this is allowed!
+ */
+int buffer__destroy(Buffer *buf) {
+  if (buf == NULL)
+    return E_OK;
+  if (buf->victimized == 0)
+    show_error(E_GENERIC, "The buffer_destroy() function was called with a non-victimized buffer.  This isn't allowed.");
+
+  /* Free the members which are pointers to other data locations. */
+  free(buf->data);
+  buf->data = NULL;
+
+  /* All remaining members will die when free is invoked against the buffer itself. */
+  free(buf);
+  // Setting buf to NULL here is useless because it's not a double pointer, on purpose.  Caller needs to NULL their own pointers.
+
+  return E_OK;
+}
+
 /* buffer__lock
  * Setting a lock just locks the mutex from the locker_pool[].  Since we support concurrency, it's possible to have a thread
  * waiting for a lock on a buffer while another thread is removing that buffer entirely.  So we add a little more logic for that.
@@ -286,6 +307,8 @@ int buffer__copy(Buffer *src, Buffer *dst) {
   /* The actual payload we want to cache (i.e.: the page). */
   dst->data_length = src->data_length;
   dst->comp_length = src->comp_length;
+  free(dst->data);
+  dst->data = malloc(src->comp_length > 0 ? src->comp_length : src->data_length);
   memcpy(dst->data, src->data, (src->comp_length > 0 ? src->comp_length : src->data_length));
 
   return E_OK;

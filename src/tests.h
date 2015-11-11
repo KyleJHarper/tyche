@@ -8,6 +8,7 @@
 #ifndef SRC_TESTS_H_
 #define SRC_TESTS_H_
 
+void tests__move_buffers(const uint PAGE_COUNT, char *pages[]);
 void tests__io(char *pages[], const int PAGE_COUNT);
 void tests__compression();
 void tests__synchronized_readwrite();

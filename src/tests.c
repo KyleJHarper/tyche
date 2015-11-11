@@ -11,18 +11,21 @@
 #include <string.h>
 #include <unistd.h>
 #include <locale.h>
+#include <inttypes.h>
 #include "list.h"
 #include "buffer.h"
 #include "tests.h"
 #include "lz4.h"
+#include "error.h"
 
 
 extern const int E_OK;
 extern const int E_BUFFER_POOFED;
 extern const int E_BUFFER_NOT_FOUND;
 extern const int E_BUFFER_IS_VICTIMIZED;
+extern const int E_GENERIC;
 
-
+extern const int BUFFER_OVERHEAD;
 
 
 
@@ -109,6 +112,9 @@ const int SLEEP_DELAY      =    123;
 
 void tests__synchronized_readwrite() {
   List *raw_list = list__initialize();
+  List *comp_list = list__initialize();
+  raw_list->offload_to = comp_list;
+  raw_list->max_size = 100 * 1024 * 1024;
   Buffer *temp;
   // Create LIST_COUNT buffers with some data in them.
   for (bufferid_t i=1; i<=LIST_COUNT; i++) {
@@ -137,7 +143,6 @@ void tests__synchronized_readwrite() {
     if (raw_list->pool[i]->ref_count != 0)
       printf("Buffer ID number %d has non-zero ref_count: %d\n", raw_list->pool[i]->id, raw_list->pool[i]->ref_count);
   }
-  list__destroy(raw_list);
 
   setlocale(LC_NUMERIC, "");
   printf("All done.  I used %d workers performing a combined %'d reads with %d chaos workers taking buffers from %d to %d\n", WORKER_COUNT, WORKER_COUNT * READS_PER_WORKER, CHAOS_MONKIES, LIST_COUNT, LIST_FLOOR);
@@ -317,6 +322,78 @@ void tests__compression(char *pages[], const int PAGE_COUNT) {
 
   /* All Done */
   printf("tests__compression() finished!\n");
+
+  return;
+}
+
+
+/*
+ * Make sure that we can create a list, try to put too many buffers in it, and have it offload things as expected.
+ */
+void tests__move_buffers(const uint PAGE_COUNT, char *pages[]) {
+  List *raw_list = list__initialize();
+  List *comp_list = list__initialize();
+  raw_list->offload_to = comp_list;
+  raw_list->sweep_goal = 30;
+  Buffer *buf;
+  uint total_bytes = 0;
+
+  // -- TEST 1:  Do sizes match up like they're supposed to when moving items into a list?
+  printf("\nTest 1:  Does the list size match the known size of data read from disk?\n");
+  /* Figure out how much data we have in the pages[] elements' files. */
+  for (uint i = 0; i < PAGE_COUNT; i++) {
+    buf = buffer__initialize(i, pages[i]);
+    total_bytes += buf->data_length + BUFFER_OVERHEAD;
+    buffer__victimize(buf);
+    buffer__destroy(buf);
+  }
+  /* Now add them all to the list and see if the list size matches.  Give padding, because we want to avoid offloading for now. */
+  raw_list->max_size = total_bytes + (1024 * 1024);
+  for (uint i = 0; i < PAGE_COUNT; i++) {
+    buf = buffer__initialize(i, pages[i]);
+    list__add(raw_list, buf);
+  }
+  if (total_bytes != raw_list->current_size)
+    show_error(E_GENERIC, "Calculated a total size of %d, and raw_list->current_size is %"PRIu64"\n", total_bytes, raw_list->current_size);
+  printf("Total bytes measured in buffers matches the list size, success!\n");
+  while(raw_list->count > 0)
+    list__remove(raw_list, raw_list->pool[0], raw_list->pool[0]->id);
+  while(comp_list->count > 0)
+    list__remove(comp_list, comp_list->pool[0], comp_list->pool[0]->id);
+
+  // -- TEST 2:  Can we offload from raw to a compressed list?
+  printf("\nTest 2:  Will items overflow from the raw list to the compressed one as needed?\n");
+  /* Alright, let's purposely set the list to a value smaller than we know we need and ensure offloading happens. */
+  raw_list->max_size = total_bytes >> 1;
+  comp_list->max_size = total_bytes;
+  for (uint i = 0; i < PAGE_COUNT; i++) {
+    buf = buffer__initialize(i, pages[i]);
+    buf->popularity = 255/(i+1);
+    list__add(raw_list, buf);
+    printf("Added a buffer with id %d requiring %d bytes, list size is now %"PRIu64"\n", i, buf->data_length, raw_list->current_size);
+  }
+  printf("All done.  Raw list has %d buffers using %"PRIu64" bytes.  Comp list has %d buffers using %"PRIu64" bytes.\n", raw_list->count, raw_list->current_size, comp_list->count, comp_list->current_size);
+  while(raw_list->count > 0)
+    list__remove(raw_list, raw_list->pool[0], raw_list->pool[0]->id);
+  while(comp_list->count > 0)
+    list__remove(comp_list, comp_list->pool[0], comp_list->pool[0]->id);
+
+  // -- TEST 3:  Will offloading properly pop the compressed buffer?
+  printf("\nTest 3:  Will the compressed list pop buffers when out of room?\n");
+  /* Now let's do the same test again, but shrink the comp_list to ensure data has to be popped off the end. */
+  raw_list->max_size = total_bytes >> 1;
+  comp_list->max_size = total_bytes >> 3;
+  for (uint i = 0; i < PAGE_COUNT; i++) {
+    buf = buffer__initialize(i, pages[i]);
+    buf->popularity = 255/(i+1);
+    list__add(raw_list, buf);
+    printf("Added a buffer with id %d requiring %d bytes, list size is now %"PRIu64"\n", i, buf->data_length, raw_list->current_size);
+  }
+  printf("All done.  Raw list has %d buffers using %"PRIu64" bytes.  Comp list has %d buffers using %"PRIu64" bytes.\n", raw_list->count, raw_list->current_size, comp_list->count, comp_list->current_size);
+  while(raw_list->count > 0)
+    list__remove(raw_list, raw_list->pool[0], raw_list->pool[0]->id);
+  while(comp_list->count > 0)
+    list__remove(comp_list, comp_list->pool[0], comp_list->pool[0]->id);
 
   return;
 }

@@ -28,6 +28,7 @@
 #include <pthread.h>
 #include <string.h>
 #include <assert.h>
+#include <inttypes.h>
 #include "buffer.h"
 #include "lock.h"
 #include "error.h"
@@ -62,7 +63,7 @@ List* list__initialize() {
   /* Locking, Reference Counters, and Similar Members */
   if (pthread_mutex_init(&list->lock, NULL) != 0)
     show_error(E_GENERIC, "Failed to initialize mutex for a list.  This is fatal.");
-  list->lock_owner = NULL;
+  list->lock_owner = 0;
   list->lock_depth = 0;
   if (pthread_cond_init(&list->writer_condition, NULL) != 0)
     show_error(E_GENERIC, "Failed to initialize writer condition for a list.  This is fatal.");
@@ -81,19 +82,6 @@ List* list__initialize() {
     list->pool[i] = NULL;
 
   return list;
-}
-
-
-/* list__destroy
- * Destroys the elements of a list, specifically the Buffer pointers in the pool.
- */
-int list__destroy(List *list) {
-  for (int i = 0; i < list->count - 1; i++) {
-    free(list->pool[i]);
-    list->pool[i] = NULL;
-  }
-  free(list);
-  return E_OK;
 }
 
 
@@ -143,7 +131,7 @@ int list__release_write_lock(List *list) {
     pthread_cond_broadcast(&list->reader_condition);
   }
   /* Remove ourself as the lock owner so another can take our place.  Don't have to... just NULL-ing for safety. */
-  list->lock_owner = NULL;
+  list->lock_owner = 0;
   /* Release the lock now that the proper broadcast is out there.  Releasing AFTER a broadcast is supported and safe. */
   pthread_mutex_unlock(&list->lock);
   return E_OK;
@@ -162,7 +150,14 @@ int list__add(List *list, Buffer *buf) {
   /* Make sure we have room to add a new buffer before we proceed. */
   const uint BUFFER_SIZE = BUFFER_OVERHEAD + (buf->comp_length == 0 ? buf->data_length : buf->comp_length);
   if (list->max_size < list->current_size + BUFFER_SIZE) {
+    /* If our current size and sweep goal won't yield enough results, increase the goal until it will. */
+    const uint8_t ORIGINAL_SWEEP_GOAL = list->sweep_goal;
+    while (BUFFER_SIZE > (list->current_size * list->sweep_goal / 100) && list->sweep_goal < 99)
+      list->sweep_goal++;
+    if (list->sweep_goal >= 99)
+      show_error(E_GENERIC, "The list__add function needs %d bytes freed but the current list size (%d bytes) cannot achieve that even with our sweep goal maxed.", list->current_size);
     const uint BYTES_FREED = list__sweep(list);
+    list->sweep_goal = ORIGINAL_SWEEP_GOAL;
     if (BYTES_FREED < BUFFER_SIZE)
       show_error(E_GENERIC, "The list__sweep() function was couldn't free enough bytes to store the buffer.  Bytes reclaimed: %d, needed, %d.", BYTES_FREED, BUFFER_SIZE);
   }
@@ -172,10 +167,12 @@ int list__add(List *list, Buffer *buf) {
   for(;;) {
     // Reset mid and begin testing.
     mid = (low + high)/2;
-
-    // If low == high then mid also matches and we didn't find it (which is good!).  We're safe to shift (if needed) and insert.
-    if (low == high || mid == list->count) {
-      for(int i=list->count; i<mid; i--)
+    // If low > high or mid is at the top of the list then we didn't find it.  Time to shift items and update.
+    if (low > high || mid == list->count) {
+      // Integer division can give us the wrong mid since we're post-checking.  Make sure by checking to see if low > mid.
+      if (low > mid)
+        mid = low;
+      for(int i=list->count; i>mid; i--)
         list->pool[i] = list->pool[i-1];
       list->pool[mid] = buf;
       list->count++;
@@ -235,7 +232,7 @@ int list__remove(List *list, Buffer *buf, bufferid_t id) {
       if (buffer__victimize(buf) != 0)
         show_error(rv, "The list__remove function received an error when trying to victimize the buffer (%d).\n", rv);
       lockid_t lock_id = buf->lock_id;
-      free(list->pool[mid]);
+      buffer__destroy(list->pool[mid]);
       lock__release(lock_id);
       for (int i=mid; i<list->count - 1; i++)
         list->pool[i] = list->pool[i+1];
@@ -355,8 +352,9 @@ uint list__sweep(List *list) {
   uint bytes_freed = 0;
   const uint BYTES_NEEDED = list->current_size * list->sweep_goal / 100;
   Buffer *buf = NULL;
-  List temp_list = list__initialize();
+  List *temp_list = list__initialize();
   temp_list->max_size = BYTES_NEEDED * 2;
+  temp_list->offload_to = temp_list;
   int rv = 0;
 
   // Sanity Checks
@@ -373,6 +371,7 @@ uint list__sweep(List *list) {
       list->pool[list->clock_hand_index]->popularity = list->pool[list->clock_hand_index]->popularity >> 1;
       list->clock_hand_index++;
     }
+
     // We only reach this when an unpopular victim id is found.  Let's get to work copying the buffer and compressing it.
     buf = buffer__initialize(0, NULL);
     buffer__copy(list->pool[list->clock_hand_index], buf);
@@ -394,7 +393,7 @@ uint list__sweep(List *list) {
   if (temp_list->current_size + list->offload_to->current_size > list->offload_to->max_size)
     list__pop(list->offload_to, temp_list->current_size);
   // This function is the ONLY one who should ever decrement popularity, creating "generations" for list__pop()-ing later.
-  for (int i=0; i<list->count; i++)
+  for (int i=0; i<list->offload_to->count; i++)
     list->offload_to->pool[i]->popularity--;
   for (int i=0; i<temp_list->count; i++)
     list__push(list->offload_to, temp_list->pool[i]);
@@ -448,14 +447,14 @@ int list__pop(List *list, uint64_t bytes_needed) {
   uint8_t lowest_popularity = 0;
   for(uint32_t i = 0; i < list->count; i++)
     lowest_popularity = lowest_popularity < list->pool[i]->popularity ? lowest_popularity : list->pool[i]->popularity;
-  while (bytes_needed > list->max_size - list->current_size) {
+  while (bytes_needed > (list->max_size - list->current_size)) {
     // Just for safety...
     if (lowest_popularity > MAX_POPULARITY)
       show_error(E_GENERIC, "The list__pop() function reached MAX_POPULARITY (%d) without freeing enough memory.  This is fatal.", MAX_POPULARITY);
     // Remove all buffers with the lowest priority
     for (uint32_t i = 0; i < list->count; i++)
       if (list->pool[i]->popularity == lowest_popularity)
-        list__remove(list, list->pool[list->clock_hand_index], list->pool[list->clock_hand_index]->id);
+        list__remove(list, list->pool[i], list->pool[i]->id);
     lowest_popularity++;
   }
 

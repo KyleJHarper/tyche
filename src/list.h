@@ -57,7 +57,8 @@ struct list {
   uint8_t pending_writers;          /* Value to indicate how many writers are waiting to edit the list. */
 
   /* Management and Administration Members */
-  List *offload_to;                 /* The target list to offload buffers too.  Currently raw -> comp and comp -> free() */
+  List *offload_to;                 /* The target list to offload buffers to.  Currently raw -> comp and comp -> free() */
+  List *restore_to;                 /* The target list to restore buffers to.  Currently, comp -> raw. */
   uint32_t clock_hand_index;        /* The current index to be checked when sweeping is invoked. */
   uint8_t sweep_goal;               /* The percentage of memory we want to free up whenever we sweep, relative to current_size. */
 
@@ -71,7 +72,6 @@ int list__add(List *list, Buffer *buf);
 int list__remove(List *list, Buffer *buf, bufferid_t id);
 int list__update_ref(List *list, int delta);
 int list__search(List *list, Buffer **buf, bufferid_t id);
-int list__destroy(List *list);
 int list__acquire_write_lock(List *list);
 int list__release_write_lock(List *list);
 uint list__sweep(List *list);

@@ -18,11 +18,12 @@ Branches / Bigger Steps
       g) [done] We should use memcmp() instead of writing everything to disk and running system(md5sum).
 3.  List management: create raw and compressed lists and ensure they're managing themselves upon updates.
       a) [done] Lists should probably know if they're raw or compressed, and raw needs to know who to dump overflow to.
-      b) Raw pool size should configurable and enforced in list__add().
-      c) Compressed list should maintain a count of its size and list__pop()/push() when not enough room is available.
-      d) Removal from raw should send to compressed list.  list__migrate().
-      e) A dedicated function might be necessary such as list__sweep() or list__balance() to remove buffers from both lists
-         so that new data can come in.  This should accept a target to hit (e.g. 5% free) and a default should be provided.
+      b) [done] Raw pool size should configurable and enforced in list__add().
+      c) [done] Compressed list should maintain a count of its size and list__pop()/push() when not enough room is available.
+      d) [done] Removal from raw should send to compressed list.  list__migrate().
+      e) [done] A dedicated function might be necessary such as list__sweep() or list__balance() to remove buffers from both lists so that new data can come in.  This should accept a target to hit (e.g. 5% free) and a default should be provided.
+      f) Searches that fail but have an offload_to should search it.
+      g) Hits found in offload_to (compressed) lists should restore them. list__restore().
 4.  Adaptations
       a) Not sure what all is needed, but need a monitor thread to adjust list sizes on-the-fly based on statistics.
          Could prove difficult since we're array-based (pool[]) now.  I'm sure a list->max attribute can fix that.
