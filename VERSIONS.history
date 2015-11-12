@@ -1,0 +1,11 @@
+Contains a simple note for each tagged release.
+
+v 0.0.3
+Compression is now functional.  As this is still a version "0" release, we don't follow SEMVER.
+
+v 0.0.2
+??
+
+v 0.0.1
+??
+
