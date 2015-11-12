@@ -1,11 +1,12 @@
-Contains a simple note for each tagged release.
+Contains a simple note for each tagged release.  We will try to follow SEMVER.  Be aware, all 0.x.y releases are developmental and are NOT guaranteed compatible according to SEMVER.
 
-v 0.0.3
-Compression is now functional.  As this is still a version "0" release, we don't follow SEMVER.
 
-v 0.0.2
-??
+0.0.3 (2015-11-04)
+Compression is now functional.  Updated README and TODO.  Few touch ups for the upcoming v0.0.4 list management stuff.  Created the VERSIONS file (this document).
 
-v 0.0.1
-??
+0.0.2 (2015-08-26)
+New locking subsystem completely overhauled the list add/remove functionality.  MUCH faster by means of reference counters, pinning, and a shared lock per-list rather than global locks for everything.
+
+0.0.1 (2015-07-22)
+Basics of adding/removing buffers from a list working.
 
