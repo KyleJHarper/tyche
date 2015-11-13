@@ -65,10 +65,10 @@ int main(int argc, char **argv) {
   /* Initialize the locker. */
   lock__initialize();
 
-  //tests__move_buffers(PAGE_COUNT, pages);
-  tests__synchronized_readwrite();
+  tests__move_buffers(PAGE_COUNT, pages);
+  //tests__synchronized_readwrite();
 
-  printf("Main finished.\n");
+  printf("Tyche finished, shutting down.\n");
   return 0;
 }
 

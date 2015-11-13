@@ -1,12 +1,15 @@
 Tyche - Example Project for an Adaptive Compressed-Cache Replacement Strategy (ACCRS)
 =====
 
-The tyche project (prefer to keep it lower case) is actually just an implementation of the currently-theoretical Adaptive Compressed-Cache Replacement Strategy (still in private development).
+The tyche project is actually just an implementation of the currently-theoretical Adaptive Compressed-Cache Replacement Strategy (still in private development).
 
 This will be open-source (as will the ACCRS theory) and free but I am still going to enforce the Apache 2.0 software license to it for now, as well as retain copyright on the theory.
 
 ====
 Latest Changelog Entries
+
+**[2015-11-12]**
+*The lists now support transferring buffers between them.  If a buffer is too big for the raw list, the raw list will be swept to make room.  Victimized buffers will be compressed and sent to the compressed list.  If the compressed list cannot contain the victimized buffer, it'll be purged one generation at a time until they all fit.
 
 **[2015-11-03]**
 *A buffer can now compress/decompress its data element.  A compression test function was created to help with regression testing.  The compression method selected is lz4, largely due to it's extremely fast decompression speed.  When compression occurs, the comp_length member (new) stores this for future use (lz4 doesn't technically need it, but we use it for safety).  In addition, the comp_time member is updated to reflect the time (in ns) required.*

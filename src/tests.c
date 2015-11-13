@@ -372,7 +372,7 @@ void tests__move_buffers(const uint PAGE_COUNT, char *pages[]) {
   comp_list->max_size = total_bytes;
   for (uint i = 0; i < PAGE_COUNT; i++) {
     buf = buffer__initialize(i, pages[i]);
-    buf->popularity = 255/(i+1);
+    buf->popularity = MAX_POPULARITY/(i+1);
     list__add(raw_list, buf);
     printf("Added a buffer with id %d requiring %d bytes, list size is now %"PRIu64"\n", i, buf->data_length, raw_list->current_size);
   }
@@ -389,7 +389,7 @@ void tests__move_buffers(const uint PAGE_COUNT, char *pages[]) {
   comp_list->max_size = total_bytes >> 3;
   for (uint i = 0; i < PAGE_COUNT; i++) {
     buf = buffer__initialize(i, pages[i]);
-    buf->popularity = 255/(i+1);
+    buf->popularity = MAX_POPULARITY/(i+1);
     list__add(raw_list, buf);
     printf("Added a buffer with id %d requiring %d bytes, list size is now %"PRIu64"\n", i, buf->data_length, raw_list->current_size);
   }
@@ -398,6 +398,35 @@ void tests__move_buffers(const uint PAGE_COUNT, char *pages[]) {
     list__remove(raw_list, raw_list->pool[0], raw_list->pool[0]->id);
   while(comp_list->count > 0)
     list__remove(comp_list, comp_list->pool[0], comp_list->pool[0]->id);
+
+  // -- TEST 4:  Can we move items back to the raw list after they've been compressed?
+  printf("\nTest 4:  Can we restore items from the offload list when searching finds them there?\n");
+  raw_list->max_size = total_bytes >> 1;
+  comp_list->max_size = total_bytes >> 3;
+  for (uint i = 0; i < PAGE_COUNT; i++) {
+    buf = buffer__initialize(i, pages[i]);
+    buf->popularity = MAX_POPULARITY/(i+1);
+    list__add(raw_list, buf);
+    printf("Added a buffer with id %d requiring %d bytes, list size is now %"PRIu64"\n", i, buf->data_length, raw_list->current_size);
+  }
+  /* Pick a random buffer from the offload list and do a search for it.  The result should be it getting moved to the raw list. */
+  if (comp_list->count == 0)
+    show_error(E_GENERIC, "The comp_list doesn't have anything in the pool.  Can't do this test.");
+  Buffer *test4_buf;
+  bufferid_t test4_sample_id = comp_list->pool[comp_list->count - 1]->id;
+  printf("About to start searching for a buffer which should be found in comp list.\n");
+  if (list__search(raw_list, &test4_buf, comp_list->pool[comp_list->count - 1]->id) != E_OK)
+    show_error(E_GENERIC, "list__search says it failed to find our buffer.  Boo.");
+  printf("The list search buffer returned gave id of %d, the id we wanted was %d.\n", test4_buf->id, test4_sample_id);
+  int found_in_raw = 0;
+  for (uint i = 0; i < raw_list->count; i++)
+    if (raw_list->pool[i]->id == test4_sample_id)
+      found_in_raw++;
+  if (found_in_raw == 0)
+    show_error(E_GENERIC, "The id we searched for didn't show up in the raw list... this means we failed to restore it.");
+  if (found_in_raw > 1)
+    show_error(E_GENERIC, "The found_in_raw variable is higher than 1, this is bad.\n");
+  printf("We successfully moved a buffer to the raw list on-demand.\n");
 
   return;
 }

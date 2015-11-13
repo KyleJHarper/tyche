@@ -74,6 +74,7 @@ List* list__initialize() {
 
   /* Management and Administration Members */
   list->offload_to = NULL;
+  list->restore_to = NULL;
   list->clock_hand_index = 0;
   list->sweep_goal = 1;
 
@@ -264,8 +265,8 @@ int list__remove(List *list, Buffer *buf, bufferid_t id) {
 
 
 /* list__search
- * Searches for a buffer in the list specified so it can be sent back as a double pointer.  We need to lock the list so we can
- * search for it.  When successfully found, we increment ref_count.
+ * Searches for a buffer in the list specified so it can be sent back as a double pointer.  We need to pin the list so we can
+ * search it.  When successfully found, we increment ref_count.
  */
 int list__search(List *list, Buffer **buf, bufferid_t id) {
   /* Update the ref count so we can begin searching. */
@@ -302,8 +303,22 @@ int list__search(List *list, Buffer **buf, bufferid_t id) {
     }
   }
 
-  /* Regardless of whether we found it we need to remove our pin on the list's ref count and let the caller know. */
+  /* Regardless of whether we found it we need to remove our pin on the list's ref count because we're done searching it. */
   list__update_ref(list, -1);
+
+  /* If we were unable to find the buffer, see if an offload_to list exists for us to search. */
+  if (rv == E_BUFFER_NOT_FOUND && list->offload_to != NULL) {
+    rv = list__search(list->offload_to, buf, id);
+    if (rv == E_OK) {
+      // We found it!  Remove our reference (from calling list__search() ourself) and then list__restore() it.
+      buffer__lock(*buf);
+      buffer__update_ref(*buf, -1);
+      buffer__unlock(*buf);
+      if (list__restore(list, buf) != E_OK)
+        show_error(E_GENERIC, "Failed to list__restore a buffer.  This should never happen.");
+    }
+  }
+
   return rv;
 }
 
@@ -362,7 +377,7 @@ uint list__sweep(List *list) {
     show_error(E_GENERIC, "The list__sweep() function was given a list that doesn't have an offload_to target.  This is definitely a problem.");
 
   while (BYTES_NEEDED > bytes_freed) {
-    // Start sweeping until we find a buffer to remove.  Popularity is halved until a victim is found.
+    // Sweeping until we find a buffer to remove.  Popularity is halved until a victim is found.  The race condition on this is ok.
     for(;;) {
       if (list->clock_hand_index >= list->count)
         list->clock_hand_index = 0;
@@ -378,6 +393,10 @@ uint list__sweep(List *list) {
     rv = buffer__compress(buf);
     if (rv != E_OK)
       show_error(rv, "Failed to compress a buffer when performing list__sweep().  This shouldn't happen.  Return code was %d.", rv);
+    // Reset reference and victimization elements on the copy since it's now a separate entity from it's doppelganger.
+    buf->ref_count = 0;
+    buf->victimized = 0;
+    buf->popularity = 0;
 
     // Assign the new buffer to the temp_list, track the size difference, and remove the original buffer.
     rv = list__add(temp_list, buf);
@@ -442,22 +461,58 @@ int list__pop(List *list, uint64_t bytes_needed) {
 
   // The caller will usually lock the list, but we'll do it just to be safe.
   list__acquire_write_lock(list);
-
   // Loop through and eliminate buffers until we have enough space to add everything.  First, find the lowest value.
-  uint8_t lowest_popularity = 0;
+  uint8_t lowest_popularity = MAX_POPULARITY;
   for(uint32_t i = 0; i < list->count; i++)
     lowest_popularity = lowest_popularity < list->pool[i]->popularity ? lowest_popularity : list->pool[i]->popularity;
   while (bytes_needed > (list->max_size - list->current_size)) {
     // Just for safety...
     if (lowest_popularity > MAX_POPULARITY)
-      show_error(E_GENERIC, "The list__pop() function reached MAX_POPULARITY (%d) without freeing enough memory.  This is fatal.", MAX_POPULARITY);
-    // Remove all buffers with the lowest priority
-    for (uint32_t i = 0; i < list->count; i++)
-      if (list->pool[i]->popularity == lowest_popularity)
+      show_error(E_GENERIC, "The list__pop() function exceeded MAX_POPULARITY (%d) with %d without freeing enough memory.  This is fatal.", MAX_POPULARITY, lowest_popularity);
+    // Remove buffers from the generation with popularity of lowest_popularity until we have enough space.
+    for (uint32_t i = 0; i < list->count; i++) {
+      if (list->pool[i]->popularity == lowest_popularity) {
         list__remove(list, list->pool[i], list->pool[i]->id);
+        if (bytes_needed <= (list->max_size - list->current_size))
+          break;
+        i--;
+      }
+    }
     lowest_popularity++;
   }
 
   list__release_write_lock(list);
+  return E_OK;
+}
+
+
+/* list__restore
+ * Takes the buffer specified and adds it back to the list specified after decompressing the data member and updating all of the
+ * tracking data.
+ */
+int list__restore(List *list, Buffer **buf) {
+  // Make sure we have a list, an offload_to, and a valid buffer.
+  if (list == NULL)
+    show_error(E_GENERIC, "The list__restore function was given a NULL list.  This should never happen.");
+  if (list->offload_to == NULL)
+    show_error(E_GENERIC, "The list__restore function was given a list without an offload_to target list.  This should never happen.");
+  if (buf == NULL)
+    show_error(E_GENERIC, "The list__restore functino was given an invalid buffer.  This should never happen.");
+
+  // Copy the buffer so we can begin restoring it.
+  Buffer *new_buf = buffer__initialize(0, NULL);
+  buffer__copy(*buf, new_buf);
+
+  // Decompress the new_buf
+  if (buffer__decompress(new_buf) != E_OK)
+    show_error(E_GENERIC, "The list__restore function was unable to decompress the new buffer.");
+  new_buf->victimized = 0;
+
+  // Add the decompressed copy to the list source list and remove the compressed buffer from the offload list.
+  list__add(list, new_buf);
+  list__remove(list->offload_to, *buf, (*buf)->id);
+
+  // Assign the source pointer to our local copy's address and leave.
+  *buf = new_buf;
   return E_OK;
 }

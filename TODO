@@ -22,8 +22,8 @@ Branches / Bigger Steps
       c) [done] Compressed list should maintain a count of its size and list__pop()/push() when not enough room is available.
       d) [done] Removal from raw should send to compressed list.  list__migrate().
       e) [done] A dedicated function might be necessary such as list__sweep() or list__balance() to remove buffers from both lists so that new data can come in.  This should accept a target to hit (e.g. 5% free) and a default should be provided.
-      f) Searches that fail but have an offload_to should search it.
-      g) Hits found in offload_to (compressed) lists should restore them. list__restore().
+      f) [done] Searches that fail but have an offload_to should search it.
+      g) [done] Hits found in offload_to (compressed) lists should restore them. list__restore().
 4.  Adaptations
       a) Not sure what all is needed, but need a monitor thread to adjust list sizes on-the-fly based on statistics.
          Could prove difficult since we're array-based (pool[]) now.  I'm sure a list->max attribute can fix that.
