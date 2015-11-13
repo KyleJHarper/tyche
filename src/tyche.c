@@ -32,7 +32,7 @@
 
 /* Define a few things, mostly for sanity checking later. */
 #define MIN_MEMORY 1048576    /* 1 MB */
-#define INITIAL_RAW 80        /* 80% */
+#define INITIAL_RAW_RATIO 80  /* 80% */
 
 
 /* Extern error codes */
@@ -49,11 +49,14 @@ int main(int argc, char **argv) {
   uint64_t MAX_MEMORY = 0;
   get_options(argc, argv, &DATA_DIR, &MAX_MEMORY);
 
+  /* Initialize the locker. */
+  lock__initialize();
+
   /* Build the two lists we're going to use. */
   List *raw_list = list__initialize();
   List *comp_list = list__initialize();
-  raw_list->max_size = MAX_MEMORY * INITIAL_RAW / 100;
-  comp_list->max_size = MAX_MEMORY * (100 - INITIAL_RAW) / 100;
+  raw_list->max_size = MAX_MEMORY * INITIAL_RAW_RATIO / 100;
+  comp_list->max_size = MAX_MEMORY * (100 - INITIAL_RAW_RATIO) / 100;
   raw_list->offload_to = comp_list;
   comp_list->restore_to = raw_list;
 
@@ -62,11 +65,7 @@ int main(int argc, char **argv) {
   char *pages[PAGE_COUNT];
   io__build_pages_array(DATA_DIR, pages);
 
-  /* Initialize the locker. */
-  lock__initialize();
 
-  tests__move_buffers(PAGE_COUNT, pages);
-  //tests__synchronized_readwrite();
 
   printf("Tyche finished, shutting down.\n");
   return 0;

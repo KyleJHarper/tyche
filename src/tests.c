@@ -27,80 +27,6 @@ extern const int E_GENERIC;
 
 extern const int BUFFER_OVERHEAD;
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-/* ------------------------------------------------------------------------------------------------------------------------------
- * Older Tests Below Here
-   ------------------------------------------------------------------------------------------------------------------------------*/
 // A global for testing cuz I'm bad
 const int LIST_COUNT       =   1000;
 const int WORKER_COUNT     =   5000;
@@ -108,6 +34,7 @@ const int CHAOS_MONKIES    =     10;
 const int READS_PER_WORKER =   5000;
 const int LIST_FLOOR       =    975;
 const int SLEEP_DELAY      =    123;
+
 
 
 void tests__synchronized_readwrite() {
