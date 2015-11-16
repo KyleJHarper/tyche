@@ -1,19 +1,34 @@
 1. Options
      a) Consider a config file or long options if too many options become an issue.
      b) Build a struct or something to hold the options and possibly link to it from the raw list?
-     c) -i == Initialize ratio, as a percentage to give to raw: >1 <100
-     d) -F == Fixed memory sizes.  No adaptive logic.  raw/comp lists won't be engine__balanced()'d
-     e) -w == Workers to use, defaults to number of CPUs
-     f) -t == Time to spend running the test, in seconds.
-     g) -h == Hit ratio (minimum) to aim for.  (Only use known buffers when ratio too low)
-     h) -b == Bytes to limit data set to.  (Can point to large dir and stop at X bytes)
-2. Manager
+     c) -F == Fixed memory sizes.  No adaptive logic.  raw/comp lists won't be engine__balanced()'d
+     d) -w == Workers to use, defaults to number of CPUs
+     e) -d == Time to spend running the test, in seconds. (-d == duration)
+     f) -h == Hit ratio (minimum) to aim for.  (Only use known buffers when ratio too low)
+     g) -b == Bytes to limit data set to.  (Can point to large dir and stop at X bytes)
+     h) -l == Locker pool size.  High == less Buffers per lock == less chance of blocking.
+2. Buffer Mutexes & Conditions
+     a) Recalculate memory consumption remembering that largest data set == max memory we assign!
+     b) Even if memory savings are minimal, are we saving CPU time by not initializing a new set for each buffer?
+     c) If we need to go larger than uint16_t, we might as well use pointers; and this is probably a good idea.
+        Make sure to confirm that pointers are 4 bytes, not 8.  Otherwise use uint32_t.
+     d) Look at lock__acquire and lock__release; make static inline or simply put into buffer.c calls.
+     e) Update the comments if we're keeping lock.h/.c.
+3. Manager
      a) A new structure to manage the lists.  Functions for list review and adjustment.
      b) The primary function, manager__analyze(), is where ACCRS logic should do the real magic.
      c) Manager should be disabled when -F is specified.
      d) Manager should log output of decisions and supporting data.
      e) Research options to accommodate aging and if it's even necessary (newer buffers == more likely to reuse?)
      f) Ensure that a scan protection element exists.
-3. Reporting
+4. Reporting
      a) Totals: buffers read, per second, peak?, etc
      b) Buffer hits, misses/faults, and hit ratio.
+5. FAQ
+     a) Why no size_t?  (Because I want to ensure minium sizes in almost all cases)
+     b) Why so much uint/uintX_t?  Because I usually need to accommodate the given size and negative numbers don't exist.
+     c) Why no <bla> optimization?  Probably because I'm new to C and didn't know about it.
+     d) Why no linked list?  Because I wanted searching without maintaining a skip list.  (Is it even better?)
+     e) Why C?  To *hopefully* avoid bias in higher level langages; though they might have optimizations.
+     f) Why lz4?  Partly it's compression speed+efficiency, but mostly it's decompression speed.
+     g) Locker?  In theory, it reduces memory use by using shared locks among a small number of buffers.  Configurable.

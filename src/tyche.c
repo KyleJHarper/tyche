@@ -44,10 +44,9 @@ extern const int E_BAD_CLI;
  * Initial logic to start tyche.
  */
 int main(int argc, char **argv) {
-  /* Get options & verify them. */
-  char *DATA_DIR = NULL;
-  uint64_t MAX_MEMORY = 0;
-  get_options(argc, argv, &DATA_DIR, &MAX_MEMORY);
+  /* Get options & verify them.  Will terminate if errors, so no checking here. */
+  Options opts;
+  get_options(argc, argv, &opts);
 
   /* Initialize the locker. */
   lock__initialize();
@@ -75,27 +74,41 @@ int main(int argc, char **argv) {
 /* get_options
  * A snippet from main() to get all the options sent via CLI, then verifies them.
  */
-void get_options(int argc, char **argv, char **data_dir, uint64_t *max_memory) {
-  // Shamelessly copied from gcc example docs.  No need to get fancy.
+void get_options(int argc, char **argv, Options *opts) {
+  /* Reset everything since there isn't an initialization function for Options structs. */
+  /* Page Information */
+  opts->page_directory = NULL;
+  opts->page_count = 0;
+  opts->page_limit = 0;
+  opts->biggest_page = 0;
+  opts->dataset_size = 0;
+  opts->dataset_max = 0;
+  /* Resource Control */
+  opts->max_memory = 0;
+  opts->fixed_ratio = 0;
+  opts->workers = 1;
+  /* Test Management */
+  opts->duration = 5;
+  opts->hit_ratio = 0;
+
+  /* Process everything passed from CLI now. */
   int c = 0;
   opterr = 0;
-  while ((c = getopt(argc, argv, "d:hm:")) != -1) {
+  while ((c = getopt(argc, argv, "hm:p:")) != -1) {
     switch (c) {
-      case 'd':
-        *data_dir = optarg;
-        break;
       case 'h':
         show_help();
         exit(E_OK);
         break;
       case 'm':
-        if (optarg == NULL)
-          show_error(E_BAD_CLI, "You specified -m but didn't actually provide an argument... tsk tsk");
-        *max_memory = atoi(optarg);
+        opts->max_memory = atoi(optarg);
+        break;
+      case 'p':
+        opts->page_directory = optarg;
         break;
       case '?':
         show_help();
-        if (optopt == 'd')
+        if (optopt == 'd' || optopt == 'm')
           fprintf(stderr, "Option -%c requires an argument.\n", optopt);
         else if (isprint (optopt))
           fprintf(stderr, "Unknown option `-%c'.\n", optopt);
@@ -109,12 +122,12 @@ void get_options(int argc, char **argv, char **data_dir, uint64_t *max_memory) {
   }
 
   /* Pre-flight Checks */
-  // -- A directory is always required.
-  if (*data_dir == NULL)
-    show_error(E_BAD_CLI, "You must specify a data directory.");
+  // -- A page directory is always required.  If it's an invalid path, the io__* functions will catch it.
+  if (opts->page_directory == NULL)
+    show_error(E_BAD_CLI, "You must specify a directory to search for pages for the test (-p).");
   // -- Memory needs to be at least MIN_MEMORY
-  if (*max_memory < MIN_MEMORY)
-    show_error(E_BAD_CLI, "The memory argument you supplied (-m) is too low.  You sent %"PRIu64", but a minimum of %"PRIu64" is required.", *max_memory, MIN_MEMORY);
+  if (opts->max_memory < MIN_MEMORY)
+    show_error(E_BAD_CLI, "The memory argument you supplied (-m) is too low.  You sent %"PRIu64", but a minimum of %"PRIu64" is required.", opts->max_memory, MIN_MEMORY);
 
   return;
 }
