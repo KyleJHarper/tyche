@@ -1,35 +1,19 @@
-Decide if pool partitioning should be used so that searching can be threaded.  Probably not but might want to at lest make a note somewhere that it could be an optimization in another implementation.
-
-When lists are managed and lz4 is working, branch date__adaptive
-
-Branches / Bigger Steps
-1.  Read From Disk
-      a) [done] Buffers should read from disk.
-      b) [done] io time should be stored.
-      c) [done] Getopts should handle test parameters for tyche.
-      d) [done] Rename bin/main to tyche.
-2.  Compression
-      a) [done] Compression (lz4) should be added via lz4.h/lz4.c and modified to suit needs (fix params).
-      b) [done] A buffer given compressed data should store it properly and set data length.
-      c) [done] Compression time should be stored in buffer.
-      d) [done] Decompression should yield proper results.
-      e) [done] Comp time and comp hits should be updated to track CPU time and avoided io time.
-      f) [done] Try to optimize the (de)compression operations the way multipleFilenames() functions work (LZIO cRess/dRess).
-      g) [done] We should use memcmp() instead of writing everything to disk and running system(md5sum).
-3.  List management: create raw and compressed lists and ensure they're managing themselves upon updates.
-      a) [done] Lists should probably know if they're raw or compressed, and raw needs to know who to dump overflow to.
-      b) [done] Raw pool size should configurable and enforced in list__add().
-      c) [done] Compressed list should maintain a count of its size and list__pop()/push() when not enough room is available.
-      d) [done] Removal from raw should send to compressed list.  list__migrate().
-      e) [done] A dedicated function might be necessary such as list__sweep() or list__balance() to remove buffers from both lists so that new data can come in.  This should accept a target to hit (e.g. 5% free) and a default should be provided.
-      f) [done] Searches that fail but have an offload_to should search it.
-      g) [done] Hits found in offload_to (compressed) lists should restore them. list__restore().
-4.  Adaptations
-      a) Not sure what all is needed, but need a monitor thread to adjust list sizes on-the-fly based on statistics.
-         Could prove difficult since we're array-based (pool[]) now.  I'm sure a list->max attribute can fix that.
-5.  Testing
-      a) All tests should create headers and spacing footers.
-      b) Tests should be grouped up and reorganized to be more user friendly.
-      c) There should be a switch to run all the tests (with the performance one scaled down?).
-6.  Bug Fixes To-Date
-
+1. Options
+     a) Consider a config file or long options if too many options become an issue.
+     b) Build a struct or something to hold the options and possibly link to it from the raw list?
+     c) -i == Initialize ratio, as a percentage to give to raw: >1 <100
+     d) -F == Fixed memory sizes.  No adaptive logic.  raw/comp lists won't be engine__balanced()'d
+     e) -w == Workers to use, defaults to number of CPUs
+     f) -t == Time to spend running the test, in seconds.
+     g) -h == Hit ratio (minimum) to aim for.  (Only use known buffers when ratio too low)
+     h) -b == Bytes to limit data set to.  (Can point to large dir and stop at X bytes)
+2. Manager
+     a) A new structure to manage the lists.  Functions for list review and adjustment.
+     b) The primary function, manager__analyze(), is where ACCRS logic should do the real magic.
+     c) Manager should be disabled when -F is specified.
+     d) Manager should log output of decisions and supporting data.
+     e) Research options to accommodate aging and if it's even necessary (newer buffers == more likely to reuse?)
+     f) Ensure that a scan protection element exists.
+3. Reporting
+     a) Totals: buffers read, per second, peak?, etc
+     b) Buffer hits, misses/faults, and hit ratio.
