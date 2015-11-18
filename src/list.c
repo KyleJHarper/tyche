@@ -448,7 +448,7 @@ int list__push(List *list, Buffer *buf) {
 
 /* list__pop
  * A wrapper to scan for the least popular buffer(s) in a compressed list and have it/them removed until bytes_needed is satisfied.
- * To prevent excessive looping and work, we scan for the lowest popularity once, then remove ALL buffers with that popularity.  If
+ * To prevent excessive looping and work, we scan for the lowest popularity once, then remove buffers with that popularity.  If
  * our goal still isn't met, the low-threshold is incremented and we do it again.  This doesn't give true FIFO, but it give FIFO in
  * regard to "generations" of buffers.  Each generation is added with list__push() calls (from list__sweep()) and their popularity
  * is set to MAX_POPULARITY; at the end of each list__sweep() we decrement all buffers' popularity members.
@@ -497,7 +497,7 @@ int list__restore(List *list, Buffer **buf) {
   if (list->offload_to == NULL)
     show_error(E_GENERIC, "The list__restore function was given a list without an offload_to target list.  This should never happen.");
   if (buf == NULL)
-    show_error(E_GENERIC, "The list__restore functino was given an invalid buffer.  This should never happen.");
+    show_error(E_GENERIC, "The list__restore function was given an invalid buffer.  This should never happen.");
 
   // Copy the buffer so we can begin restoring it.
   Buffer *new_buf = buffer__initialize(0, NULL);
@@ -514,5 +514,38 @@ int list__restore(List *list, Buffer **buf) {
 
   // Assign the source pointer to our local copy's address and leave.
   *buf = new_buf;
+  return E_OK;
+}
+
+
+/* list__balance
+ * Redistributes memory between a list and it's offload target.  The list__sweep() and list__push/pop() functions will handle the
+ * buffer migration while respecting the new boundaries.
+ * This function is not responsible for checking Options to see if fixed ratios are set or anything like that.
+ * Caller MUST set the list->max_size before-hand (or nothing will happen...)
+ */
+int list__balance(List *list) {
+  // As always, be safe.
+  if (list == NULL)
+    show_error(E_GENERIC, "The list__balance function was given a NULL list.  This should never happen.");
+  if (list->offload_to == NULL)
+    show_error(E_GENERIC, "The list__balance function was given a list with a NULL offload_to target.");
+  list__acquire_write_lock(list);
+
+  // Pop() the offload list if it shrunk.
+  if (list->offload_to->current_size > list->offload_to->max_size)
+    list__pop(list->offload_to, (list->offload_to->current_size - list->offload_to->max_size));
+
+  // Try to sweep() the raw list if it shrunk.  Attempt to do this with a single call.
+  uint8_t original_sweep_goal = list->sweep_goal;
+  while ((list->sweep_goal * list->current_size / 100) < list->max_size && list->sweep_goal < 100)
+    list->sweep_goal++;
+  if (list->sweep_goal == 100)
+    show_error(E_GENERIC, "When trying to balance the lists, sweep goal was incremented to 100 which would eliminate the entire list.  This is, I believe, a condition that should never happen.");
+  list__sweep(list);
+  list->sweep_goal = original_sweep_goal;
+
+  // All done.  Release our lock and go home.
+  list__release_write_lock(list);
   return E_OK;
 }

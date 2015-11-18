@@ -1,12 +1,12 @@
 1. Options
      a) Consider a config file or long options if too many options become an issue.
      b) Build a struct or something to hold the options and possibly link to it from the raw list?
-     c) -F == Fixed memory sizes.  No adaptive logic.  raw/comp lists won't be engine__balanced()'d
+     c) -f == Fixed memory sizes.  No adaptive logic.  raw/comp lists won't be engine__balanced()'d
      d) -w == Workers to use, defaults to number of CPUs
      e) -d == Time to spend running the test, in seconds. (-d == duration)
-     f) -h == Hit ratio (minimum) to aim for.  (Only use known buffers when ratio too low)
+     f) -r == Hit ratio (minimum) to aim for.  (Only use known buffers when ratio too low)
      g) -b == Bytes to limit data set to.  (Can point to large dir and stop at X bytes)
-     h) -l == Locker pool size.  High == less Buffers per lock == less chance of blocking.
+     h) Update the show_help() function.
 2. Buffer Mutexes & Conditions
      a) Recalculate memory consumption remembering that largest data set == max memory we assign!
      b) Even if memory savings are minimal, are we saving CPU time by not initializing a new set for each buffer?
@@ -24,6 +24,7 @@
 4. Reporting
      a) Totals: buffers read, per second, peak?, etc
      b) Buffer hits, misses/faults, and hit ratio.
+     c) Data set information: files found, average size, max size, minimum size, etc.
 5. FAQ
      a) Why no size_t?  (Because I want to ensure minium sizes in almost all cases)
      b) Why so much uint/uintX_t?  Because I usually need to accommodate the given size and negative numbers don't exist.
@@ -32,3 +33,6 @@
      e) Why C?  To *hopefully* avoid bias in higher level langages; though they might have optimizations.
      f) Why lz4?  Partly it's compression speed+efficiency, but mostly it's decompression speed.
      g) Locker?  In theory, it reduces memory use by using shared locks among a small number of buffers.  Configurable.
+6. Optimizations
+     a) Using const on all functions where appropriate.
+     b) Figure out how to stop double-scanning with io__* to get the page count.

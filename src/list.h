@@ -78,5 +78,7 @@ uint list__sweep(List *list);
 int list__push(List *list, Buffer *buf);
 int list__pop(List *list, uint64_t bytes_needed);
 int list__restore(List *list, Buffer **buf);
+int list__balance(List *list);
+
 
 #endif /* SRC_LIST_H_ */
