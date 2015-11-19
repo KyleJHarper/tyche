@@ -14,12 +14,14 @@
 #include <inttypes.h>
 #include "list.h"
 #include "buffer.h"
+#include "options.h"
 #include "tests.h"
 #include "lz4.h"
 #include "error.h"
 
 
 extern const int E_OK;
+extern const int E_BAD_CLI;
 extern const int E_BUFFER_POOFED;
 extern const int E_BUFFER_NOT_FOUND;
 extern const int E_BUFFER_IS_VICTIMIZED;
@@ -35,6 +37,48 @@ const int READS_PER_WORKER =   5000;
 const int LIST_FLOOR       =    975;
 const int SLEEP_DELAY      =    123;
 
+
+
+void tests__run_test(Options *opts, char *pages[]) {
+  /* tests__compression */
+  if(strcmp(opts->test, "compression") == 0) {
+    printf("RUNNING TEST: tests__compression\n");
+    tests__compression();
+    return;
+  }
+  /* tests__elements */
+  if(strcmp(opts->test, "elements") == 0) {
+    printf("RUNNING TEST: tests__elements\n");
+    tests__elements();
+    return;
+  }
+  /* tests__io */
+  if(strcmp(opts->test, "io") == 0) {
+    printf("RUNNING TEST: tests__io\n");
+    tests__io(opts->page_count, pages);
+    return;
+  }
+  /* tests__move_buffers */
+  if(strcmp(opts->test, "move_buffers") == 0) {
+    printf("RUNNING TEST: tests__move_buffers\n");
+    tests__move_buffers(opts->page_count, pages);
+    return;
+  }
+  /* tests__options */
+  if (strcmp(opts->test, "options") == 0) {
+    printf("RUNNING TEST: tests__options\n");
+    tests__options(opts);
+    return;
+  }
+  /* tests__synchronized_readwrite */
+  if(strcmp(opts->test, "synchronized_readwrite") == 0) {
+    printf("RUNNING TEST: tests__synchronized_readwrite\n");
+    tests__synchronized_readwrite();
+    return;
+  }
+  show_error(E_BAD_CLI, "You sent a test name (-t %s) for a test that doesn't exist: tests__%s.", opts->test, opts->test);
+  return;
+}
 
 
 void tests__synchronized_readwrite() {
@@ -152,7 +196,7 @@ void tests__elements() {
  * attempt to read a file into a buffer with buffer__initialize(valid_id, valid_path).  Requires a pointer to the pages array and
  * the PAGE_COUNT const.
  */
-void tests__io(char *pages[], const int PAGE_COUNT) {
+void tests__io(const uint32_t PAGE_COUNT, char *pages[]) {
   int id_to_get = 128;
   while (id_to_get >= PAGE_COUNT && id_to_get != 0)
     id_to_get /= 2;
@@ -174,7 +218,7 @@ void tests__io(char *pages[], const int PAGE_COUNT) {
  * Ensures basic compression and decompression works.  We should NOT read buffers from the disk.  It would be a more comprehensive
  * test but it would preclude us from testing JUST compression, which is the point here.
  */
-void tests__compression(char *pages[], const int PAGE_COUNT) {
+void tests__compression() {
   /* Test 1:  make sure the LZ4_* functions can compress and decompress data. */
   // -- Basic stuff
   void *src = "Lorem ipsum dolor. Sit amet amet mollis vitae posuere egestas iaculis aptent. Ante ac molestie laoreet et ut. Tristique aptent egestas purus lorem mattis. Pharetra ultricies risus. Eget scelerisque augue. Fames iaculis donec. Pellentesque donec tristique at libero vulputate metus morbi lectus. Eu quam in nibh tellus wisi. At aliquam sagittis aenean sit accumsan. Cupidatat gravida facilisis gravida imperdiet inceptos lacus ultricies dignissim fringilla nunc sed magna mollis quisque purus semper tempor. A velit in suspendisse curabitur ut sollicitudin mi adipiscing. A pellentesque sociosqu exercitationem sit pede. Vestibulum sed sed. Odio nulla lectus. Convallis quam egestas magnis est sit. Metus porta tellus. Scelerisque sollicitudin auctor non dictum dolor condimentum ipsum adipiscing ornare a nec. Tempor felis urna. Placerat proin elementum rem litora praesent ut semper et. Eleifend ac vel nam praesent mauris libero non conubia quis id gravida. Vel est augue. Vel non lacus magna lorem nisl diam sit eu. Vestibulum placerat molestie congue bibendum vulputate metus ultrices sollicitudin. Convallis arcu mollitia. Purus id magna. Volutpat erat vitae mi donec id nonummy et pellentesque. Orci ipsum diam. Sollicitudin congue viverra. Erat massa elit commodo dui mi sit purus convallis enim diam magna varius tempor consectetuer ac amet nulla et ultrices in in ut est ac leo orci et mauris volutpat suspendisse exercitation diam. Eros aenean pulvinar. Maecenas interdum aliquam. Ante sapien donec donec nam sit lectus phasellus nullam vestibulum lacus non. Aliquam blandit nulla. Duis et gravida velit quam nascetur turpis nam in. Eleifend ac sodales sed nisl integer sollicitudin mauris orci aliquam duis mauris. Posuere dui nec. Nunc tristique nascetur. Dignissim velit malesuada tincidunt cras morbi morbi at mauris. Eget nec erat. Sed euismod faucibus. Accumsan fermentum eget. Nec faucibus curabitur pede dictum morbi. Dapibus erat reprehenderit. Natoque corporis cras in risus nam. Ac rhoncus in eros feugiat eros aut fames magna malesuada maecenas amet. Integer aliquam erat nisl neque amet. Ac dolor tellus dolor at perferendis. Risus dolor ultricies. Justo at ultrices aenean tempus magna amet ac eget at turpis in. Nunc habitant blandit et purus semper. Adipiscing voluptatem porttitor. Sapien elementum justo pellentesque duis ligula lorem ultrices ultricies. Nam lectus euismod ultricies praesent et error sed eleifend. Con dolor morbi. Aenean est sit. Nec interdum nonummy eu leo sit. Pellentesque consequat morbi. Lacus augue vitae. Et sit wisi. Dolor ante placerat. Netus commodo proin. Gravida facilisis bibendum metus non eget. Consectetuer libero eu sit vehicula turpis suspendisse wisi netus. Aenean massa faucibus neque sodales urna. In dictum aliquam. Amet suscipit neque. In auctor lectus purus sagittis vestibulum tristique vestibulum et. Condimentum leo at. Lorem ante scelerisque. At non maecenas totam risus nibh. Massa lorem venenatis torquent gravida libero. Elementum id placerat. Nulla suspendisse dolore. Tellus necessitatibus vitae praesent sed per. Pellentesque egestas rhoncus aenean aliquam molestie. Arcu sociis tincidunt nisl consequat semper magna quisque justo. Feugiat condimentum eget nec sed iaculis et mi facilisis dis sit cursus odio pellentesque mauris volutpat orci massa dolor eget et. Pede nulla urna. Sollicitudin sodales nisl. Eget ut nulla. A id vestibulum. Egestas ac risus. In iaculis nascetur fermentum sociosqu cras rutrum vestibulum vehicula a aliquam rhoncus ornare nulla et. Mauris sed condimentum. Sem ut felis sed per enim malesuada magna quam. Con maecenas dui. Habitasse feugiat purus. Volutpat lectus orci. Est etiam justo. Odio nec consequat. Posuere et et. Condimentum nunc faucibus viverra amet sapien urna iste eget suspendisse eget quam. Vulputate nullam porta tortor quis aenean. Ut blandit augue. Nulla ligula quam. Non in mauris. Egestas laoreet tincidunt. Aliquam duis at congue lacus est nascetur velit lorem proin neque egestas. Tortor vitae bibendum. Parturient neque lacus. Pede a ultrices leo lacus vivamus";
@@ -261,7 +305,7 @@ void tests__compression(char *pages[], const int PAGE_COUNT) {
 /*
  * Make sure that we can create a list, try to put too many buffers in it, and have it offload things as expected.
  */
-void tests__move_buffers(const uint PAGE_COUNT, char *pages[]) {
+void tests__move_buffers(const uint32_t PAGE_COUNT, char *pages[]) {
   List *raw_list = list__initialize();
   List *comp_list = list__initialize();
   raw_list->offload_to = comp_list;
@@ -354,6 +398,30 @@ void tests__move_buffers(const uint PAGE_COUNT, char *pages[]) {
   if (found_in_raw > 1)
     show_error(E_GENERIC, "The found_in_raw variable is higher than 1, this is bad.\n");
   printf("We successfully moved a buffer to the raw list on-demand.\n");
+
+  return;
+}
+
+
+/* tests__options
+ * Simple test to make sure options get set correctly.  I'm not sure this will ever be useful.
+ */
+void tests__options(Options *opts) {
+  // Just print them out to show what they ended up looking like.
+  printf("opts->page_directory = %s\n",        opts->page_directory);
+  printf("opts->page_count     = %"PRIu32"\n", opts->page_count);
+  printf("opts->page_limit     = %"PRIu32"\n", opts->page_limit);
+  printf("opts->smallest_page  = %"PRIu16"\n", opts->smallest_page);
+  printf("opts->biggest_page   = %"PRIu16"\n", opts->biggest_page);
+  printf("opts->dataset_size   = %"PRIu64"\n", opts->dataset_size);
+  printf("opts->dataset_max    = %"PRIu64"\n", opts->dataset_max);
+  /* Resource Control */
+  printf("opts->max_memory     = %"PRIu64"\n", opts->max_memory);
+  printf("opts->fixed_ratio    = %"PRIi8"\n", opts->fixed_ratio);
+  printf("opts->workers        = %"PRIu16"\n", opts->workers);
+  /* Test Management */
+  printf("opts->duration       = %"PRIu16"\n", opts->duration);
+  printf("opts->hit_ratio      = %"PRIi8"\n", opts->hit_ratio);
 
   return;
 }

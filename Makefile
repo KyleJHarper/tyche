@@ -20,6 +20,7 @@ build:
 	$(CC) $(CFLAGS) -o $(BINDIR)/tyche     \
 		$(SRCDIR)/list.c    \
 		$(SRCDIR)/lz4.c     \
+		$(SRCDIR)/options.c \
 		$(SRCDIR)/buffer.c  \
 		$(SRCDIR)/lock.c    \
 		$(SRCDIR)/error.c   \

@@ -15,6 +15,7 @@
 #include <string.h>      /* for strcmp(), strlen(), strcpy() */
 #include <sys/stat.h>    /* for stat() */
 #include "error.h"
+#include "options.h"
 #include "io.h"
 
 
@@ -27,24 +28,30 @@ extern const int E_GENERIC;
  * pointers for use by the caller.  Also respects dataset_max and provides feedback for dataset_size, page_count, and largest
  * detected page size.
  */
-void io__build_pages_array(char *dir_name, char *pages[], uint64_t dataset_max, uint64_t *dataset_size, uint32_t *page_count) {
+void io__build_pages_array(char *pages[], Options *opts) {
   PageFilespec *head = NULL;
   PageFilespec *current = NULL;
   int i = 0;
 
   // Start the recursive scan.
-  io__scan_for_pages(dir_name, &head);
+  io__scan_for_pages(opts->page_directory, &head);
 
   // Loop through the list and save values to the array.
+  /* Page count comes in non-zero because of an earlier scan; when we fix that this line can go away. */
+  opts->page_count = 0;
   current = head;
   for(;;) {
-    if((*dataset_size + current->page_size) < dataset_max) {
-      // We haven't hit our limit (if any was even specified).  Add it up!
-      *dataset_size += current->page_size;
+    if(((opts->dataset_size + current->page_size) < opts->dataset_max) && (opts->page_count < opts->page_limit)) {
+      // We haven't hit our limits (if any was even specified).  Add it up!
+      opts->dataset_size += current->page_size;
+      opts->page_count++;
       pages[i] = current->filespec;
       i++;
       // Update the smallest/biggest settings.
-//TODO MOVE OPTIONS TO IT'S OWN HEADER FILE SO WE CAN INCLUDE IT I GUESS....
+      if (opts->biggest_page < current->page_size)
+        opts->biggest_page = current->page_size;
+      if (opts->smallest_page > current->page_size)
+        opts->smallest_page = current->page_size;
     }
     // Even if we didn't add it above, we still need to free the memory and update to the next item.
     free(current->filespec);
@@ -54,8 +61,6 @@ void io__build_pages_array(char *dir_name, char *pages[], uint64_t dataset_max, 
       break;
   }
 
-  // Update the page count to match the number of elements we ended up putting into the array.
-  *page_count = ++i;
   return;
 }
 
@@ -127,7 +132,7 @@ void io__scan_for_pages(char *dir_name, PageFilespec **head) {
     strcat(new_page->filespec, "/");
     strcat(new_page->filespec, entry->d_name);
     stat(new_page->filespec, &st);
-    new_page->page_size = (uint)st->st_size;
+    new_page->page_size = (uint)st.st_size;
     if (*head == NULL) {
       *head = new_page;
       (*head)->next = new_page;

@@ -1,12 +1,14 @@
 1. Options
-     a) Consider a config file or long options if too many options become an issue.
-     b) Build a struct or something to hold the options and possibly link to it from the raw list?
-     c) -f == Fixed memory sizes.  No adaptive logic.  raw/comp lists won't be engine__balanced()'d
-     d) -w == Workers to use, defaults to number of CPUs
-     e) -d == Time to spend running the test, in seconds. (-d == duration)
-     f) -r == Hit ratio (minimum) to aim for.  (Only use known buffers when ratio too low)
-     g) -b == Bytes to limit data set to.  (Can point to large dir and stop at X bytes)
-     h) Update the show_help() function.
+     a) [done] Consider a config file or long options if too many options become an issue.
+     b) [done] Build a struct or something to hold the options and possibly link to it from the raw list?
+     c) [done] -f == Fixed memory sizes.  No adaptive logic.  raw/comp lists won't be engine__balanced()'d
+     d) [done] -w == Workers to use, defaults to number of CPUs
+     e) [done] -d == Time to spend running the test, in seconds. (-d == duration)
+     f) [done] -r == Hit ratio (minimum) to aim for.  (Only use known buffers when ratio too low)
+     g) [done] -b == Bytes to limit data set to.  (Can point to large dir and stop at X bytes)
+     h) [done] -n == Number of pages to limit tyche to scan for.
+     i) [done] Update the show_help() function.
+     j) [done] -t == Run test optarg.
 2. Buffer Mutexes & Conditions
      a) Recalculate memory consumption remembering that largest data set == max memory we assign!
      b) Even if memory savings are minimal, are we saving CPU time by not initializing a new set for each buffer?
@@ -36,3 +38,10 @@
 6. Optimizations
      a) Using const on all functions where appropriate.
      b) Figure out how to stop double-scanning with io__* to get the page count.
+     c) Inline functions like lock__acquire/release (or simply remove them?)
+7. Test Updates
+     a) Modify all tests to accept and use the primary list set created by main().
+     b) Update tests__elements test to be more... useful (and actually run).
+     c) Update tests__io to actually work.
+     d) Update tests__move_buffers to actually work.
+     e) Add a timing component to all tests.
