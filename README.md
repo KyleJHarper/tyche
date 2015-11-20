@@ -8,6 +8,12 @@ This will be open-source (as will the ACCRS theory) and free but I am still goin
 ====
 Latest Changelog Entries
 
+**[2015-11-19]**
+*Tyche now supports options processing in a more sane (consistent) manner.  This options struct serves as a nice way to share options with functions.*
+
+*Also added a new test option (-t name).  It will run the built-in test with the associated name.*
+
+
 **[2015-11-12]**
 *The lists now support transferring buffers between them.  If a buffer is too big for the raw list, the raw list will be swept to make room.  Victimized buffers will be compressed and sent to the compressed list.  If the compressed list cannot contain the victimized buffer, it'll be purged one generation at a time until they all fit.*
 

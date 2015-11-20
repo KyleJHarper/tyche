@@ -45,3 +45,4 @@
      c) Update tests__io to actually work.
      d) Update tests__move_buffers to actually work.
      e) Add a timing component to all tests.
+     f) Make -t 'help' and the default clause show the available test options.
