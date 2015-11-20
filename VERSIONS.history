@@ -1,5 +1,9 @@
 Contains a simple note for each tagged release.  We will try to follow SEMVER.  Be aware, all 0.x.y releases are developmental and are NOT guaranteed compatible according to SEMVER.
 
+0.0.5 (IN PROGRESS)
+TODO
+- Added the ability to run internal tests by specifying the -t option.
+- Modified options to be a separate struct and much easier to share among functions in the program.
 
 0.0.4 (2015-11-12)
 - Lists now support migrating buffers between them.  Both raw -> comp and backward.
