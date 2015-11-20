@@ -17,7 +17,7 @@
 #include <pthread.h>
 
 
-typedef uint16_t lockid_t;
+typedef uint32_t lockid_t;
 typedef struct lock Lock;
 struct lock {
   pthread_mutex_t mutex;     /* The actual mutex used for locking. */

@@ -11,7 +11,9 @@ Latest Changelog Entries
 **[2015-11-19]**
 *Tyche now supports options processing in a more sane (consistent) manner.  This options struct serves as a nice way to share options with functions.*
 
-*Also added a new test option (-t name).  It will run the built-in test with the associated name.*
+*Added a new test option (-t name).  It will run the built-in test with the associated name.*
+
+*Added a new option (-l) to control lock sharing ratios.  No more large array declarations at compile time.*
 
 
 **[2015-11-12]**

@@ -21,8 +21,8 @@
 /* We need to know what one billion is for clock timing. */
 #define BILLION 1000000000L
 
-/* Give extern access to locker_pool[] to us, even though I'm sure this is a no no and someone will yell at me. */
-extern Lock locker_pool[];
+/* Give extern access to *locker_pool to us, even though I'm sure this is a no no and someone will yell at me. */
+extern Lock *locker_pool;
 
 
 /* Extern the error codes we'll use. */
@@ -110,14 +110,14 @@ int buffer__destroy(Buffer *buf) {
 }
 
 /* buffer__lock
- * Setting a lock just locks the mutex from the locker_pool[].  Since we support concurrency, it's possible to have a thread
+ * Setting a lock just locks the mutex from the *locker_pool.  Since we support concurrency, it's possible to have a thread
  * waiting for a lock on a buffer while another thread is removing that buffer entirely.  So we add a little more logic for that.
  */
 int buffer__lock(Buffer *buf) {
   /* Check to make sure the buffer exists. */
   if (buf == NULL)
     return E_BUFFER_POOFED;
-  pthread_mutex_lock(&locker_pool[buf->lock_id].mutex);
+  pthread_mutex_lock(&(locker_pool + buf->lock_id)->mutex);
   /* If a buffer is victimized we can still lock it, but the caller needs to know. This is safe because buffer__victimize locks. */
   if (buf->victimized != 0)
     return E_BUFFER_IS_VICTIMIZED;
@@ -126,11 +126,11 @@ int buffer__lock(Buffer *buf) {
 
 
 /* buffer__unlock
- * This will unlock the element in the locker_pool[] with the element matching lock_id.  Since this can only be reached at the end
+ * This will unlock the element in the *locker_pool with the element matching lock_id.  Since this can only be reached at the end
  * of a block who already owns the lock, we don't need any special checking.
  */
 void buffer__unlock(Buffer *buf) {
-  pthread_mutex_unlock(&locker_pool[buf->lock_id].mutex);
+  pthread_mutex_unlock(&(locker_pool + buf->lock_id)->mutex);
 }
 
 
@@ -146,7 +146,7 @@ int buffer__update_ref(Buffer *buf, int delta) {
   // At this point we're safe to modify the ref_count.  When decrementing, check to see if we need to broadcast.
   buf->ref_count += delta;
   if (buf->victimized != 0 && buf->ref_count == 0)
-    pthread_cond_broadcast(&locker_pool[buf->lock_id].condition);
+    pthread_cond_broadcast(&(locker_pool + buf->lock_id)->condition);
 
   // If we're incrementing we need to update popularity too.
   if (delta > 0 && buf->popularity <= MAX_POPULARITY)
@@ -169,7 +169,7 @@ int buffer__victimize(Buffer *buf) {
     return rv;
   buf->victimized = 1;
   while(buf->ref_count != 0)
-    pthread_cond_wait(&locker_pool[buf->lock_id].condition, &locker_pool[buf->lock_id].mutex);
+    pthread_cond_wait(&(locker_pool + buf->lock_id)->condition, &(locker_pool + buf->lock_id)->mutex);
   return E_OK;
 }
 

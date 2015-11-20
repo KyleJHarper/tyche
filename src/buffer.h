@@ -16,7 +16,7 @@
 
 /* Defines used by this header. */
 #define MAX_POPULARITY (UINT8_MAX - 1)
-//#define MAX_POPULARITY UINT8_MAX
+
 
 /* Build the typedef and structure for a Buffer */
 typedef uint32_t bufferid_t;

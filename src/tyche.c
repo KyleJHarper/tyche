@@ -29,7 +29,10 @@
 #include "tyche.h"
 
 /* Define a few things, mostly for sanity checking later. */
-#define INITIAL_RAW_RATIO          80    // 80%
+#define INITIAL_RAW_RATIO  80    // 80%
+
+/* Make the options stuct shared. */
+Options opts;
 
 
 
@@ -38,24 +41,25 @@
  */
 int main(int argc, char **argv) {
   /* Get options & verify them.  Will terminate if errors, so no checking here. */
-  Options opts;
-  options__process(argc, argv, &opts);
+  options__process(argc, argv);
 
   /* Initialize the locker. */
   lock__initialize();
 
   /* Build the two lists we're going to use, then set their options. */
   List *raw_list;
-  create_listset(&raw_list, &opts);
+  create_listset(&raw_list);
 
   /* Get a list of the pages we have to work with.  Build array large enough to store all, even if opts->dataset_max is set. */
-  opts.page_count = io__get_page_count(opts.page_directory);
+  io__get_page_count();
   char *pages[opts.page_count];
-  io__build_pages_array(pages, &opts);
+  opts.max_locks = (uint32_t)(opts.page_count / opts.lock_ratio);
+  lock__initialize();
+  io__build_pages_array(pages);
 
   /* If a test was specified, run it instead of tyche and then leave. */
   if (opts.test != NULL) {
-    tests__run_test(&opts, pages);
+    tests__run_test(pages);
     show_error(E_GENERIC, "A test (-t %s) was specified.  It should have ran by now.  Quitting non-zero for safety.", opts.test);
   }
 
@@ -67,7 +71,7 @@ int main(int argc, char **argv) {
 /* create_listset
  * A convenience function that will combine two lists and set their initial values.
  */
-void create_listset(List **raw_list, Options *opts) {
+void create_listset(List **raw_list) {
   /* Initialize the lists. */
   *raw_list = list__initialize();
   if (*raw_list == NULL)
@@ -81,8 +85,8 @@ void create_listset(List **raw_list, Options *opts) {
   comp_list->restore_to = *raw_list;
 
   /* Set the memory sizes for both lists. */
-  (*raw_list)->max_size = opts->max_memory * (opts->fixed_ratio > 0 ? opts->fixed_ratio : INITIAL_RAW_RATIO) / 100;
-  comp_list->max_size = opts->max_memory - (*raw_list)->max_size;
+  (*raw_list)->max_size = opts.max_memory * (opts.fixed_ratio > 0 ? opts.fixed_ratio : INITIAL_RAW_RATIO) / 100;
+  comp_list->max_size = opts.max_memory - (*raw_list)->max_size;
 
   /* All done. */
   return;

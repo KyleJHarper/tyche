@@ -24,8 +24,8 @@ struct pagefilespec {
 
 
 /* Function prototypes */
-uint io__get_page_count(char *dir_name);
-void io__build_pages_array(char *pages[], Options *opts);
+void io__get_page_count();
+void io__build_pages_array(char *pages[]);
 void io__scan_for_pages(char *data_dir, PageFilespec **head);
 
 

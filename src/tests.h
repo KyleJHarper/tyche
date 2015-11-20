@@ -11,8 +11,8 @@
 #include "options.h"
 
 
-void tests__run_test(Options *opts, char *pages[]);
-void tests__options(Options *opts);
+void tests__run_test(char *pages[]);
+void tests__options();
 void tests__move_buffers(const uint32_t PAGE_COUNT, char *pages[]);
 void tests__io(const uint32_t PAGE_COUNT, char *pages[]);
 void tests__compression();

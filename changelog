@@ -7,6 +7,13 @@ Changelog for Tyche:  Reverse Chronological Order (obviously)
 +--------------------------------------+
 | 2015-11-19                           |
 +--------------------------------------+
+*Reviewed the locking mechanism (locker pool) to re-evaluate how to better utilize it.  Switched from a statically defined array of enormous size to a pointer+calloc() and changed all references to (pointer + offset)->member references.  This paved the way for me to add a new option (-l) to control the lock ratio.  Short version:  We can now control the amount of contention and buffers sharing mutexes and conditions.*
+
+*Also reviewed the possibility of moving the locking/unlocking directly into the buffer__lock/unlock functions.  I decided against this, since the lock__acquire/release functions can be easily inline'd.  I was going to use the inline keyword for a compiler hint, but frankly if gcc -O3 can't figure it out... we have bigger problems.*
+
++--------------------------------------+
+| 2015-11-18                           |
++--------------------------------------+
 *Tyche now supports options processing in a more sane (consistent) manner.  This options struct serves as a nice way to share options with functions.*
 
 *Also added a new test option (-t name).  It will run the built-in test with the associated name.*

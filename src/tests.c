@@ -37,46 +37,48 @@ const int READS_PER_WORKER =   5000;
 const int LIST_FLOOR       =    975;
 const int SLEEP_DELAY      =    123;
 
+/* Make the options stuct shared. */
+extern Options opts;
 
 
-void tests__run_test(Options *opts, char *pages[]) {
+void tests__run_test(char *pages[]) {
   /* tests__compression */
-  if(strcmp(opts->test, "compression") == 0) {
+  if(strcmp(opts.test, "compression") == 0) {
     printf("RUNNING TEST: tests__compression\n");
     tests__compression();
     return;
   }
   /* tests__elements */
-  if(strcmp(opts->test, "elements") == 0) {
+  if(strcmp(opts.test, "elements") == 0) {
     printf("RUNNING TEST: tests__elements\n");
     tests__elements();
     return;
   }
   /* tests__io */
-  if(strcmp(opts->test, "io") == 0) {
+  if(strcmp(opts.test, "io") == 0) {
     printf("RUNNING TEST: tests__io\n");
-    tests__io(opts->page_count, pages);
+    tests__io(opts.page_count, pages);
     return;
   }
   /* tests__move_buffers */
-  if(strcmp(opts->test, "move_buffers") == 0) {
+  if(strcmp(opts.test, "move_buffers") == 0) {
     printf("RUNNING TEST: tests__move_buffers\n");
-    tests__move_buffers(opts->page_count, pages);
+    tests__move_buffers(opts.page_count, pages);
     return;
   }
   /* tests__options */
-  if (strcmp(opts->test, "options") == 0) {
+  if (strcmp(opts.test, "options") == 0) {
     printf("RUNNING TEST: tests__options\n");
     tests__options(opts);
     return;
   }
   /* tests__synchronized_readwrite */
-  if(strcmp(opts->test, "synchronized_readwrite") == 0) {
+  if(strcmp(opts.test, "synchronized_readwrite") == 0) {
     printf("RUNNING TEST: tests__synchronized_readwrite\n");
     tests__synchronized_readwrite();
     return;
   }
-  show_error(E_BAD_CLI, "You sent a test name (-t %s) for a test that doesn't exist: tests__%s.", opts->test, opts->test);
+  show_error(E_BAD_CLI, "You sent a test name (-t %s) for a test that doesn't exist: tests__%s.", opts.test, opts.test);
   return;
 }
 
@@ -406,22 +408,22 @@ void tests__move_buffers(const uint32_t PAGE_COUNT, char *pages[]) {
 /* tests__options
  * Simple test to make sure options get set correctly.  I'm not sure this will ever be useful.
  */
-void tests__options(Options *opts) {
+void tests__options() {
   // Just print them out to show what they ended up looking like.
-  printf("opts->page_directory = %s\n",        opts->page_directory);
-  printf("opts->page_count     = %"PRIu32"\n", opts->page_count);
-  printf("opts->page_limit     = %"PRIu32"\n", opts->page_limit);
-  printf("opts->smallest_page  = %"PRIu16"\n", opts->smallest_page);
-  printf("opts->biggest_page   = %"PRIu16"\n", opts->biggest_page);
-  printf("opts->dataset_size   = %"PRIu64"\n", opts->dataset_size);
-  printf("opts->dataset_max    = %"PRIu64"\n", opts->dataset_max);
+  printf("opts->page_directory = %s\n",        opts.page_directory);
+  printf("opts->page_count     = %"PRIu32"\n", opts.page_count);
+  printf("opts->page_limit     = %"PRIu32"\n", opts.page_limit);
+  printf("opts->smallest_page  = %"PRIu16"\n", opts.smallest_page);
+  printf("opts->biggest_page   = %"PRIu16"\n", opts.biggest_page);
+  printf("opts->dataset_size   = %"PRIu64"\n", opts.dataset_size);
+  printf("opts->dataset_max    = %"PRIu64"\n", opts.dataset_max);
   /* Resource Control */
-  printf("opts->max_memory     = %"PRIu64"\n", opts->max_memory);
-  printf("opts->fixed_ratio    = %"PRIi8"\n", opts->fixed_ratio);
-  printf("opts->workers        = %"PRIu16"\n", opts->workers);
+  printf("opts->max_memory     = %"PRIu64"\n", opts.max_memory);
+  printf("opts->fixed_ratio    = %"PRIi8"\n",  opts.fixed_ratio);
+  printf("opts->workers        = %"PRIu16"\n", opts.workers);
   /* Test Management */
-  printf("opts->duration       = %"PRIu16"\n", opts->duration);
-  printf("opts->hit_ratio      = %"PRIi8"\n", opts->hit_ratio);
+  printf("opts->duration       = %"PRIu16"\n", opts.duration);
+  printf("opts->hit_ratio      = %"PRIi8"\n",  opts.hit_ratio);
 
   return;
 }

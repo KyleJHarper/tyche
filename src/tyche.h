@@ -8,12 +8,9 @@
 #ifndef SRC_TYCHE_H_
 #define SRC_TYCHE_H_
 
-/* Includes */
-#include <stdint.h>
-
 
 /* Prototypes, because reasons! */
 int main(int argc, char **argv);
-void create_listset(List **raw, Options *opts);
+void create_listset(List **raw);
 
 #endif /* SRC_TYCHE_H_ */

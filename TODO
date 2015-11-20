@@ -10,12 +10,11 @@
      i) [done] Update the show_help() function.
      j) [done] -t == Run test optarg.
 2. Buffer Mutexes & Conditions
-     a) Recalculate memory consumption remembering that largest data set == max memory we assign!
-     b) Even if memory savings are minimal, are we saving CPU time by not initializing a new set for each buffer?
-     c) If we need to go larger than uint16_t, we might as well use pointers; and this is probably a good idea.
-        Make sure to confirm that pointers are 4 bytes, not 8.  Otherwise use uint32_t.
-     d) Look at lock__acquire and lock__release; make static inline or simply put into buffer.c calls.
-     e) Update the comments if we're keeping lock.h/.c.
+     a) [done] Recalculate memory consumption remembering that largest data set == max memory we assign!
+     b) [done] Even if memory savings are minimal, are we saving CPU time by not initializing a new set for each buffer?
+     c) [done] If we need to go larger than uint16_t, we might as well use pointers; and this is probably a good idea.
+     d) [done] Look at lock__acquire and lock__release; make static inline or simply put into buffer.c calls.
+     e) [done] Update the comments if we're keeping lock.h/.c.
 3. Manager
      a) A new structure to manage the lists.  Functions for list review and adjustment.
      b) The primary function, manager__analyze(), is where ACCRS logic should do the real magic.
@@ -39,6 +38,7 @@
      a) Using const on all functions where appropriate.
      b) Figure out how to stop double-scanning with io__* to get the page count.
      c) Inline functions like lock__acquire/release (or simply remove them?)
+     d) Switch all uintXX_t types to typedefs so they can be changed more simply in the future; like lockid_t.
 7. Test Updates
      a) Modify all tests to accept and use the primary list set created by main().
      b) Update tests__elements test to be more... useful (and actually run).

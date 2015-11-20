@@ -2,6 +2,7 @@ Contains a simple note for each tagged release.  We will try to follow SEMVER.  
 
 0.0.5 (IN PROGRESS)
 TODO
+- Added a new option (-l) to control the buffer:mutex ratio to balance contention with memory sharing.
 - Added the ability to run internal tests by specifying the -t option.
 - Modified options to be a separate struct and much easier to share among functions in the program.
 
