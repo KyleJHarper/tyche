@@ -40,9 +40,9 @@ Latest Changelog Entries
 
 <sub>(rl == rotational latency)</sub>
 
-Sources: basic math and wikipedia.org articles.
+<sub>Sources: basic math and wikipedia.org articles.</sub>
 
-Note: Transfer time is from platter to sector buffer and doesn't account for interface transfer time (e.g.: SATA speed/latency).  This can become more significant as storage fabrics come into play; e.g.: iSCSI, Fiber Channel, and so forth.
+<sub>Note: Transfer time is from platter to sector buffer and doesn't account for interface transfer time (e.g.: SATA speed/latency).  This can become more significant as storage fabrics come into play; e.g.: iSCSI, Fiber Channel, and so forth.</sub>
 
 *The above table is far from a perfect analysis, but that's what tyche is all about: real world testing when it's done.  So far, our total compression/decompression time is competitive with the fastest SSD on a local bus.  When we compare decompression time for respone time we're drastically faster than even the fastest SSD.  For now, I'm satisfied that the theory is still plausible.*
 
@@ -64,10 +64,10 @@ Note: Transfer time is from platter to sector buffer and doesn't account for int
 |    4 | 25,000,000 |    21.25 | 1,176,664 |       294,166 | Minimal    |
 |   ^8 | 25,000,000 |    30.41 |   822,052 |       102,756 | Minimal    |
 
-^ The test platform was a VM.  8 vCPU started running into pCPU scheduling overhead and did more harm than good.  Even 4 vCPU was starting to show signs of inefficiency.
+<sub>^ The test platform was a VM.  8 vCPU started running into pCPU scheduling overhead and did more harm than good.  Even 4 vCPU was starting to show signs of inefficiency.</sub>
 
-(1) High contention means I purposely created a high worker-to-buffer pool size.  In other words I made thousands of worker threads and they could only select from 100 buffers.  Draining the list this low also resulted in huge (99%+) cache "misses".  This helped demonstrate ref count improvements over global locking.
+<sub>(1) High contention means I purposely created a high worker-to-buffer pool size.  In other words I made thousands of worker threads and they could only select from 100 buffers.  Draining the list this low also resulted in huge (99%+) cache "misses".  This helped demonstrate ref count improvements over global locking.</sub>
 
-(2) Minimal contention does the opposite of high.  Lots of buffers to choose from compared to workers, and hit rates closer to 95%+ successful.
+<sub>(2) Minimal contention does the opposite of high.  Lots of buffers to choose from compared to workers, and hit rates closer to 95%+ successful.</sub>
 
 *(Additional logs found in changelog)*
