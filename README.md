@@ -38,7 +38,7 @@ Latest Changelog Entries
 |           SSD 300 MB/s |     0.113 | 0.1 seek + 0.00 rl + 0.013 transfer |
 |           SSD 600 MB/s |     0.107 | 0.1 seek + 0.00 rl + 0.007 transfer |
 
-(rl == rotational latency)
+<sub>(rl == rotational latency)</sub>
 
 Sources: basic math and wikipedia.org articles.
 
