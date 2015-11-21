@@ -59,7 +59,7 @@ void io__build_pages_array(char *pages[]) {
     }
     // Even if we didn't add it above, we still need to free the memory and update to the next item.
     next = current->next;
-    free(current->filespec);
+    // We don't free(current->filespec) because we assigned the memory address to pages[] above.
     free(current);
     current = next;
     if (current == head)

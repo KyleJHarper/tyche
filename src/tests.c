@@ -20,6 +20,9 @@
 #include "error.h"
 
 
+/* We need to know what one billion is for clock timing. */
+#define BILLION 1000000000L
+
 extern const int E_OK;
 extern const int E_BAD_CLI;
 extern const int E_BUFFER_POOFED;
@@ -41,52 +44,98 @@ const int SLEEP_DELAY      =    123;
 extern Options opts;
 
 
-void tests__run_test(char *pages[]) {
+void tests__show_available() {
+  printf("Available Tests (case-sensitive)\n");
+  printf("                   all :  Run all tests.\n");
+  printf("           compression :  Test basic compression and buffer compression.\n");
+  printf("              elements :  Basic building of Buffer elements and adding/removing from a list.\n");
+  printf("                    io :  Read pages from disk and store information in Buffers.\n");
+  printf("          move_buffers :  Purposely puts lists into conditions that trigger sweeping/pushing/popping.\n");
+  printf("               options :  Shows the value of all options; great for debugging CLI issues.\n");
+  printf("synchronized_readwrite :  Extensive test proving asynchronous behavior is safe.\n");
+  printf("\n");
+  return;
+}
+
+
+void tests__run_test(List *raw_list, char *pages[]) {
+  /* Start Timer */
+  struct timespec start, end;
+  clock_gettime(CLOCK_MONOTONIC, &start);
+  int ran_test = 0;
+
+  /* If 'help' is sent, show options. */
+  if(strcmp(opts.test, "help") == 0) {
+    tests__show_available();
+    return;
+  }
+  /* ALL tests... */
+  if(strcmp(opts.test, "all") == 0) {
+    printf("RUNNING TEST: tests__compression\n");
+    tests__compression();
+    printf("RUNNING TEST: tests__elements\n");
+    tests__elements(raw_list);
+    printf("RUNNING TEST: tests__io\n");
+    tests__io(pages);
+    printf("RUNNING TEST: tests__move_buffers\n");
+    tests__move_buffers(raw_list, pages);
+    printf("RUNNING TEST: tests__options\n");
+    tests__options(opts);
+    printf("RUNNING TEST: tests__synchronized_readwrite\n");
+    tests__synchronized_readwrite(raw_list);
+    ran_test++;
+  }
+
   /* tests__compression */
   if(strcmp(opts.test, "compression") == 0) {
     printf("RUNNING TEST: tests__compression\n");
     tests__compression();
-    return;
+    ran_test++;
   }
   /* tests__elements */
   if(strcmp(opts.test, "elements") == 0) {
     printf("RUNNING TEST: tests__elements\n");
-    tests__elements();
-    return;
+    tests__elements(raw_list);
+    ran_test++;
   }
   /* tests__io */
   if(strcmp(opts.test, "io") == 0) {
     printf("RUNNING TEST: tests__io\n");
-    tests__io(opts.page_count, pages);
-    return;
+    tests__io(pages);
+    ran_test++;
   }
   /* tests__move_buffers */
   if(strcmp(opts.test, "move_buffers") == 0) {
     printf("RUNNING TEST: tests__move_buffers\n");
-    tests__move_buffers(opts.page_count, pages);
-    return;
+    tests__move_buffers(raw_list, pages);
+    ran_test++;
   }
   /* tests__options */
   if (strcmp(opts.test, "options") == 0) {
     printf("RUNNING TEST: tests__options\n");
     tests__options(opts);
-    return;
+    ran_test++;
   }
   /* tests__synchronized_readwrite */
   if(strcmp(opts.test, "synchronized_readwrite") == 0) {
     printf("RUNNING TEST: tests__synchronized_readwrite\n");
-    tests__synchronized_readwrite();
-    return;
+    tests__synchronized_readwrite(raw_list);
+    ran_test++;
   }
-  show_error(E_BAD_CLI, "You sent a test name (-t %s) for a test that doesn't exist: tests__%s.", opts.test, opts.test);
+
+  /* Stop Timer and Leave */
+  clock_gettime(CLOCK_MONOTONIC, &end);
+  int test_ms = (BILLION *(end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec) / 1000000;
+  printf("Test Time: %d ms\n", test_ms);
+  if (ran_test == 0) {
+    tests__show_available();
+    show_error(E_BAD_CLI, "You sent a test name (-t %s) for a test that doesn't exist: tests__%s.", opts.test, opts.test);
+  }
   return;
 }
 
 
-void tests__synchronized_readwrite() {
-  List *raw_list = list__initialize();
-  List *comp_list = list__initialize();
-  raw_list->offload_to = comp_list;
+void tests__synchronized_readwrite(List *raw_list) {
   raw_list->max_size = 100 * 1024 * 1024;
   Buffer *temp;
   char *sample_data = "some text, hooray for me";
@@ -116,13 +165,21 @@ void tests__synchronized_readwrite() {
   for (int i=0; i<CHAOS_MONKIES; i++)
     pthread_join(chaos_monkies[i], NULL);
 
+  int has_failures = 0;
   for (int i=0; i<raw_list->count; i++) {
-    if (raw_list->pool[i]->ref_count != 0)
+    if (raw_list->pool[i]->ref_count != 0) {
       printf("Buffer ID number %d has non-zero ref_count: %d\n", raw_list->pool[i]->id, raw_list->pool[i]->ref_count);
+      has_failures++;
+    }
   }
+  if (has_failures > 0)
+    show_error(E_GENERIC, "Test 'synchronized_readwrite' has failures :(\n");
 
   setlocale(LC_NUMERIC, "");
   printf("All done.  I used %d workers performing a combined %'d reads with %d chaos workers taking buffers from %d to %d\n", WORKER_COUNT, WORKER_COUNT * READS_PER_WORKER, CHAOS_MONKIES, LIST_COUNT, LIST_FLOOR);
+
+  printf("Test 'synchronized_readwrite': all passed\n");
+  return;
 }
 void tests__read(List *raw_list) {
   // Pick random buffers in the list and pin them for reading.  The only way to pick randomly from a list that shrinks is to search
@@ -172,35 +229,33 @@ void tests__chaos(List *raw_list) {
 }
 
 
-void tests__elements() {
-  List *raw_list = list__initialize();
-  List *comp_list = list__initialize();
+/* tests__elements
+ * Simply creates buffers and assigns them to the list.  Should update the counts and so forth.
+ */
+void tests__elements(List *raw_list) {
   Buffer *elem1 = buffer__initialize(1, NULL);  list__add(raw_list, elem1);
   Buffer *elem2 = buffer__initialize(2, NULL);  list__add(raw_list, elem2);
   Buffer *elem3 = buffer__initialize(3, NULL);  list__add(raw_list, elem3);
-  Buffer *rawr1 = buffer__initialize(10, NULL);  list__add(comp_list, rawr1);
-  Buffer *rawr2 = buffer__initialize(11, NULL);  list__add(comp_list, rawr2);
 
   printf("Number of raw  elements: %d\n", raw_list->count);
-  printf("Number of comp elements: %d\n", comp_list->count);
 
   list__remove(raw_list, elem1, elem1->id);
+  list__remove(raw_list, elem2, elem2->id);
   list__remove(raw_list, elem3, elem3->id);
-  list__remove(comp_list, rawr1, rawr1->id);
 
   printf("Number of raw  elements: %d\n", raw_list->count);
-  printf("Number of comp elements: %d\n", comp_list->count);
+  return;
 }
 
 
 /*
- * IO either works or doesn't.  You'll get an error on CLI if you mess up options or provide bad data.  This functino will simply
+ * IO either works or doesn't.  You'll get an error on CLI if you mess up options or provide bad data.  This function will simply
  * attempt to read a file into a buffer with buffer__initialize(valid_id, valid_path).  Requires a pointer to the pages array and
- * the PAGE_COUNT const.
+ * the page_count.
  */
-void tests__io(const uint32_t PAGE_COUNT, char *pages[]) {
+void tests__io(char *pages[]) {
   int id_to_get = 128;
-  while (id_to_get >= PAGE_COUNT && id_to_get != 0)
+  while (id_to_get >= opts.page_count && id_to_get != 0)
     id_to_get /= 2;
   if (id_to_get == 0) {
     printf("The tests__io function reached id_to_get value of 0... are you sure you pointed tyche to a directory with pages?");
@@ -209,9 +264,11 @@ void tests__io(const uint32_t PAGE_COUNT, char *pages[]) {
 
   // Looks like we have a valid ID to get.  Let's see if it actually works...
   Buffer *buf = buffer__initialize(id_to_get, pages[id_to_get - 1]);
-  printf("Found a buffer and loaded it.  ID is %d, data length is %d, and io_cost is %d.\n", buf->id, buf->data_length, buf->io_cost);
-  free(buf->data);
-  free(buf);
+  printf("Found a buffer and loaded it.  ID is %d, data length is %d, and io_cost is %"PRIu32".\n", buf->id, buf->data_length, buf->io_cost);
+  buffer__victimize(buf);
+  buffer__destroy(buf);
+
+  printf("Test 'io': All Passed\n");
   return;
 }
 
@@ -245,9 +302,11 @@ void tests__compression() {
     printf("src and new_src don't match from test 1.\n");
     exit(1);
   }
+  printf("Test 1: passed\n");
 
   /* Test 2:  the LZ4 compression function needs to return the size of the compressed data. */
   // This is automatically done by the function as noted by rv above.
+  printf("Test 2: passed\n");
 
   /* Test 3:  The compression and decompression functions should work on a buffer->data element. */
   Buffer *buf = buffer__initialize(205, NULL);
@@ -271,6 +330,7 @@ void tests__compression() {
     printf("src and new_src don't match from test 3.\n");
     exit(1);
   }
+  printf("Test 3: passed\n");
 
   /* Test 4:  Same as test 3, but we'll use buffer__compress and buffer__decompress.  Should get comp_time updated. */
   free(buf->data);
@@ -296,9 +356,10 @@ void tests__compression() {
     exit(1);
   }
   printf("Decompression gave an OK response.  comp_time is %d ns, comp_hits is %d, data_legnth is %d, and comp_length is %d bytes\n", buf->comp_cost, buf->comp_hits, buf->data_length, buf->comp_length);
+  printf("Test 4: passed\n");
 
   /* All Done */
-  printf("tests__compression() finished!\n");
+  printf("Test 'compression': all passed!\n");
 
   return;
 }
@@ -307,18 +368,14 @@ void tests__compression() {
 /*
  * Make sure that we can create a list, try to put too many buffers in it, and have it offload things as expected.
  */
-void tests__move_buffers(const uint32_t PAGE_COUNT, char *pages[]) {
-  List *raw_list = list__initialize();
-  List *comp_list = list__initialize();
-  raw_list->offload_to = comp_list;
+void tests__move_buffers(List *raw_list, char *pages[]) {
   raw_list->sweep_goal = 30;
   Buffer *buf;
   uint total_bytes = 0;
 
   // -- TEST 1:  Do sizes match up like they're supposed to when moving items into a list?
-  printf("\nTest 1:  Does the list size match the known size of data read from disk?\n");
   /* Figure out how much data we have in the pages[] elements' files. */
-  for (uint i = 0; i < PAGE_COUNT; i++) {
+  for (uint i = 0; i < opts.page_count; i++) {
     buf = buffer__initialize(i, pages[i]);
     total_bytes += buf->data_length + BUFFER_OVERHEAD;
     buffer__victimize(buf);
@@ -326,7 +383,7 @@ void tests__move_buffers(const uint32_t PAGE_COUNT, char *pages[]) {
   }
   /* Now add them all to the list and see if the list size matches.  Give padding, because we want to avoid offloading for now. */
   raw_list->max_size = total_bytes + (1024 * 1024);
-  for (uint i = 0; i < PAGE_COUNT; i++) {
+  for (uint i = 0; i < opts.page_count; i++) {
     buf = buffer__initialize(i, pages[i]);
     list__add(raw_list, buf);
   }
@@ -335,60 +392,60 @@ void tests__move_buffers(const uint32_t PAGE_COUNT, char *pages[]) {
   printf("Total bytes measured in buffers matches the list size, success!\n");
   while(raw_list->count > 0)
     list__remove(raw_list, raw_list->pool[0], raw_list->pool[0]->id);
-  while(comp_list->count > 0)
-    list__remove(comp_list, comp_list->pool[0], comp_list->pool[0]->id);
+  while(raw_list->offload_to->count > 0)
+    list__remove(raw_list->offload_to, raw_list->offload_to->pool[0], raw_list->offload_to->pool[0]->id);
+  printf("Test 1 Passed:  Does the list size match the known size of data read from disk?\n\n");
 
   // -- TEST 2:  Can we offload from raw to a compressed list?
-  printf("\nTest 2:  Will items overflow from the raw list to the compressed one as needed?\n");
   /* Alright, let's purposely set the list to a value smaller than we know we need and ensure offloading happens. */
   raw_list->max_size = total_bytes >> 1;
-  comp_list->max_size = total_bytes;
-  for (uint i = 0; i < PAGE_COUNT; i++) {
+  raw_list->offload_to->max_size = total_bytes;
+  for (uint i = 0; i < opts.page_count; i++) {
     buf = buffer__initialize(i, pages[i]);
     buf->popularity = MAX_POPULARITY/(i+1);
     list__add(raw_list, buf);
     printf("Added a buffer with id %d requiring %d bytes, list size is now %"PRIu64"\n", i, buf->data_length, raw_list->current_size);
   }
-  printf("All done.  Raw list has %d buffers using %"PRIu64" bytes.  Comp list has %d buffers using %"PRIu64" bytes.\n", raw_list->count, raw_list->current_size, comp_list->count, comp_list->current_size);
+  printf("All done.  Raw list has %d buffers using %"PRIu64" bytes.  Comp list has %d buffers using %"PRIu64" bytes.\n", raw_list->count, raw_list->current_size, raw_list->offload_to->count, raw_list->offload_to->current_size);
   while(raw_list->count > 0)
     list__remove(raw_list, raw_list->pool[0], raw_list->pool[0]->id);
-  while(comp_list->count > 0)
-    list__remove(comp_list, comp_list->pool[0], comp_list->pool[0]->id);
+  while(raw_list->offload_to->count > 0)
+    list__remove(raw_list->offload_to, raw_list->offload_to->pool[0], raw_list->offload_to->pool[0]->id);
+  printf("Test 2 Passed:  Will items overflow from the raw list to the compressed one as needed?\n\n");
 
   // -- TEST 3:  Will offloading properly pop the compressed buffer?
-  printf("\nTest 3:  Will the compressed list pop buffers when out of room?\n");
   /* Now let's do the same test again, but shrink the comp_list to ensure data has to be popped off the end. */
   raw_list->max_size = total_bytes >> 1;
-  comp_list->max_size = total_bytes >> 3;
-  for (uint i = 0; i < PAGE_COUNT; i++) {
+  raw_list->offload_to->max_size = total_bytes >> 3;
+  for (uint i = 0; i < opts.page_count; i++) {
     buf = buffer__initialize(i, pages[i]);
     buf->popularity = MAX_POPULARITY/(i+1);
     list__add(raw_list, buf);
     printf("Added a buffer with id %d requiring %d bytes, list size is now %"PRIu64"\n", i, buf->data_length, raw_list->current_size);
   }
-  printf("All done.  Raw list has %d buffers using %"PRIu64" bytes.  Comp list has %d buffers using %"PRIu64" bytes.\n", raw_list->count, raw_list->current_size, comp_list->count, comp_list->current_size);
+  printf("All done.  Raw list has %d buffers using %"PRIu64" bytes.  Comp list has %d buffers using %"PRIu64" bytes.\n", raw_list->count, raw_list->current_size, raw_list->offload_to->count, raw_list->offload_to->current_size);
   while(raw_list->count > 0)
     list__remove(raw_list, raw_list->pool[0], raw_list->pool[0]->id);
-  while(comp_list->count > 0)
-    list__remove(comp_list, comp_list->pool[0], comp_list->pool[0]->id);
+  while(raw_list->offload_to->count > 0)
+    list__remove(raw_list->offload_to, raw_list->offload_to->pool[0], raw_list->offload_to->pool[0]->id);
+  printf("Test 3 Passed:  Will the compressed list pop buffers when out of room?\n\n");
 
   // -- TEST 4:  Can we move items back to the raw list after they've been compressed?
-  printf("\nTest 4:  Can we restore items from the offload list when searching finds them there?\n");
   raw_list->max_size = total_bytes >> 1;
-  comp_list->max_size = total_bytes >> 3;
-  for (uint i = 0; i < PAGE_COUNT; i++) {
+  raw_list->offload_to->max_size = total_bytes >> 3;
+  for (uint i = 0; i < opts.page_count; i++) {
     buf = buffer__initialize(i, pages[i]);
     buf->popularity = MAX_POPULARITY/(i+1);
     list__add(raw_list, buf);
     printf("Added a buffer with id %d requiring %d bytes, list size is now %"PRIu64"\n", i, buf->data_length, raw_list->current_size);
   }
   /* Pick a random buffer from the offload list and do a search for it.  The result should be it getting moved to the raw list. */
-  if (comp_list->count == 0)
+  if (raw_list->offload_to->count == 0)
     show_error(E_GENERIC, "The comp_list doesn't have anything in the pool.  Can't do this test.");
   Buffer *test4_buf;
-  bufferid_t test4_sample_id = comp_list->pool[comp_list->count - 1]->id;
+  bufferid_t test4_sample_id = raw_list->offload_to->pool[raw_list->offload_to->count - 1]->id;
   printf("About to start searching for a buffer which should be found in comp list.\n");
-  if (list__search(raw_list, &test4_buf, comp_list->pool[comp_list->count - 1]->id) != E_OK)
+  if (list__search(raw_list, &test4_buf, raw_list->offload_to->pool[raw_list->offload_to->count - 1]->id) != E_OK)
     show_error(E_GENERIC, "list__search says it failed to find our buffer.  Boo.");
   printf("The list search buffer returned gave id of %d, the id we wanted was %d.\n", test4_buf->id, test4_sample_id);
   int found_in_raw = 0;
@@ -399,8 +456,9 @@ void tests__move_buffers(const uint32_t PAGE_COUNT, char *pages[]) {
     show_error(E_GENERIC, "The id we searched for didn't show up in the raw list... this means we failed to restore it.");
   if (found_in_raw > 1)
     show_error(E_GENERIC, "The found_in_raw variable is higher than 1, this is bad.\n");
-  printf("We successfully moved a buffer to the raw list on-demand.\n");
+  printf("Test 4 Passed:  Can we restore items from the offload list when searching finds them there?\n\n");
 
+  printf("Test 'move_buffers': all passed\n");
   return;
 }
 

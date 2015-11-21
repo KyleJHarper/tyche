@@ -35,7 +35,6 @@
 Options opts;
 
 
-
 /* main
  * Initial logic to start tyche.
  */
@@ -59,8 +58,8 @@ int main(int argc, char **argv) {
 
   /* If a test was specified, run it instead of tyche and then leave. */
   if (opts.test != NULL) {
-    tests__run_test(pages);
-    show_error(E_GENERIC, "A test (-t %s) was specified.  It should have ran by now.  Quitting non-zero for safety.", opts.test);
+    tests__run_test(raw_list, pages);
+    show_error(E_GENERIC, "A test (-t %s) was specified so we ran it.  All done.  quitting non-zero for safety.", opts.test);
   }
 
   printf("Tyche finished, shutting down.\n");

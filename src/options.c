@@ -114,7 +114,7 @@ void options__process(int argc, char **argv) {
         break;
       case '?':
         options__show_help();
-        if (optopt == 'b' || optopt == 'd' || optopt == 'f' || optopt == 'l' || optopt == 'm' || optopt == 'n' || optopt == 'p' || optopt == 'r' || optopt == 'w')
+        if (optopt == 'b' || optopt == 'd' || optopt == 'f' || optopt == 'l' || optopt == 'm' || optopt == 'n' || optopt == 'p' || optopt == 'r' || optopt == 't' || optopt == 'w')
           fprintf(stderr, "Option -%c requires an argument.\n", optopt);
         else if (isprint (optopt))
           fprintf(stderr, "Unknown option `-%c'.\n", optopt);

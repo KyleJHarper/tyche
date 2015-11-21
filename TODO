@@ -40,9 +40,17 @@
      c) Inline functions like lock__acquire/release (or simply remove them?)
      d) Switch all uintXX_t types to typedefs so they can be changed more simply in the future; like lockid_t.
 7. Test Updates
-     a) Modify all tests to accept and use the primary list set created by main().
-     b) Update tests__elements test to be more... useful (and actually run).
-     c) Update tests__io to actually work.
-     d) Update tests__move_buffers to actually work.
-     e) Add a timing component to all tests.
-     f) Make -t 'help' and the default clause show the available test options.
+     a) [done] Modify all tests to accept and use the primary list set created by main().
+     b) [done] Update tests__elements test to be more... useful (and actually run).
+     c) [done] Update tests__io to actually work.
+     d) [done] Update tests__move_buffers to actually work.
+     e) [done] Add a timing component to all tests.
+     f) [done] Make -t 'help' and the default clause show the available test options.
+     g) [done] Add a -t 'all' option.
+8. Buffer Victimization Handling
+     a) When a buffer is victimized, are we sure that the list  writelock is protecting others from finding it?
+     b) list__search() should return NOT OK when a buffer is found, but victimized.
+     c) list__add() needs to scan the offload_to list or in some way respect it exists :\
+     d) list__add() should block or something if buffer exists but is victimized.
+     e) list__remove() shouldn't be taking a buffer; only an ID to find.
+     f) The locking updates above should result in tests__synchronized_readwrite() working.

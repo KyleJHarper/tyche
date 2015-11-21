@@ -91,13 +91,16 @@ Buffer* buffer__initialize(bufferid_t id, char *page_filespec) {
 
 /* buffer__destroy
  * A concise function to completely free up the memory used by a buffer.
- * Caller MUST have victimized the buffer before this is allowed!
+ * Caller MUST have victimized the buffer before this is allowed!  This means the buffer's lock will LOCKED!
  */
 int buffer__destroy(Buffer *buf) {
   if (buf == NULL)
     return E_OK;
   if (buf->victimized == 0)
-    show_error(E_GENERIC, "The buffer_destroy() function was called with a non-victimized buffer.  This isn't allowed.");
+    show_error(E_GENERIC, "The buffer__destroy() function was called with a non-victimized buffer.  This isn't allowed.");
+
+  /* Save the lock ID so we can unlock it when we're done destroying this buffer. */
+  lockid_t lock_id = buf->lock_id;
 
   /* Free the members which are pointers to other data locations. */
   free(buf->data);
@@ -106,6 +109,8 @@ int buffer__destroy(Buffer *buf) {
   free(buf);
   // Setting buf to NULL here is useless because it's not a double pointer, on purpose.  Caller needs to NULL their own pointers.
 
+  /* Unlock the element with lock_id now that the buffer is gone, in case others use this ID. */
+  lock__release(lock_id);
   return E_OK;
 }
 

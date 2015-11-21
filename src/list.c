@@ -232,9 +232,7 @@ int list__remove(List *list, Buffer *buf, bufferid_t id) {
     if (list->pool[mid]->id == id) {
       if (buffer__victimize(buf) != 0)
         show_error(rv, "The list__remove function received an error when trying to victimize the buffer (%d).\n", rv);
-      lockid_t lock_id = buf->lock_id;
       buffer__destroy(list->pool[mid]);
-      lock__release(lock_id);
       for (int i=mid; i<list->count - 1; i++)
         list->pool[i] = list->pool[i+1];
       list->pool[list->count - 1] = NULL;
