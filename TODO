@@ -1,32 +1,15 @@
-1. Options
-     a) [done] Consider a config file or long options if too many options become an issue.
-     b) [done] Build a struct or something to hold the options and possibly link to it from the raw list?
-     c) [done] -f == Fixed memory sizes.  No adaptive logic.  raw/comp lists won't be engine__balanced()'d
-     d) [done] -w == Workers to use, defaults to number of CPUs
-     e) [done] -d == Time to spend running the test, in seconds. (-d == duration)
-     f) [done] -r == Hit ratio (minimum) to aim for.  (Only use known buffers when ratio too low)
-     g) [done] -b == Bytes to limit data set to.  (Can point to large dir and stop at X bytes)
-     h) [done] -n == Number of pages to limit tyche to scan for.
-     i) [done] Update the show_help() function.
-     j) [done] -t == Run test optarg.
-2. Buffer Mutexes & Conditions
-     a) [done] Recalculate memory consumption remembering that largest data set == max memory we assign!
-     b) [done] Even if memory savings are minimal, are we saving CPU time by not initializing a new set for each buffer?
-     c) [done] If we need to go larger than uint16_t, we might as well use pointers; and this is probably a good idea.
-     d) [done] Look at lock__acquire and lock__release; make static inline or simply put into buffer.c calls.
-     e) [done] Update the comments if we're keeping lock.h/.c.
-3. Manager
+1. Manager
      a) A new structure to manage the lists.  Functions for list review and adjustment.
      b) The primary function, manager__analyze(), is where ACCRS logic should do the real magic.
      c) Manager should be disabled when -F is specified.
      d) Manager should log output of decisions and supporting data.
      e) Research options to accommodate aging and if it's even necessary (newer buffers == more likely to reuse?)
      f) Ensure that a scan protection element exists.
-4. Reporting
+2. Reporting
      a) Totals: buffers read, per second, peak?, etc
      b) Buffer hits, misses/faults, and hit ratio.
      c) Data set information: files found, average size, max size, minimum size, etc.
-5. FAQ
+3. FAQ
      a) Why no size_t?  (Because I want to ensure minium sizes in almost all cases)
      b) Why so much uint/uintX_t?  Because I usually need to accommodate the given size and negative numbers don't exist.
      c) Why no <bla> optimization?  Probably because I'm new to C and didn't know about it.
@@ -34,20 +17,12 @@
      e) Why C?  To *hopefully* avoid bias in higher level langages; though they might have optimizations.
      f) Why lz4?  Partly it's compression speed+efficiency, but mostly it's decompression speed.
      g) Locker?  In theory, it reduces memory use by using shared locks among a small number of buffers.  Configurable.
-6. Optimizations
+4. Optimizations
      a) Using const on all functions where appropriate.
      b) Figure out how to stop double-scanning with io__* to get the page count.
      c) Inline functions like lock__acquire/release (or simply remove them?)
      d) Switch all uintXX_t types to typedefs so they can be changed more simply in the future; like lockid_t.
-7. Test Updates
-     a) [done] Modify all tests to accept and use the primary list set created by main().
-     b) [done] Update tests__elements test to be more... useful (and actually run).
-     c) [done] Update tests__io to actually work.
-     d) [done] Update tests__move_buffers to actually work.
-     e) [done] Add a timing component to all tests.
-     f) [done] Make -t 'help' and the default clause show the available test options.
-     g) [done] Add a -t 'all' option.
-8. Buffer Victimization Handling
+5. Buffer Victimization Handling
      a) When a buffer is victimized, are we sure that the list  writelock is protecting others from finding it?
      b) list__search() should return NOT OK when a buffer is found, but victimized.
      c) list__add() needs to scan the offload_to list or in some way respect it exists :\
