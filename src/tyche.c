@@ -83,6 +83,11 @@ void create_listset(List **raw_list) {
   (*raw_list)->offload_to = comp_list;
   comp_list->restore_to = *raw_list;
 
+  /* Synchronize mutexes and conditions to avoid t1 getting the 'raw' lock and t2 getting the 'compressed' lock and deadlocking. */
+  comp_list->lock             = (*raw_list)->lock;
+  comp_list->reader_condition = (*raw_list)->reader_condition;
+  comp_list->writer_condition = (*raw_list)->writer_condition;
+
   /* Set the memory sizes for both lists. */
   (*raw_list)->max_size = opts.max_memory * (opts.fixed_ratio > 0 ? opts.fixed_ratio : INITIAL_RAW_RATIO) / 100;
   comp_list->max_size = opts.max_memory - (*raw_list)->max_size;

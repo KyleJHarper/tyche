@@ -62,9 +62,9 @@ void lock__initialize() {
  */
 void lock__assign_next_id(lockid_t *referring_id_ptr) {
   pthread_mutex_lock(&next_id_mutex);
+  next_id++;
   if (next_id == opts.max_locks)
     next_id = 0;
-  next_id++;
   *referring_id_ptr = next_id;
   pthread_mutex_unlock(&next_id_mutex);
 }

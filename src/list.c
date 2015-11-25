@@ -39,6 +39,7 @@
 extern const int E_OK;
 extern const int E_GENERIC;
 extern const int E_BUFFER_NOT_FOUND;
+extern const int E_BUFFER_IS_VICTIMIZED;
 extern const int E_BUFFER_ALREADY_EXISTS;
 
 /* We need some information from the buffer header */
@@ -163,6 +164,11 @@ int list__add(List *list, Buffer *buf) {
       show_error(E_GENERIC, "The list__sweep() function was couldn't free enough bytes to store the buffer.  Bytes reclaimed: %d, needed, %d.", BYTES_FREED, BUFFER_SIZE);
   }
 
+  /* Under extreme conditions a race can exist.  So scan offload_to again while we have the lock. */
+//  if (list->offload_to != NULL) {
+//    list__search()
+//  }
+
   /* We now own the lock and no one should be scanning the list.  We have bytes free to hold it.  We can safely scan and edit. */
   int rv = E_OK, low = 0, high = list->count, mid = 0;
   for(;;) {
@@ -213,12 +219,11 @@ int list__add(List *list, Buffer *buf) {
  * unlocking its reference to the buffer; this way we can rely on finding the ID even if the buffer is removed by another thread.
  * Note: this function is not responsible for managing list sizes or HCRS logic.  It just removes buffers.
  */
-int list__remove(List *list, Buffer *buf, bufferid_t id) {
+int list__remove(List *list, bufferid_t id) {
   /* Get a write lock, which guarantees flushing all readers first. */
   list__acquire_write_lock(list);
 
   /* We now have the list locked and can begin searching for the index of id. */
-  const uint BUFFER_SIZE = BUFFER_OVERHEAD + (buf->comp_length == 0 ? buf->data_length : buf->comp_length);
   int low = 0, high = list->count, mid = 0, rv = E_OK;
   for(;;) {
     // Reset mid and begin testing.  Start with boundary testing to break if we're done.
@@ -230,7 +235,8 @@ int list__remove(List *list, Buffer *buf, bufferid_t id) {
 
     // If the pool[mid] ID matches, we found the right index which means buf is a valid pointer.  Victimize the buffer, collapse array downward, & update the list.
     if (list->pool[mid]->id == id) {
-      if (buffer__victimize(buf) != 0)
+      const uint BUFFER_SIZE = BUFFER_OVERHEAD + (list->pool[mid]->comp_length == 0 ? list->pool[mid]->data_length : list->pool[mid]->comp_length);
+      if (buffer__victimize(list->pool[mid]) != 0)
         show_error(rv, "The list__remove function received an error when trying to victimize the buffer (%d).\n", rv);
       buffer__destroy(list->pool[mid]);
       for (int i=mid; i<list->count - 1; i++)
@@ -280,11 +286,15 @@ int list__search(List *list, Buffer **buf, bufferid_t id) {
 
     // If the pool[mid] ID matches, we found the right index.  Hooray!  Update ref count if possible.  If not, let caller know.
     if (list->pool[mid]->id == id) {
-      rv = E_OK;
-      *buf = list->pool[mid];
-      if (buffer__lock(*buf) == E_OK)
+      rv = buffer__lock(list->pool[mid]);
+      if (rv == E_OK) {
+        // We got a good buffer, update the ref and assign it to our pointer argument.
+        *buf = list->pool[mid];
         buffer__update_ref(*buf, 1);
-      buffer__unlock(*buf);
+      }
+      // If E_OK or victimized we still need to unlock it.
+      if (rv == E_OK || rv == E_BUFFER_IS_VICTIMIZED)
+        buffer__unlock(list->pool[mid]);
       break;
     }
 
@@ -400,7 +410,7 @@ uint list__sweep(List *list) {
     rv = list__add(temp_list, buf);
     if (rv != E_OK)
       show_error(rv, "Failed to send buf to the temp_list while sweeping.  Not sure how.  Return code is %d.", rv);
-    rv = list__remove(list, list->pool[list->clock_hand_index], list->pool[list->clock_hand_index]->id);
+    rv = list__remove(list, list->pool[list->clock_hand_index]->id);
     if (rv != E_OK)
       show_error(rv, "Failed to remove the selected victim while sweeping.  Not sure how.  Return code is %d", rv);
     bytes_freed += buf->data_length - buf->comp_length;
@@ -436,6 +446,9 @@ int list__push(List *list, Buffer *buf) {
   // Buffers being recently pushed are popular with regard to other items in a compressed list.  This helps emulate FIFO.
   buf->popularity = MAX_POPULARITY;
 
+  // Reset the buf's victimized so that list__search will work as intended on a compressed list.
+  buf->victimized = 0;
+
   // That's really all for now.  The list__add() function will handle list size tracking and so forth.
   list__add(list, buf);
   list__release_write_lock(list);
@@ -470,7 +483,7 @@ int list__pop(List *list, uint64_t bytes_needed) {
     // Remove buffers from the generation with popularity of lowest_popularity until we have enough space.
     for (uint32_t i = 0; i < list->count; i++) {
       if (list->pool[i]->popularity == lowest_popularity) {
-        list__remove(list, list->pool[i], list->pool[i]->id);
+        list__remove(list, list->pool[i]->id);
         if (bytes_needed <= (list->max_size - list->current_size))
           break;
         i--;
@@ -508,7 +521,7 @@ int list__restore(List *list, Buffer **buf) {
 
   // Add the decompressed copy to the list source list and remove the compressed buffer from the offload list.
   list__add(list, new_buf);
-  list__remove(list->offload_to, *buf, (*buf)->id);
+  list__remove(list->offload_to, (*buf)->id);
 
   // Assign the source pointer to our local copy's address and leave.
   *buf = new_buf;

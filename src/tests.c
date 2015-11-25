@@ -37,7 +37,7 @@ const int LIST_COUNT       =   1000;
 const int WORKER_COUNT     =   5000;
 const int CHAOS_MONKIES    =     10;
 const int READS_PER_WORKER =   5000;
-const int LIST_FLOOR       =    975;
+const int LIST_FLOOR       =    850;
 const int SLEEP_DELAY      =    123;
 
 /* Make the options stuct shared. */
@@ -139,6 +139,9 @@ void tests__synchronized_readwrite(List *raw_list) {
   raw_list->max_size = 100 * 1024 * 1024;
   Buffer *temp;
   char *sample_data = "some text, hooray for me";
+  // Change the lock count so it's more reasonable.
+  opts.max_locks = LIST_COUNT / 2;
+  lock__initialize();
 
   // Create LIST_COUNT buffers with some data in them.
   for (bufferid_t i=1; i<=LIST_COUNT; i++) {
@@ -168,15 +171,17 @@ void tests__synchronized_readwrite(List *raw_list) {
   int has_failures = 0;
   for (int i=0; i<raw_list->count; i++) {
     if (raw_list->pool[i]->ref_count != 0) {
-      printf("Buffer ID number %d has non-zero ref_count: %d\n", raw_list->pool[i]->id, raw_list->pool[i]->ref_count);
+      printf("Buffer ID number %d has non-zero ref_count: %d  (lock_id %d)\n", raw_list->pool[i]->id, raw_list->pool[i]->ref_count, raw_list->pool[i]->lock_id);
       has_failures++;
     }
   }
   if (has_failures > 0)
     show_error(E_GENERIC, "Test 'synchronized_readwrite' has failures :(\n");
+  if (raw_list->count > LIST_FLOOR || raw_list->count < (LIST_FLOOR - CHAOS_MONKIES))
+    show_error(E_GENERIC, "Test 'synchronized_readwrite' didn't reduce the list count (%d) to LIST_FLOOR (%d) as expected.", raw_list->count, LIST_FLOOR);
 
   setlocale(LC_NUMERIC, "");
-  printf("All done.  I used %d workers performing a combined %'d reads with %d chaos workers taking buffers from %d to %d\n", WORKER_COUNT, WORKER_COUNT * READS_PER_WORKER, CHAOS_MONKIES, LIST_COUNT, LIST_FLOOR);
+  printf("All done.  I used %d workers performing a combined %'d reads with %d chaos workers taking buffers from %d to %d (true final count is %d, due to known race condition with chaos workers)\n", WORKER_COUNT, WORKER_COUNT * READS_PER_WORKER, CHAOS_MONKIES, LIST_COUNT, LIST_FLOOR, raw_list->count);
 
   printf("Test 'synchronized_readwrite': all passed\n");
   return;
@@ -192,7 +197,7 @@ void tests__read(List *raw_list) {
     for(;;) {
       id_to_get = rand() % LIST_COUNT;
       rv = list__search(raw_list, &selected, id_to_get);
-      if (rv == 0)
+      if (rv == E_OK)
         break;
       if (rv == E_BUFFER_NOT_FOUND || rv == E_BUFFER_POOFED || E_BUFFER_IS_VICTIMIZED)
         continue;
@@ -212,8 +217,9 @@ void tests__chaos(List *raw_list) {
   Buffer *temp = NULL;
   int rv = 0;
   bufferid_t id_to_remove = 0;
-  // This predicate will be unsafe (non-atomic) but that's ok for this testing.
-  while(raw_list->count > LIST_FLOOR) {
+  uint32_t list_size = 0;
+  // Loop through and remove stuff until we reach LIST_FLOOR.  This predicate cannot be (reasonably) made safe.
+  while(raw_list->count >= LIST_FLOOR) {
     id_to_remove = rand() % LIST_COUNT;
     rv = list__search(raw_list, &temp, id_to_remove);
     if (rv == E_BUFFER_NOT_FOUND)
@@ -222,7 +228,7 @@ void tests__chaos(List *raw_list) {
     buffer__lock(temp);
     buffer__update_ref(temp, -1);
     buffer__unlock(temp);
-    rv = list__remove(raw_list, temp, id_to_remove);
+    rv = list__remove(raw_list, id_to_remove);
     usleep(SLEEP_DELAY);
   }
   pthread_exit(0);
@@ -239,9 +245,9 @@ void tests__elements(List *raw_list) {
 
   printf("Number of raw  elements: %d\n", raw_list->count);
 
-  list__remove(raw_list, elem1, elem1->id);
-  list__remove(raw_list, elem2, elem2->id);
-  list__remove(raw_list, elem3, elem3->id);
+  list__remove(raw_list, elem1->id);
+  list__remove(raw_list, elem2->id);
+  list__remove(raw_list, elem3->id);
 
   printf("Number of raw  elements: %d\n", raw_list->count);
   return;
@@ -391,9 +397,9 @@ void tests__move_buffers(List *raw_list, char *pages[]) {
     show_error(E_GENERIC, "Calculated a total size of %d, and raw_list->current_size is %"PRIu64"\n", total_bytes, raw_list->current_size);
   printf("Total bytes measured in buffers matches the list size, success!\n");
   while(raw_list->count > 0)
-    list__remove(raw_list, raw_list->pool[0], raw_list->pool[0]->id);
+    list__remove(raw_list, raw_list->pool[0]->id);
   while(raw_list->offload_to->count > 0)
-    list__remove(raw_list->offload_to, raw_list->offload_to->pool[0], raw_list->offload_to->pool[0]->id);
+    list__remove(raw_list->offload_to, raw_list->offload_to->pool[0]->id);
   printf("Test 1 Passed:  Does the list size match the known size of data read from disk?\n\n");
 
   // -- TEST 2:  Can we offload from raw to a compressed list?
@@ -408,9 +414,9 @@ void tests__move_buffers(List *raw_list, char *pages[]) {
   }
   printf("All done.  Raw list has %d buffers using %"PRIu64" bytes.  Comp list has %d buffers using %"PRIu64" bytes.\n", raw_list->count, raw_list->current_size, raw_list->offload_to->count, raw_list->offload_to->current_size);
   while(raw_list->count > 0)
-    list__remove(raw_list, raw_list->pool[0], raw_list->pool[0]->id);
+    list__remove(raw_list, raw_list->pool[0]->id);
   while(raw_list->offload_to->count > 0)
-    list__remove(raw_list->offload_to, raw_list->offload_to->pool[0], raw_list->offload_to->pool[0]->id);
+    list__remove(raw_list->offload_to, raw_list->offload_to->pool[0]->id);
   printf("Test 2 Passed:  Will items overflow from the raw list to the compressed one as needed?\n\n");
 
   // -- TEST 3:  Will offloading properly pop the compressed buffer?
@@ -425,9 +431,9 @@ void tests__move_buffers(List *raw_list, char *pages[]) {
   }
   printf("All done.  Raw list has %d buffers using %"PRIu64" bytes.  Comp list has %d buffers using %"PRIu64" bytes.\n", raw_list->count, raw_list->current_size, raw_list->offload_to->count, raw_list->offload_to->current_size);
   while(raw_list->count > 0)
-    list__remove(raw_list, raw_list->pool[0], raw_list->pool[0]->id);
+    list__remove(raw_list, raw_list->pool[0]->id);
   while(raw_list->offload_to->count > 0)
-    list__remove(raw_list->offload_to, raw_list->offload_to->pool[0], raw_list->offload_to->pool[0]->id);
+    list__remove(raw_list->offload_to, raw_list->offload_to->pool[0]->id);
   printf("Test 3 Passed:  Will the compressed list pop buffers when out of room?\n\n");
 
   // -- TEST 4:  Can we move items back to the raw list after they've been compressed?

@@ -154,7 +154,7 @@ int buffer__update_ref(Buffer *buf, int delta) {
     pthread_cond_broadcast(&(locker_pool + buf->lock_id)->condition);
 
   // If we're incrementing we need to update popularity too.
-  if (delta > 0 && buf->popularity <= MAX_POPULARITY)
+  if (delta > 0 && buf->popularity < MAX_POPULARITY)
     buf->popularity++;
 
   return E_OK;

@@ -69,7 +69,7 @@ struct list {
 /* Function prototypes.  Not required, but whatever. */
 List* list__initialize();
 int list__add(List *list, Buffer *buf);
-int list__remove(List *list, Buffer *buf, bufferid_t id);
+int list__remove(List *list, bufferid_t id);
 int list__update_ref(List *list, int delta);
 int list__search(List *list, Buffer **buf, bufferid_t id);
 int list__acquire_write_lock(List *list);
