@@ -22,6 +22,7 @@
 
 /* We need to know what one billion is for clock timing. */
 #define BILLION 1000000000L
+#define MILLION    1000000L
 
 extern const int E_OK;
 extern const int E_BAD_CLI;
@@ -31,14 +32,6 @@ extern const int E_BUFFER_IS_VICTIMIZED;
 extern const int E_GENERIC;
 
 extern const int BUFFER_OVERHEAD;
-
-// A global for testing cuz I'm bad
-const int LIST_COUNT       =   1000;
-const int WORKER_COUNT     =   5000;
-const int CHAOS_MONKIES    =     10;
-const int READS_PER_WORKER =   5000;
-const int LIST_FLOOR       =    850;
-const int SLEEP_DELAY      =    123;
 
 /* Make the options stuct shared. */
 extern Options opts;
@@ -125,7 +118,7 @@ void tests__run_test(List *raw_list, char *pages[]) {
 
   /* Stop Timer and Leave */
   clock_gettime(CLOCK_MONOTONIC, &end);
-  int test_ms = (BILLION *(end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec) / 1000000;
+  int test_ms = (BILLION *(end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec) / MILLION;
   printf("Test Time: %d ms\n", test_ms);
   if (ran_test == 0) {
     tests__show_available();
@@ -136,15 +129,44 @@ void tests__run_test(List *raw_list, char *pages[]) {
 
 
 void tests__synchronized_readwrite(List *raw_list) {
+  // Set up the default options for the readwrite test.
+  ReadWriteOpts rwopts;
+  rwopts.raw_list = raw_list;
+  rwopts.chaos_monkeys    =   10;
+  rwopts.list_count       = 1000;
+  rwopts.list_floor       =  500;
+  rwopts.reads_per_worker = 5000;
+  rwopts.sleep_delay      =  123;
+  rwopts.worker_count     = 5000;
+  // This test can use extended test options (-X).  Read them here, if provided.
+  if(opts.extended_test_options != NULL && strcmp(opts.extended_test_options, "") != 0) {
+    printf("Extended options were found; updating test values with options specified: %s\n", opts.extended_test_options);
+    char *token = NULL;
+    token = strtok(opts.extended_test_options, ","); if(token != NULL) rwopts.chaos_monkeys    = atoi(token);
+    token = strtok(NULL, ",");                       if(token != NULL) rwopts.list_count       = atoi(token);
+    token = strtok(NULL, ",");                       if(token != NULL) rwopts.list_floor       = atoi(token);
+    token = strtok(NULL, ",");                       if(token != NULL) rwopts.reads_per_worker = atoi(token);
+    token = strtok(NULL, ",");                       if(token != NULL) rwopts.sleep_delay      = atoi(token);
+    token = strtok(NULL, ",");                       if(token != NULL) rwopts.worker_count     = atoi(token);
+    if (rwopts.chaos_monkeys    == 0 || rwopts.list_count  == 0 || rwopts.list_floor   == 0 ||
+        rwopts.reads_per_worker == 0 || rwopts.sleep_delay == 0 || rwopts.worker_count == 0)
+      show_error(E_GENERIC, "One or more of the extended options passed in ended up 0, this means you sent a 0 or bad input:\n"
+                            "Chaos Monkeys: %d\nList Count: %d\nList Floor: %d\nReads Per Worker: %d\nSleep Delay: %d\nWorker Count: %d",
+                            rwopts.chaos_monkeys, rwopts.list_count, rwopts.list_floor, rwopts.reads_per_worker, rwopts.sleep_delay, rwopts.worker_count);
+    if(rwopts.list_floor < rwopts.chaos_monkeys)
+      show_error(E_GENERIC, "The list floor (%d) cannot be lower than chaos monkeys (%d) because of race conditions.", rwopts.list_floor, rwopts.chaos_monkeys);
+    if(rwopts.list_count <= rwopts.list_floor)
+      show_error(E_GENERIC, "The list count (%d) cannot be less than or equal to the list floor (%d)", rwopts.list_count, rwopts.list_floor);
+  }
   raw_list->max_size = 100 * 1024 * 1024;
   Buffer *temp;
   char *sample_data = "some text, hooray for me";
-  // Change the lock count so it's more reasonable.
-  opts.max_locks = LIST_COUNT / 2;
+  // Change the lock count so it's reasonable.
+  opts.max_locks = rwopts.list_count / 2;
   lock__initialize();
 
   // Create LIST_COUNT buffers with some data in them.
-  for (bufferid_t i=1; i<=LIST_COUNT; i++) {
+  for (bufferid_t i=1; i<=rwopts.list_count; i++) {
     temp = buffer__initialize(i, NULL);
     temp->data = malloc(strlen(sample_data) + 1);
     strcpy(temp->data, sample_data);
@@ -153,20 +175,20 @@ void tests__synchronized_readwrite(List *raw_list) {
   }
 
   // Start worker threads which will try to read data at the same time.
-  pthread_t workers[WORKER_COUNT];
-  for (int i=0; i<WORKER_COUNT; i++)
-    pthread_create(&workers[i], NULL, (void *) &tests__read, raw_list);
+  pthread_t workers[rwopts.worker_count];
+  for (int i=0; i<rwopts.worker_count; i++)
+    pthread_create(&workers[i], NULL, (void *) &tests__read, &rwopts);
 
   // Start up a chaos monkies for insanity.
-  pthread_t chaos_monkies[CHAOS_MONKIES];
-  for (int i=0; i<CHAOS_MONKIES; i++)
-    pthread_create(&chaos_monkies[i], NULL, (void *) &tests__chaos, raw_list);
+  pthread_t chaos_monkeys[rwopts.chaos_monkeys];
+  for (int i=0; i<rwopts.chaos_monkeys; i++)
+    pthread_create(&chaos_monkeys[i], NULL, (void *) &tests__chaos, &rwopts);
 
   // Wait for them to finish.
-  for (int i=0; i<WORKER_COUNT; i++)
+  for (int i=0; i<rwopts.worker_count; i++)
     pthread_join(workers[i], NULL);
-  for (int i=0; i<CHAOS_MONKIES; i++)
-    pthread_join(chaos_monkies[i], NULL);
+  for (int i=0; i<rwopts.chaos_monkeys; i++)
+    pthread_join(chaos_monkeys[i], NULL);
 
   int has_failures = 0;
   for (int i=0; i<raw_list->count; i++) {
@@ -177,33 +199,33 @@ void tests__synchronized_readwrite(List *raw_list) {
   }
   if (has_failures > 0)
     show_error(E_GENERIC, "Test 'synchronized_readwrite' has failures :(\n");
-  if (raw_list->count > LIST_FLOOR || raw_list->count < (LIST_FLOOR - CHAOS_MONKIES))
-    show_error(E_GENERIC, "Test 'synchronized_readwrite' didn't reduce the list count (%d) to LIST_FLOOR (%d) as expected.", raw_list->count, LIST_FLOOR);
+  if (raw_list->count > rwopts.list_floor || raw_list->count < (rwopts.list_floor - rwopts.chaos_monkeys))
+    show_error(E_GENERIC, "Test 'synchronized_readwrite' didn't reduce the list count (%d) to LIST_FLOOR (%d) as expected.", raw_list->count, rwopts.list_floor);
 
   setlocale(LC_NUMERIC, "");
-  printf("All done.  I used %d workers performing a combined %'d reads with %d chaos workers taking buffers from %d to %d (true final count is %d, due to known race condition with chaos workers)\n", WORKER_COUNT, WORKER_COUNT * READS_PER_WORKER, CHAOS_MONKIES, LIST_COUNT, LIST_FLOOR, raw_list->count);
+  printf("All done.  I used %d workers performing a combined %'d reads with %d chaos workers taking buffers from %d to %d (true final count is %d, due to known race condition with chaos workers)\n", rwopts.worker_count, rwopts.worker_count * rwopts.reads_per_worker, rwopts.chaos_monkeys, rwopts.list_count, rwopts.list_floor, raw_list->count);
 
   printf("Test 'synchronized_readwrite': all passed\n");
   return;
 }
-void tests__read(List *raw_list) {
+void tests__read(ReadWriteOpts *rwopts) {
   // Pick random buffers in the list and pin them for reading.  The only way to pick randomly from a list that shrinks is to search
   // over the list itself, which is kinda magoo but it suits the purpose.
   srand(time(0));
   int rv = 0;
   bufferid_t id_to_get = 0;
   Buffer *selected;
-  for (int i=0; i<READS_PER_WORKER; i++) {
+  for (int i=0; i<rwopts->reads_per_worker; i++) {
     for(;;) {
-      id_to_get = rand() % LIST_COUNT;
-      rv = list__search(raw_list, &selected, id_to_get);
+      id_to_get = rand() % rwopts->list_count;
+      rv = list__search(rwopts->raw_list, &selected, id_to_get);
       if (rv == E_OK)
         break;
       if (rv == E_BUFFER_NOT_FOUND || rv == E_BUFFER_POOFED || E_BUFFER_IS_VICTIMIZED)
         continue;
       printf("We should never hit this (rv is %d).\n", rv);
     }
-    usleep(rand() % SLEEP_DELAY);  // This just emulates some random time the reader will use this buffer.
+    usleep(rand() % rwopts->sleep_delay);  // This just emulates some random time the reader will use this buffer.
     rv = buffer__lock(selected);
     if (rv == E_OK || rv == E_BUFFER_IS_VICTIMIZED) {
       buffer__update_ref(selected, -1);
@@ -212,24 +234,23 @@ void tests__read(List *raw_list) {
   }
   pthread_exit(0);
 }
-void tests__chaos(List *raw_list) {
+void tests__chaos(ReadWriteOpts *rwopts) {
   // Remove a buffer from the list every so often until we're down to LIST_FLOOR, just because.
   Buffer *temp = NULL;
   int rv = 0;
   bufferid_t id_to_remove = 0;
-  uint32_t list_size = 0;
   // Loop through and remove stuff until we reach LIST_FLOOR.  This predicate cannot be (reasonably) made safe.
-  while(raw_list->count >= LIST_FLOOR) {
-    id_to_remove = rand() % LIST_COUNT;
-    rv = list__search(raw_list, &temp, id_to_remove);
+  while(rwopts->raw_list->count >= rwopts->list_floor) {
+    id_to_remove = rand() % rwopts->list_count;
+    rv = list__search(rwopts->raw_list, &temp, id_to_remove);
     if (rv == E_BUFFER_NOT_FOUND)
       continue;
     // List search gave us a ref_count, need to decrement ourself.
     buffer__lock(temp);
     buffer__update_ref(temp, -1);
     buffer__unlock(temp);
-    rv = list__remove(raw_list, id_to_remove);
-    usleep(SLEEP_DELAY);
+    rv = list__remove(rwopts->raw_list, id_to_remove);
+    usleep(rwopts->sleep_delay);
   }
   pthread_exit(0);
 }

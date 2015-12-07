@@ -29,4 +29,6 @@
      c) list__add() needs to scan the offload_to list or in some way respect it exists :\
      d) list__add() should block or something if buffer exists but is victimized.
      e) [done] list__remove() shouldn't be taking a buffer; only an ID to find.
-     f) The locking updates above should result in tests__synchronized_readwrite() working.
+     f) [done] The locking updates above should result in tests__synchronized_readwrite() working.
+     g) [done] Test functions which need extra params should be able to accept them.  Mostly tests__synchronized_readwrite().
+

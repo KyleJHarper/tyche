@@ -11,6 +11,7 @@
 #include <inttypes.h>     /* for PRIuXX format codes */
 #include <unistd.h>       /* for getopt */
 #include <sys/sysctl.h>   /* for sysconf */
+#include <string.h>       /* for strlen */
 #include <stdint.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -44,7 +45,7 @@ extern Options opts;
 void options__process(int argc, char **argv) {
   /* Reset everything since there isn't an initialization function for Options structs. */
   /* Page Information */
-  opts.page_directory = NULL;
+  opts.page_directory = (char *)malloc(strlen("sample_data") + 1); strcpy(opts.page_directory, "sample_data");
   opts.page_count = 0;
   opts.page_limit = MAX_PAGE_LIMIT;
   opts.smallest_page = UINT16_MAX;
@@ -52,7 +53,7 @@ void options__process(int argc, char **argv) {
   opts.dataset_size = 0;
   opts.dataset_max = MAX_DATASET_MAX;
   /* Resource Control */
-  opts.max_memory = 0;
+  opts.max_memory = 1024 * 1024;
   opts.fixed_ratio = -1;
   opts.workers = sysconf(_SC_NPROCESSORS_ONLN) > 0 ? (uint16_t)sysconf(_SC_NPROCESSORS_ONLN) : 1;
   opts.lock_ratio = 1;
@@ -62,11 +63,12 @@ void options__process(int argc, char **argv) {
   opts.hit_ratio = -1;
   /* Run Test? */
   opts.test = NULL;
+  opts.extended_test_options = NULL;
 
   /* Process everything passed from CLI now. */
   int c = 0;
   opterr = 0;
-  while ((c = getopt(argc, argv, "b:d:f:hl:m:n:p:r:t:w:")) != -1) {
+  while ((c = getopt(argc, argv, "b:d:f:hl:m:n:p:r:t:w:X:")) != -1) {
     switch (c) {
       case 'b':
         opts.dataset_max = (uint64_t)atoll(optarg);
@@ -112,9 +114,17 @@ void options__process(int argc, char **argv) {
         if (atoi(optarg) > MAX_WORKERS)
           opts.workers = MAX_WORKERS;
         break;
+      case 'X':
+        free(opts.extended_test_options);
+        opts.extended_test_options = optarg;
+        if(strcmp(opts.extended_test_options, "help") == 0) {
+          options__show_extended_test_options();
+          exit(E_OK);
+        }
+        break;
       case '?':
         options__show_help();
-        if (optopt == 'b' || optopt == 'd' || optopt == 'f' || optopt == 'l' || optopt == 'm' || optopt == 'n' || optopt == 'p' || optopt == 'r' || optopt == 't' || optopt == 'w')
+        if (optopt == 'b' || optopt == 'd' || optopt == 'f' || optopt == 'l' || optopt == 'm' || optopt == 'n' || optopt == 'p' || optopt == 'r' || optopt == 't' || optopt == 'w' || optopt == 'X')
           fprintf(stderr, "Option -%c requires an argument.\n", optopt);
         else if (isprint (optopt))
           fprintf(stderr, "Unknown option `-%c'.\n", optopt);
@@ -198,10 +208,30 @@ void options__show_help() {
   fprintf(stderr, "    %2s   %-10s   %s", "-l", "1 - 255",   "Number of buffers sharing each buffer lock.  Defaults to 1.\n");
   fprintf(stderr, "    %2s   %-10s   %s", "-m", "<number>",  "Maximum number of bytes (RAM) to use for all buffers.  Default: 1 MB.\n");
   fprintf(stderr, "    %2s   %-10s   %s", "-n", "<number>",  "Maximum number of pages to use from the sample data pages.  Default: unlimited.\n");
-  fprintf(stderr, "    %2s   %-10s   %s", "-p", "/some/dir", "The directory to scan for pages of sample data.  (Recursive of course).\n");
+  fprintf(stderr, "    %2s   %-10s   %s", "-p", "/some/dir", "The directory to scan for pages of sample data.  Default: ./sample_data.\n");
   fprintf(stderr, "    %2s   %-10s   %s", "-r", "1 - 100",   "Hit Ratio to ensure as a minimum (by searching raw list when too low).  Default: disabled (-1)\n");
   fprintf(stderr, "    %2s   %-10s   %s", "-t", "test_name", "Run an internal test.  Specify 'help' to see available tests.  (For debugging).\n");
   fprintf(stderr, "    %2s   %-10s   %s", "-w", "<number>",  "Number of workers (threads) to use while testing.  Defaults to CPU count.\n");
+  fprintf(stderr, "    %2s   %-10s   %s", "-X", "opt1,opt2", "Extended options for tests that require it.  Specify -X 'help' for information.\n");
+  fprintf(stderr, "\n");
+
+  return;
+}
+
+
+/* options__show_extended_test_options
+ * Prints out the extended test options for various tests.
+ */
+void options__show_extended_test_options() {
+  fprintf(stderr, "\n");
+  fprintf(stderr, "Extended options for tests.\n");
+  fprintf(stderr, "synchronized_readwrite: a,b,c,d,e,f\n");
+  fprintf(stderr, "  a) Number of chaos monkeys.  Each one removes buffers from the list until list_floor is reached.\n");
+  fprintf(stderr, "  b) Number of dummy buffers to put in the list initially.\n");
+  fprintf(stderr, "  c) Target number of buffers for the chaos monkeys to try to reach by removing buffers.\n");
+  fprintf(stderr, "  d) Number of read operations to perform for each worker.\n");
+  fprintf(stderr, "  e) Time to spent, in milliseconds, 'using' the buffer for each read.  Helps simulate usage for pinning.\n");
+  fprintf(stderr, "  f) Number of workers to spawn for reading.  Each one will do read_operations (d above) reads each.\n");
   fprintf(stderr, "\n");
 
   return;
