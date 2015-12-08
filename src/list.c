@@ -164,7 +164,7 @@ int list__add(List *list, Buffer *buf) {
       show_error(E_GENERIC, "The list__sweep() function was couldn't free enough bytes to store the buffer.  Bytes reclaimed: %d, needed, %d.", BYTES_FREED, BUFFER_SIZE);
   }
 
-  /* Under extreme conditions a race can exist.  So scan offload_to again while we have the lock. */
+  /* A race condition exists wherein another thread can add the same buffer, then send it to the offload list.  Check it. */
 //  if (list->offload_to != NULL) {
 //    list__search()
 //  }
@@ -233,7 +233,7 @@ int list__remove(List *list, bufferid_t id) {
       break;
     }
 
-    // If the pool[mid] ID matches, we found the right index which means buf is a valid pointer.  Victimize the buffer, collapse array downward, & update the list.
+    // If the pool[mid] ID matches, we found the right index.  Victimize the buffer, collapse array downward, & update the list.
     if (list->pool[mid]->id == id) {
       const uint BUFFER_SIZE = BUFFER_OVERHEAD + (list->pool[mid]->comp_length == 0 ? list->pool[mid]->data_length : list->pool[mid]->comp_length);
       if (buffer__victimize(list->pool[mid]) != 0)
@@ -337,6 +337,10 @@ int list__search(List *list, Buffer **buf, bufferid_t id) {
  * lock the list for the caller since list-poofing isn't a reality like buffer poofing.
  */
 int list__update_ref(List *list, int delta) {
+  /* Do we own the lock?  If so, we don't need to mess with reference counting.  Avoids reader interference. */
+  if (pthread_equal(list->lock_owner, pthread_self()))
+    return E_OK;
+
   /* Lock the list and check pending writers.  If non-zero and we're incrementing, wait on the reader condition. */
   int i_had_to_wait = 0;
   pthread_mutex_lock(&list->lock);
