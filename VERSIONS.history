@@ -1,4 +1,4 @@
-Contains a simple note for each tagged release.  We will try to follow SEMVER.  Be aware, all 0.x.y releases are developmental and are NOT guaranteed compatible according to SEMVER.
+Contains a simple note for each tagged release.  We will try to follow SEMVER.  Be aware, all 0.x.y releases are developmental and are NOT guaranteed compatible according to SEMVER.  Major version 0 should go away after major release 1... as will this notice probably.
 
 0.0.5 (2015-12-08)
 - Added a pthread_self() check to list read locks.  If we hold the write lock, skip it.  Not used yet, but frees us up to use read-only functions while inside of a write operation stack without deadlocking itself.
