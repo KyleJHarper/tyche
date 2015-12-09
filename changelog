@@ -5,6 +5,11 @@ Changelog for Tyche:  Reverse Chronological Order (obviously)
 
 
 +--------------------------------------+
+| 2015-12-08                           |
++--------------------------------------+
+*Added new options -l and -X.  See VERSIONS.history for release 0.0.5 details.  The biggest issue this change released was a synchronization issue.  Turned out to be a simple off-by-one problem from the list locker pool.*
+
++--------------------------------------+
 | 2015-11-19                           |
 +--------------------------------------+
 *Reviewed the locking mechanism (locker pool) to re-evaluate how to better utilize it.  Switched from a statically defined array of enormous size to a pointer+calloc() and changed all references to (pointer + offset)->member references.  This paved the way for me to add a new option (-l) to control the lock ratio.  Short version:  We can now control the amount of contention and buffers sharing mutexes and conditions.*

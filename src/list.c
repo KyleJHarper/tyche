@@ -164,11 +164,6 @@ int list__add(List *list, Buffer *buf) {
       show_error(E_GENERIC, "The list__sweep() function was couldn't free enough bytes to store the buffer.  Bytes reclaimed: %d, needed, %d.", BYTES_FREED, BUFFER_SIZE);
   }
 
-  /* A race condition exists wherein another thread can add the same buffer, then send it to the offload list.  Check it. */
-//  if (list->offload_to != NULL) {
-//    list__search()
-//  }
-
   /* We now own the lock and no one should be scanning the list.  We have bytes free to hold it.  We can safely scan and edit. */
   int rv = E_OK, low = 0, high = list->count, mid = 0;
   for(;;) {

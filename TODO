@@ -24,11 +24,3 @@
      d) Switch all uintXX_t types to typedefs so they can be changed more simply in the future; like lockid_t.
      e) Add uint8_t ->count to Locks.  If >= 2* ->lock_ratio this lock is doing too much; try another Lock.
      f) Rerun performance tests for comparison.
-5. Buffer Victimization Handling
-     a) [done] When a buffer is victimized, are we sure that the list writelock is protecting others from finding it?
-     b) [done] list__search() should return NOT OK when a buffer is found, but victimized.
-     c) list__add() needs to scan the offload_to list or in some way respect it exists :\
-     d) list__add() should block or something if buffer exists but is victimized.
-     e) [done] list__remove() shouldn't be taking a buffer; only an ID to find.
-     f) [done] The locking updates above should result in tests__synchronized_readwrite() working.
-     g) [done] Test functions which need extra params should be able to accept them.  Mostly tests__synchronized_readwrite().

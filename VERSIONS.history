@@ -1,7 +1,8 @@
 Contains a simple note for each tagged release.  We will try to follow SEMVER.  Be aware, all 0.x.y releases are developmental and are NOT guaranteed compatible according to SEMVER.
 
-0.0.5 (IN PROGRESS)
-TODO
+0.0.5 (2015-12-08)
+- Added a pthread_self() check to list read locks.  If we hold the write lock, skip it.  Not used yet, but frees us up to use read-only functions while inside of a write operation stack without deadlocking itself.
+- Fixed a synchronization issue and reconfirmed performance is good.
 - Added a new option (-X) for extended test options.
 - Added a new option (-l) to control the buffer:mutex ratio to balance contention with memory sharing.
 - Added the ability to run internal tests by specifying the -t option.
