@@ -26,10 +26,8 @@
 #include "tests.h"
 #include "io.h"
 #include "options.h"
+#include "manager.h"
 #include "tyche.h"
-
-/* Define a few things, mostly for sanity checking later. */
-#define INITIAL_RAW_RATIO  80    // 80%
 
 /* Make the options stuct shared. */
 Options opts;
@@ -42,56 +40,28 @@ int main(int argc, char **argv) {
   /* Get options & verify them.  Will terminate if errors, so no checking here. */
   options__process(argc, argv);
 
-  /* Initialize the locker. */
-  lock__initialize();
-
-  /* Build the two lists we're going to use, then set their options. */
-  List *raw_list;
-  create_listset(&raw_list);
-
   /* Get a list of the pages we have to work with.  Build array large enough to store all, even if opts->dataset_max is set. */
   io__get_page_count();
   char *pages[opts.page_count];
   opts.max_locks = (uint32_t)(opts.page_count / opts.lock_ratio);
-  lock__initialize();
   io__build_pages_array(pages);
 
-  /* If a test was specified, run it instead of tyche and then leave. */
+  /* Initialize the locker pool and then build the Manager to work with. */
+  lock__initialize();
+  Manager *mgr = manager__initialize(0, pages);
+
+  /* If a test was specified, run it instead of the manager(s) and then leave. */
   if (opts.test != NULL) {
-    tests__run_test(raw_list, pages);
-    show_error(E_GENERIC, "A test (-t %s) was specified so we ran it.  All done.  Quitting non-zero for safety.", opts.test);
+    tests__run_test(mgr->raw_list, pages);
+    fprintf(stderr, "A test (-t %s) was specified so we ran it.  All done.  Quitting non-zero for safety.\n", opts.test);
+    exit(E_GENERIC);
   }
+
+  /* Run the managers. */
+  manager__start(mgr);
 
   printf("Tyche finished, shutting down.\n");
   return 0;
 }
 
 
-/* create_listset
- * A convenience function that will combine two lists and set their initial values.
- */
-void create_listset(List **raw_list) {
-  /* Initialize the lists. */
-  *raw_list = list__initialize();
-  if (*raw_list == NULL)
-    show_error(E_GENERIC, "Couldn't create the raw list.  This is fatal.");
-  List *comp_list = list__initialize();
-  if (comp_list == NULL)
-    show_error(E_GENERIC, "Couldn't create the compressed list.  This is fatal.");
-
-  /* Join the lists to eachother. */
-  (*raw_list)->offload_to = comp_list;
-  comp_list->restore_to = *raw_list;
-
-  /* Synchronize mutexes and conditions to avoid t1 getting the 'raw' lock and t2 getting the 'compressed' lock and deadlocking. */
-  comp_list->lock             = (*raw_list)->lock;
-  comp_list->reader_condition = (*raw_list)->reader_condition;
-  comp_list->writer_condition = (*raw_list)->writer_condition;
-
-  /* Set the memory sizes for both lists. */
-  (*raw_list)->max_size = opts.max_memory * (opts.fixed_ratio > 0 ? opts.fixed_ratio : INITIAL_RAW_RATIO) / 100;
-  comp_list->max_size = opts.max_memory - (*raw_list)->max_size;
-
-  /* All done. */
-  return;
-}

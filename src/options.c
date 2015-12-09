@@ -21,11 +21,12 @@
 
 /* Definitions to match most of the options. */
 #define MIN_MEMORY                1048576    // 1 MB
-#define MAX_LOCK_RATIO         UINT8_MAX     // 2^8,  255
+#define MAX_LOCK_RATIO          UINT8_MAX    // 2^8,  255
 #define MAX_WORKERS            UINT16_MAX    // 2^16, 65535
 #define MAX_DURATION           UINT16_MAX    // 2^16, 65535
 #define MAX_DATASET_MAX        UINT64_MAX    // 2^64, really big...
 #define MAX_PAGE_LIMIT         UINT32_MAX    // 2^32, 4.3 billion
+
 
 
 /* Extern error codes */
