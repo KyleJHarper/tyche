@@ -26,3 +26,4 @@
      e) Add uint8_t ->count to Locks.  If >= 2* ->lock_ratio this lock is doing too much; try another Lock.
      f) Rerun performance tests for comparison.
      g) Update Makefile to create a debug and release verion of tyche and compare performance.
+     h) Switch the enormous list->pool[] to a dynamic array.

@@ -37,7 +37,7 @@
  *       again a linked list also requires 16 bytes per buffer more which rapidly diminishes this savings.
  * We are not arguing that an array is better; we're simply explaining our decision.  Remember, this is just one implementation.
  */
-#define BUFFER_POOL_SIZE 5000000   /* 5 Million - This would be better done as VLA from list__initialize() but it's ok for now. */
+#define BUFFER_POOL_SIZE 2000000   /* 2 Million - This would be better done as VLA from list__initialize() but it's ok for now. */
 
 /* Build the typedef and structure for a List */
 typedef struct list List;

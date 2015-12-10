@@ -30,6 +30,10 @@ extern Options opts;
 /* Extern the error codes we need. */
 extern const int E_OK;
 extern const int E_GENERIC;
+extern const int E_BUFFER_NOT_FOUND;
+extern const int E_BUFFER_IS_VICTIMIZED;
+extern const int E_BUFFER_ALREADY_EXISTS;
+
 
 /* Globals to protect worker IDs. */
 uint next_worker_id = 0;
@@ -129,19 +133,49 @@ void manager__timer(Manager *mgr) {
  * The initialization point for a worker to start doing real work for a manager.
  */
 void manager__spawn_worker(Manager *mgr) {
+  /* Get the worker ID */
   uint worker_id = 0;
   manager__assign_worker_id(&worker_id);
   if(worker_id == 0)
     show_error(E_GENERIC, "Unable to get a worker ID.  This should never happen.");
 
+  /* Create pointers directly to objects to reduce dereferencing of *mgr */
+  List *raw_list = mgr->raw_list;
+  char **pages = mgr->pages;
+
+  /* Begin the main loop for grabbing buffers. */
+  Buffer *buf = NULL;
+  bufferid_t id_to_get = 0;
+  int rv = 0;
+  const uint SLEEP_TIME = 75;
   while(mgr->runnable != 0) {
-    // Go find buffers to play with!
-    printf("Worker %d loves to wait.\n", worker_id);
-    sleep(1);
+    /* Go find buffers to play with!  If the one we need doesn't exist, get it and add it. */
+    id_to_get = rand() % opts.page_count;
+    rv = list__search(raw_list, &buf, id_to_get);
+    if(rv == E_BUFFER_NOT_FOUND) {
+      buf = buffer__initialize(id_to_get, pages[id_to_get]);
+      buffer__update_ref(buf, 1);
+      rv = list__add(raw_list, buf);
+      if (rv == E_BUFFER_ALREADY_EXISTS) {
+        // Someone beat us to it.  Just free it and loop around for something else.
+        free(buf);
+        buf = NULL;
+        continue;
+      }
+    }
+
+    /* Now we should have a valid buffer.  Pretend to do some work with it, then release it. */
+    usleep(rand() % SLEEP_TIME);
+    buffer__lock(buf);
+    buffer__update_ref(buf, -1);
+    if(buf->ref_count >5000)
+      printf("This is wrong... id is %d, ref_count is %d\n", buf->id, buf->ref_count);
+    buffer__unlock(buf);
+    buf = NULL;
   }
 
   // All done.
-  printf("Worker %d is done!\n", worker_id);
+//  printf("worker %d is done\n", worker_id);
   pthread_exit(0);
 }
 

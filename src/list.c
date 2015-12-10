@@ -231,8 +231,10 @@ int list__remove(List *list, bufferid_t id) {
     // If the pool[mid] ID matches, we found the right index.  Victimize the buffer, collapse array downward, & update the list.
     if (list->pool[mid]->id == id) {
       const uint BUFFER_SIZE = BUFFER_OVERHEAD + (list->pool[mid]->comp_length == 0 ? list->pool[mid]->data_length : list->pool[mid]->comp_length);
+//printf("10:  thread: %d,  buffer id %d has ref count of %d\n", pthread_self(), list->pool[mid]->id, list->pool[mid]->ref_count);
       if (buffer__victimize(list->pool[mid]) != 0)
         show_error(rv, "The list__remove function received an error when trying to victimize the buffer (%d).\n", rv);
+//printf("11\n");
       buffer__destroy(list->pool[mid]);
       for (int i=mid; i<list->count - 1; i++)
         list->pool[i] = list->pool[i+1];
@@ -313,10 +315,11 @@ int list__search(List *list, Buffer **buf, bufferid_t id) {
   if (rv == E_BUFFER_NOT_FOUND && list->offload_to != NULL) {
     rv = list__search(list->offload_to, buf, id);
     if (rv == E_OK) {
-      // We found it!  Remove our reference (from calling list__search() ourself) and then list__restore() it.
+      // We found it!  Remove our reference pin from the compressed buffer we just found.
       buffer__lock(*buf);
       buffer__update_ref(*buf, -1);
       buffer__unlock(*buf);
+      // Restore the buffer.  Restoration always sets ref_count to 1 for us.
       if (list__restore(list, buf) != E_OK)
         show_error(E_GENERIC, "Failed to list__restore a buffer.  This should never happen.");
     }
@@ -370,7 +373,7 @@ int list__update_ref(List *list, int delta) {
 uint list__sweep(List *list) {
   // Acquire a list lock just to ensure we're operating safely.
   list__acquire_write_lock(list);
-
+printf("Had to sweep!  Raw list has %d buffers using %"PRIu64" bytes.  Compressed list has %d buffers using %"PRIu64" bytes.\n", list->count, list->current_size, list->offload_to->count, list->offload_to->current_size);
   uint bytes_freed = 0;
   const uint BYTES_NEEDED = list->current_size * list->sweep_goal / 100;
   Buffer *buf = NULL;
@@ -382,7 +385,6 @@ uint list__sweep(List *list) {
   // Sanity Checks
   if (list->offload_to == NULL)
     show_error(E_GENERIC, "The list__sweep() function was given a list that doesn't have an offload_to target.  This is definitely a problem.");
-
   while (BYTES_NEEDED > bytes_freed) {
     // Sweeping until we find a buffer to remove.  Popularity is halved until a victim is found.  The race condition on this is ok.
     for(;;) {
@@ -393,7 +395,6 @@ uint list__sweep(List *list) {
       list->pool[list->clock_hand_index]->popularity = list->pool[list->clock_hand_index]->popularity >> 1;
       list->clock_hand_index++;
     }
-
     // We only reach this when an unpopular victim id is found.  Let's get to work copying the buffer and compressing it.
     buf = buffer__initialize(0, NULL);
     buffer__copy(list->pool[list->clock_hand_index], buf);
@@ -424,6 +425,7 @@ uint list__sweep(List *list) {
   for (int i=0; i<temp_list->count; i++)
     list__push(list->offload_to, temp_list->pool[i]);
 
+  free(temp_list);
   list__release_write_lock(list);
   return bytes_freed;
 }
@@ -500,7 +502,9 @@ int list__pop(List *list, uint64_t bytes_needed) {
  * Takes the buffer specified and adds it back to the list specified after decompressing the data member and updating all of the
  * tracking data.
  */
+//TODO  Make this set the ref_count to 1 or whatever or the count from list__search() will be off to the caller.
 int list__restore(List *list, Buffer **buf) {
+printf("Restoring %d\n", (*buf)->id);
   // Make sure we have a list, an offload_to, and a valid buffer.
   if (list == NULL)
     show_error(E_GENERIC, "The list__restore function was given a NULL list.  This should never happen.");
