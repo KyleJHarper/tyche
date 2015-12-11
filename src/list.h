@@ -61,6 +61,8 @@ struct list {
   List *restore_to;                 /* The target list to restore buffers to.  Currently, comp -> raw. */
   uint32_t clock_hand_index;        /* The current index to be checked when sweeping is invoked. */
   uint8_t sweep_goal;               /* The percentage of memory we want to free up whenever we sweep, relative to current_size. */
+  uint32_t sweeps;                  /* Number of times the list has been swept. */
+  uint64_t sweep_cost;              /* Time in ns spent sweeping lists. */
 
   /* Buffer Array Itself */
   Buffer *pool[BUFFER_POOL_SIZE];   /* Array of pointers to Buffers since we're avoiding the linked list. */
@@ -78,7 +80,7 @@ uint list__sweep(List *list);
 int list__push(List *list, Buffer *buf);
 int list__pop(List *list, uint64_t bytes_needed);
 int list__restore(List *list, Buffer **buf);
-int list__balance(List *list);
+int list__balance(List *list, uint ratio);
 
 
 #endif /* SRC_LIST_H_ */

@@ -29,11 +29,15 @@
 #include <string.h>
 #include <assert.h>
 #include <inttypes.h>
+#include <time.h>     /* for clock_gettime() */
 #include "buffer.h"
 #include "lock.h"
 #include "error.h"
 #include "list.h"
+#include "options.h"
 
+/* Extern the global options. */
+extern Options opts;
 
 /* Extern the error codes we'll use. */
 extern const int E_OK;
@@ -45,8 +49,12 @@ extern const int E_BUFFER_ALREADY_EXISTS;
 /* We need some information from the buffer header */
 extern const int BUFFER_OVERHEAD;
 
+/* We need to know what one billion is for clock timing. */
+#define BILLION 1000000000L
+#define MILLION    1000000L
 
-/* Functions */
+
+
 /* list__initialize
  * Creates the actual list that we're being given a pointer to.  We will also create the head of it as a reference point.
  */
@@ -77,7 +85,9 @@ List* list__initialize() {
   list->offload_to = NULL;
   list->restore_to = NULL;
   list->clock_hand_index = 0;
-  list->sweep_goal = 1;
+  list->sweep_goal = 10;
+  list->sweeps = 0;
+  list->sweep_cost = 0;
 
   /* Buffer Array Itself */
   for (int i = 0; i < BUFFER_POOL_SIZE; i++)
@@ -231,10 +241,8 @@ int list__remove(List *list, bufferid_t id) {
     // If the pool[mid] ID matches, we found the right index.  Victimize the buffer, collapse array downward, & update the list.
     if (list->pool[mid]->id == id) {
       const uint BUFFER_SIZE = BUFFER_OVERHEAD + (list->pool[mid]->comp_length == 0 ? list->pool[mid]->data_length : list->pool[mid]->comp_length);
-//printf("10:  thread: %d,  buffer id %d has ref count of %d\n", pthread_self(), list->pool[mid]->id, list->pool[mid]->ref_count);
       if (buffer__victimize(list->pool[mid]) != 0)
         show_error(rv, "The list__remove function received an error when trying to victimize the buffer (%d).\n", rv);
-//printf("11\n");
       buffer__destroy(list->pool[mid]);
       for (int i=mid; i<list->count - 1; i++)
         list->pool[i] = list->pool[i+1];
@@ -373,7 +381,11 @@ int list__update_ref(List *list, int delta) {
 uint list__sweep(List *list) {
   // Acquire a list lock just to ensure we're operating safely.
   list__acquire_write_lock(list);
-printf("Had to sweep!  Raw list has %d buffers using %"PRIu64" bytes.  Compressed list has %d buffers using %"PRIu64" bytes.\n", list->count, list->current_size, list->offload_to->count, list->offload_to->current_size);
+
+  // Set up some temporary stuff to calculate our needs and store victims.
+  struct timespec start, end;
+  clock_gettime(CLOCK_MONOTONIC, &start);
+  list->sweeps++;
   uint bytes_freed = 0;
   const uint BYTES_NEEDED = list->current_size * list->sweep_goal / 100;
   Buffer *buf = NULL;
@@ -425,6 +437,9 @@ printf("Had to sweep!  Raw list has %d buffers using %"PRIu64" bytes.  Compresse
   for (int i=0; i<temp_list->count; i++)
     list__push(list->offload_to, temp_list->pool[i]);
 
+  // Wrap up and leave.
+  clock_gettime(CLOCK_MONOTONIC, &end);
+  list->sweep_cost += BILLION * (end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec;
   free(temp_list);
   list__release_write_lock(list);
   return bytes_freed;
@@ -502,9 +517,7 @@ int list__pop(List *list, uint64_t bytes_needed) {
  * Takes the buffer specified and adds it back to the list specified after decompressing the data member and updating all of the
  * tracking data.
  */
-//TODO  Make this set the ref_count to 1 or whatever or the count from list__search() will be off to the caller.
 int list__restore(List *list, Buffer **buf) {
-printf("Restoring %d\n", (*buf)->id);
   // Make sure we have a list, an offload_to, and a valid buffer.
   if (list == NULL)
     show_error(E_GENERIC, "The list__restore function was given a NULL list.  This should never happen.");
@@ -517,10 +530,12 @@ printf("Restoring %d\n", (*buf)->id);
   Buffer *new_buf = buffer__initialize(0, NULL);
   buffer__copy(*buf, new_buf);
 
-  // Decompress the new_buf
+  // Decompress the new_buf Buffer
   if (buffer__decompress(new_buf) != E_OK)
     show_error(E_GENERIC, "The list__restore function was unable to decompress the new buffer.");
+  // Reset the victimization now that it's a valid buffer.  Set ref_count to 1 manually to avoid a little overhead.
   new_buf->victimized = 0;
+  new_buf->ref_count = 1;
 
   // Add the decompressed copy to the list source list and remove the compressed buffer from the offload list.
   list__add(list, new_buf);
@@ -535,10 +550,8 @@ printf("Restoring %d\n", (*buf)->id);
 /* list__balance
  * Redistributes memory between a list and it's offload target.  The list__sweep() and list__push/pop() functions will handle the
  * buffer migration while respecting the new boundaries.
- * This function is not responsible for checking Options to see if fixed ratios are set or anything like that.
- * Caller MUST set the list->max_size before-hand (or nothing will happen...)
  */
-int list__balance(List *list) {
+int list__balance(List *list, uint ratio) {
   // As always, be safe.
   if (list == NULL)
     show_error(E_GENERIC, "The list__balance function was given a NULL list.  This should never happen.");
@@ -546,18 +559,24 @@ int list__balance(List *list) {
     show_error(E_GENERIC, "The list__balance function was given a list with a NULL offload_to target.");
   list__acquire_write_lock(list);
 
+  // Set the memory values according to the ratio.
+  list->max_size = opts.max_memory * (opts.fixed_ratio > 0 ? opts.fixed_ratio : ratio) / 100;
+  list->offload_to->max_size = opts.max_memory - list->max_size;
+
   // Pop() the offload list if it shrunk.
   if (list->offload_to->current_size > list->offload_to->max_size)
     list__pop(list->offload_to, (list->offload_to->current_size - list->offload_to->max_size));
 
-  // Try to sweep() the raw list if it shrunk.  Attempt to do this with a single call.
-  uint8_t original_sweep_goal = list->sweep_goal;
-  while ((list->sweep_goal * list->current_size / 100) < list->max_size && list->sweep_goal < 100)
-    list->sweep_goal++;
-  if (list->sweep_goal == 100)
-    show_error(E_GENERIC, "When trying to balance the lists, sweep goal was incremented to 100 which would eliminate the entire list.  This is, I believe, a condition that should never happen.");
-  list__sweep(list);
-  list->sweep_goal = original_sweep_goal;
+  // Try to sweep() the raw list if it shrunk.  Attempt to do this with a single call, if even necessary.
+  if(list->current_size > list->max_size) {
+    uint8_t original_sweep_goal = list->sweep_goal;
+    while ((list->sweep_goal * list->current_size / 100) < list->max_size && list->sweep_goal < 100)
+      list->sweep_goal++;
+    if (list->sweep_goal == 1000)
+      show_error(E_GENERIC, "When trying to balance the lists, sweep goal was incremented to 100 which would eliminate the entire list.  This is, I believe, a condition that should never happen.");
+    list__sweep(list);
+    list->sweep_goal = original_sweep_goal;
+  }
 
   // All done.  Release our lock and go home.
   list__release_write_lock(list);

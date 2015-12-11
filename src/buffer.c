@@ -10,7 +10,7 @@
 #include <pthread.h>
 #include <stdint.h>
 #include <stdlib.h>
-#include <time.h>     /* for gettimeofday() */
+#include <time.h>     /* for clock_gettime() */
 #include <string.h>   /* for memcpy() */
 #include "lock.h"
 #include "error.h"

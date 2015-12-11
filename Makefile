@@ -2,6 +2,7 @@
 
 CC     = gcc
 CFLAGS += -Wall -std=gnu99 -pthread -g
+#CFLAGS += -Wall -std=gnu99 -pthread -O3
 
 SRCDIR = src
 OBJDIR = obj

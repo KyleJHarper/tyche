@@ -17,6 +17,9 @@
 #include "manager.h"
 
 
+/* Define the maximum worker ID for sanity checking. */
+#define MAX_WORKER_ID UINT32_MAX
+
 /* We need to know what one billion is for clock timing. */
 #define BILLION 1000000000L
 #define MILLION    1000000L
@@ -36,7 +39,7 @@ extern const int E_BUFFER_ALREADY_EXISTS;
 
 
 /* Globals to protect worker IDs. */
-uint next_worker_id = 0;
+workerid_t next_worker_id = MAX_WORKER_ID;
 pthread_mutex_t next_worker_id_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 
@@ -54,6 +57,13 @@ Manager* manager__initialize(managerid_t id, char **pages) {
   mgr->runnable = 1;
   mgr->run_duration = 0;
   mgr->pages = pages;
+  if (pthread_mutex_init(&mgr->lock, NULL) != 0)
+    show_error(E_GENERIC, "Failed to initialize mutex for a manager.  This is fatal.");
+
+  /* Allocate the array of pointers for our **workers element so it's the right size. */
+  mgr->workers = calloc(opts.workers, sizeof(Worker *));
+  if(mgr->workers == NULL)
+    show_error(E_GENERIC, "Failed to calloc the memory for the workers pool for a manager.");
 
   /* Create the listset for this manager to use. */
   List *raw_list = list__initialize();
@@ -75,8 +85,7 @@ Manager* manager__initialize(managerid_t id, char **pages) {
   comp_list->writer_condition = raw_list->writer_condition;
 
   /* Set the memory sizes for both lists. */
-  raw_list->max_size = opts.max_memory * (opts.fixed_ratio > 0 ? opts.fixed_ratio : INITIAL_RAW_RATIO) / 100;
-  comp_list->max_size = opts.max_memory - raw_list->max_size;
+  list__balance(raw_list, INITIAL_RAW_RATIO);
 
   /* Return our manager. */
   return mgr;
@@ -94,17 +103,25 @@ int manager__start(Manager *mgr) {
   clock_gettime(CLOCK_MONOTONIC, &start);
 
   /* Start all of the workers and then wait for them to finish. */
+  list__balance(mgr->raw_list, 30);
   pthread_t workers[opts.workers];
   for(int i=0; i<opts.workers; i++)
     pthread_create(&workers[i], NULL, (void *) &manager__spawn_worker, mgr);
+  pthread_join(pt_timer, NULL);
   for(int i=0; i<opts.workers; i++)
     pthread_join(workers[i], NULL);
-  pthread_join(pt_timer, NULL);
 
   /* Show results and leave.  We */
   clock_gettime(CLOCK_MONOTONIC, &end);
   mgr->run_duration = (BILLION *(end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec) / MILLION;
-  printf("wheeeeee:  %d\n", mgr->run_duration);
+  mgr->raw_list->sweep_cost /= MILLION;
+  printf("Elapsed time    : %"PRIu32" ms\n", mgr->run_duration);
+  printf("Page count      : %"PRIu32"\n", opts.page_count);
+  printf("Hits            : %"PRIu64"\n", mgr->hits);
+  printf("Misses          : %"PRIu64"\n", mgr->misses);
+  printf("Buffers Acquired: %"PRIu64" (%"PRIu64" per second)\n", mgr->hits + mgr->misses, (mgr->hits + mgr->misses)*1000/mgr->run_duration);
+  printf("Hit ratio       : %4.2f%%\n", (double)mgr->hits * 100 / (mgr->hits + mgr->misses));
+  printf("Sweeps          : %"PRIu32" (%"PRIu64" ms sweeping)\n", mgr->raw_list->sweeps, mgr->raw_list->sweep_cost);
   return E_OK;
 }
 
@@ -133,60 +150,66 @@ void manager__timer(Manager *mgr) {
  * The initialization point for a worker to start doing real work for a manager.
  */
 void manager__spawn_worker(Manager *mgr) {
-  /* Get the worker ID */
-  uint worker_id = 0;
-  manager__assign_worker_id(&worker_id);
-  if(worker_id == 0)
+  /* Setup our worker. */
+  Worker peon;
+  peon.id = MAX_WORKER_ID;
+  peon.hits = 0;
+  peon.misses = 0;
+  manager__assign_worker_id(&peon.id);
+  if(peon.id== MAX_WORKER_ID)
     show_error(E_GENERIC, "Unable to get a worker ID.  This should never happen.");
-
-  /* Create pointers directly to objects to reduce dereferencing of *mgr */
-  List *raw_list = mgr->raw_list;
-  char **pages = mgr->pages;
+  mgr->workers[peon.id] = &peon;
 
   /* Begin the main loop for grabbing buffers. */
   Buffer *buf = NULL;
   bufferid_t id_to_get = 0;
   int rv = 0;
-  const uint SLEEP_TIME = 75;
   while(mgr->runnable != 0) {
     /* Go find buffers to play with!  If the one we need doesn't exist, get it and add it. */
     id_to_get = rand() % opts.page_count;
-    rv = list__search(raw_list, &buf, id_to_get);
+    rv = list__search(mgr->raw_list, &buf, id_to_get);
+    if(rv == E_OK)
+      peon.hits++;
     if(rv == E_BUFFER_NOT_FOUND) {
-      buf = buffer__initialize(id_to_get, pages[id_to_get]);
+      peon.misses++;
+      buf = buffer__initialize(id_to_get, mgr->pages[id_to_get]);
       buffer__update_ref(buf, 1);
-      rv = list__add(raw_list, buf);
+      rv = list__add(mgr->raw_list, buf);
       if (rv == E_BUFFER_ALREADY_EXISTS) {
         // Someone beat us to it.  Just free it and loop around for something else.
         free(buf);
         buf = NULL;
         continue;
       }
-    }
 
-    /* Now we should have a valid buffer.  Pretend to do some work with it, then release it. */
-    usleep(rand() % SLEEP_TIME);
-    buffer__lock(buf);
-    buffer__update_ref(buf, -1);
-    if(buf->ref_count >5000)
-      printf("This is wrong... id is %d, ref_count is %d\n", buf->id, buf->ref_count);
-    buffer__unlock(buf);
-    buf = NULL;
+      /* Now we should have a valid buffer.  Hooray!  Mission accomplished. */
+      buffer__lock(buf);
+      buffer__update_ref(buf, -1);
+      buffer__unlock(buf);
+      buf = NULL;
+    }
   }
+  // We ran out of time.  Let's update the manager with our statistics.
+  pthread_mutex_lock(&mgr->lock);
+  mgr->hits += peon.hits;
+  mgr->misses += peon.misses;
+  pthread_mutex_unlock(&mgr->lock);
 
   // All done.
-//  printf("worker %d is done\n", worker_id);
   pthread_exit(0);
 }
 
 
 /* manager__assign_worker_id
  * Simply increments the global worker ID variable under the protection of a mutex.
+ * First id is 0-based to work cleanly with **workers array notation: &(workers + workerid)->bla
  */
-void manager__assign_worker_id(uint *referring_id_ptr) {
+void manager__assign_worker_id(workerid_t *referring_id_ptr) {
   pthread_mutex_lock(&next_worker_id_mutex);
-  next_worker_id++;
+  if (next_worker_id == MAX_WORKER_ID)
+    next_worker_id = 0;
   *referring_id_ptr = next_worker_id;
+  next_worker_id++;
   pthread_mutex_unlock(&next_worker_id_mutex);
   return;
 }

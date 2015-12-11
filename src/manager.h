@@ -11,6 +11,15 @@
 #define SRC_MANAGER_H_
 
 
+/* Build the worker struct. */
+typedef uint32_t workerid_t;
+typedef struct worker Worker;
+struct worker {
+  workerid_t id;      // ID of the worker.
+  uint64_t misses;    // Count of buffer misses for the life of this worker.
+  uint64_t hits;      // Count of buffer hits for the life of this worker.
+};
+
 /* Build the manager struct. */
 typedef uint8_t managerid_t;
 typedef struct manager Manager;
@@ -26,6 +35,12 @@ struct manager {
   /* Manager Control */
   uint8_t runnable;       // Pointer to the integer that indicates if we should still be running.
   uint32_t run_duration;  // Time spent, in ms, running this manager.
+  pthread_mutex_t lock;   // Lock for operations on the manager which require atomicity.
+
+  /* Workers and Their Aggregate Data */
+  Worker **workers;       // The pool of workers this manager has assigned to it.
+  uint64_t hits;          // Total hits for all workers.
+  uint64_t misses;        // Total misses for all workers.
 };
 
 
