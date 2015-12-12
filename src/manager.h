@@ -49,7 +49,7 @@ Manager* manager__initialize(managerid_t id, char **pages);
 int manager__start(Manager *mgr);
 void manager__timer(Manager *mgr);
 void manager__spawn_worker(Manager *mgr);
-void manager__assign_worker_id(uint *referring_id_ptr);
+void manager__assign_worker_id(workerid_t *referring_id_ptr);
 
 
 #endif /* SRC_MANAGER_H_ */

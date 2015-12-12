@@ -17,9 +17,6 @@
 #include "manager.h"
 
 
-/* Define the maximum worker ID for sanity checking. */
-#define MAX_WORKER_ID UINT32_MAX
-
 /* We need to know what one billion is for clock timing. */
 #define BILLION 1000000000L
 #define MILLION    1000000L
@@ -34,13 +31,13 @@ extern Options opts;
 extern const int E_OK;
 extern const int E_GENERIC;
 extern const int E_BUFFER_NOT_FOUND;
-extern const int E_BUFFER_IS_VICTIMIZED;
 extern const int E_BUFFER_ALREADY_EXISTS;
 
-
 /* Globals to protect worker IDs. */
-workerid_t next_worker_id = MAX_WORKER_ID;
+#define MAX_WORKER_ID UINT32_MAX
+workerid_t next_worker_id = 0;
 pthread_mutex_t next_worker_id_mutex = PTHREAD_MUTEX_INITIALIZER;
+
 
 
 /* manager__initialize
@@ -79,13 +76,18 @@ Manager* manager__initialize(managerid_t id, char **pages) {
   raw_list->offload_to = comp_list;
   comp_list->restore_to = raw_list;
 
+  /* Allocate the array of pointers for our **workers element so it's the right size. */
+  mgr->workers = calloc(opts.workers, sizeof(Worker *));
+  if(mgr->workers == NULL)
+    show_error(E_GENERIC, "Failed to calloc the memory for the workers pool for a manager.");
+
   /* Synchronize mutexes and conditions to avoid t1 getting the 'raw' lock and t2 getting the 'compressed' lock and deadlocking. */
   comp_list->lock = raw_list->lock;
   comp_list->reader_condition = raw_list->reader_condition;
   comp_list->writer_condition = raw_list->writer_condition;
 
   /* Set the memory sizes for both lists. */
-  list__balance(raw_list, INITIAL_RAW_RATIO);
+  list__balance(raw_list, opts.fixed_ratio > 0 ? opts.fixed_ratio : INITIAL_RAW_RATIO);
 
   /* Return our manager. */
   return mgr;
@@ -112,16 +114,12 @@ int manager__start(Manager *mgr) {
     pthread_join(workers[i], NULL);
 
   /* Show results and leave.  We */
+  uint64_t total_acquisitions = mgr->hits + mgr->misses;
   clock_gettime(CLOCK_MONOTONIC, &end);
   mgr->run_duration = (BILLION *(end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec) / MILLION;
-  mgr->raw_list->sweep_cost /= MILLION;
-  printf("Elapsed time    : %"PRIu32" ms\n", mgr->run_duration);
-  printf("Page count      : %"PRIu32"\n", opts.page_count);
-  printf("Hits            : %"PRIu64"\n", mgr->hits);
-  printf("Misses          : %"PRIu64"\n", mgr->misses);
-  printf("Buffers Acquired: %"PRIu64" (%"PRIu64" per second)\n", mgr->hits + mgr->misses, (mgr->hits + mgr->misses)*1000/mgr->run_duration);
-  printf("Hit ratio       : %4.2f%%\n", (double)mgr->hits * 100 / (mgr->hits + mgr->misses));
-  printf("Sweeps          : %"PRIu32" (%"PRIu64" ms sweeping)\n", mgr->raw_list->sweeps, mgr->raw_list->sweep_cost);
+  printf("Buffer Acquisitions: %"PRIu64" (%"PRIu64" hits, %"PRIu64" misses)\n", total_acquisitions, mgr->hits, mgr->misses);
+  printf("Hit Ratio          : %4.2f%%\n", 100.0 * mgr->hits / total_acquisitions);
+  printf("Manager run time   : %"PRIu32"\n", mgr->run_duration);
   return E_OK;
 }
 
@@ -150,13 +148,13 @@ void manager__timer(Manager *mgr) {
  * The initialization point for a worker to start doing real work for a manager.
  */
 void manager__spawn_worker(Manager *mgr) {
-  /* Setup our worker. */
+  /* Set up our worker. */
   Worker peon;
   peon.id = MAX_WORKER_ID;
   peon.hits = 0;
   peon.misses = 0;
   manager__assign_worker_id(&peon.id);
-  if(peon.id== MAX_WORKER_ID)
+  if(peon.id == MAX_WORKER_ID)
     show_error(E_GENERIC, "Unable to get a worker ID.  This should never happen.");
   mgr->workers[peon.id] = &peon;
 
@@ -181,14 +179,14 @@ void manager__spawn_worker(Manager *mgr) {
         buf = NULL;
         continue;
       }
-
-      /* Now we should have a valid buffer.  Hooray!  Mission accomplished. */
-      buffer__lock(buf);
-      buffer__update_ref(buf, -1);
-      buffer__unlock(buf);
-      buf = NULL;
     }
+    /* Now we should have a valid buffer.  Hooray.  Mission accomplished. */
+    buffer__lock(buf);
+    buffer__update_ref(buf, -1);
+    buffer__unlock(buf);
+    buf = NULL;
   }
+
   // We ran out of time.  Let's update the manager with our statistics.
   pthread_mutex_lock(&mgr->lock);
   mgr->hits += peon.hits;
@@ -206,10 +204,10 @@ void manager__spawn_worker(Manager *mgr) {
  */
 void manager__assign_worker_id(workerid_t *referring_id_ptr) {
   pthread_mutex_lock(&next_worker_id_mutex);
-  if (next_worker_id == MAX_WORKER_ID)
-    next_worker_id = 0;
   *referring_id_ptr = next_worker_id;
   next_worker_id++;
+  if (next_worker_id == MAX_WORKER_ID)
+    next_worker_id = 0;
   pthread_mutex_unlock(&next_worker_id_mutex);
   return;
 }

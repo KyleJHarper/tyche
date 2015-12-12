@@ -33,11 +33,13 @@
 #include "buffer.h"
 #include "lock.h"
 #include "error.h"
+#include "options.h"
 #include "list.h"
 #include "options.h"
 
-/* Extern the global options. */
-extern Options opts;
+/* We need to know what one billion is for clock timing. */
+#define BILLION 1000000000L
+#define MILLION    1000000L
 
 /* Extern the error codes we'll use. */
 extern const int E_OK;
@@ -49,9 +51,8 @@ extern const int E_BUFFER_ALREADY_EXISTS;
 /* We need some information from the buffer header */
 extern const int BUFFER_OVERHEAD;
 
-/* We need to know what one billion is for clock timing. */
-#define BILLION 1000000000L
-#define MILLION    1000000L
+/* Extern the global options. */
+extern Options opts;
 
 
 
@@ -86,8 +87,6 @@ List* list__initialize() {
   list->restore_to = NULL;
   list->clock_hand_index = 0;
   list->sweep_goal = 10;
-  list->sweeps = 0;
-  list->sweep_cost = 0;
 
   /* Buffer Array Itself */
   for (int i = 0; i < BUFFER_POOL_SIZE; i++)
@@ -560,7 +559,7 @@ int list__balance(List *list, uint ratio) {
   list__acquire_write_lock(list);
 
   // Set the memory values according to the ratio.
-  list->max_size = opts.max_memory * (opts.fixed_ratio > 0 ? opts.fixed_ratio : ratio) / 100;
+  list->max_size = opts.max_memory * ratio / 100;
   list->offload_to->max_size = opts.max_memory - list->max_size;
 
   // Pop() the offload list if it shrunk.
@@ -570,10 +569,9 @@ int list__balance(List *list, uint ratio) {
   // Try to sweep() the raw list if it shrunk.  Attempt to do this with a single call, if even necessary.
   if(list->current_size > list->max_size) {
     uint8_t original_sweep_goal = list->sweep_goal;
-    while ((list->sweep_goal * list->current_size / 100) < list->max_size && list->sweep_goal < 100)
-      list->sweep_goal++;
-    if (list->sweep_goal == 1000)
-      show_error(E_GENERIC, "When trying to balance the lists, sweep goal was incremented to 100 which would eliminate the entire list.  This is, I believe, a condition that should never happen.");
+    list->sweep_goal = (100 * list->max_size / list->current_size) + 1;
+    if (list->sweep_goal > 99)
+      show_error(E_GENERIC, "When trying to balance the lists, sweep goal was incremented to 100+ which would eliminate the entire list.  This is, I believe, a condition that should never happen.");
     list__sweep(list);
     list->sweep_goal = original_sweep_goal;
   }
