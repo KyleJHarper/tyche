@@ -105,7 +105,6 @@ int manager__start(Manager *mgr) {
   clock_gettime(CLOCK_MONOTONIC, &start);
 
   /* Start all of the workers and then wait for them to finish. */
-  list__balance(mgr->raw_list, 30);
   pthread_t workers[opts.workers];
   for(int i=0; i<opts.workers; i++)
     pthread_create(&workers[i], NULL, (void *) &manager__spawn_worker, mgr);
@@ -118,7 +117,9 @@ int manager__start(Manager *mgr) {
   clock_gettime(CLOCK_MONOTONIC, &end);
   mgr->run_duration = (BILLION *(end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec) / MILLION;
   printf("Buffer Acquisitions: %"PRIu64" (%"PRIu64" hits, %"PRIu64" misses)\n", total_acquisitions, mgr->hits, mgr->misses);
+  printf("Pages in Data Set  : %"PRIu32" (%"PRIu64" bytes)\n",opts.page_count, opts.dataset_size);
   printf("Hit Ratio          : %4.2f%%\n", 100.0 * mgr->hits / total_acquisitions);
+  printf("Fixed Memory Ratio : %"PRIu8"%% (%"PRIu64" bytes raw, %"PRIu64" bytes compressed)\n", opts.fixed_ratio, mgr->raw_list->max_size, mgr->comp_list->max_size);
   printf("Manager run time   : %"PRIu32"\n", mgr->run_duration);
   return E_OK;
 }

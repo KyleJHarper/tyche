@@ -1,10 +1,11 @@
 1. Manager
-     a) A new structure to manage the lists.  Functions for list review and adjustment.
-     b) The primary function, manager__analyze(), is where ACCRS logic should do the real magic.
-     c) Manager should be disabled when -F is specified.
-     d) Manager should log output of decisions and supporting data.
-     e) Research options to accommodate aging and if it's even necessary (newer buffers == more likely to reuse?)
-     f) Ensure that a scan protection element exists.
+     a) [done] A new structure to manage the lists.  Functions for list review and adjustment.
+     b) A thread needs to manage the ACCRS logic for each manager.
+     c) List, Manager, and Worker structs need members to track data for ACCRS.
+     d) Research options to accommodate aging and if it's even necessary (newer buffers == more likely to reuse?)
+     e) Ensure that a scan protection element exists.
+     f) Debug logging is probably a good idea for Managers and Workers.
+     g) Manager should print tidy, parsable results.
 2. Reporting
      a) Totals: buffers read, per second, peak?, etc
      b) Buffer hits, misses/faults, and hit ratio.
@@ -26,4 +27,21 @@
      e) Add uint8_t ->count to Locks.  If >= 2* ->lock_ratio this lock is doing too much; try another Lock.
      f) Rerun performance tests for comparison.
      g) Update Makefile to create a debug and release verion of tyche and compare performance.
-     h) Switch the enormous list->pool[] to a dynamic array.
+     h) Profile with valgrind to find memory leaks.
+     i) Profile with instrumentation (gprof, valgrind --tool=callgrind) and optimize weak points.
+5. Skip List
+     a) Switch from list->pool[] to a singly linked circular list with list->head.  Still sorted.
+     b) Create a **skip_list with an index pointer, high pointer, and low pointer.
+     c) Skip list should support a variability to dictate when the next level of indexing should happen.  Multiple of 2.
+     d) Skip list depth should should shrink when too few buffers exist (e.g., after a sweep).
+     e) Skip list bottom end should be *head.
+     f) Skip list top end will always fall short of list end.
+     g) List write locks should be much more localized.
+     h) Adding and removing should shift each affected index node by 1/2; track variance.
+     i) Can we avoid locking the list while we search it for add()/remote() so others can keep reading too?
+        If buffer is removed between reading and trying to get a write lock, how to handle?
+        Can we buf->protect=1 to prevent it from being removed in that race condition?
+     j) List restoration fails if the buffer found (compressed) is list__removed()'d before we restore it.
+6. Niceness
+     a) A progress indicator.
+

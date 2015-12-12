@@ -8,6 +8,21 @@ This will be open-source (as will the ACCRS theory) and free but I am still goin
 ====
 Latest Changelog Entries
 
+**[2015-12-11]**
+*Tyche now does the job I originally wanted it to do... read buffers and use a compressed offload-list.  Hooray.*
+
+*There isn't any ACCRS logic because there are too many other issues preventing good results.  Namely, list management itself is too expensive, particularly list adding/removing.  This will be fixed when I convert to a linked-list with a skip list indexing system later.*
+
+*The following table shows that hit ratio is indeed being affected as expected.  This test used 888 MB of data in 8KB pages.  Tyche was given 500 MB of RAM to use.  There were 112991 pages to choose from in the tests.*
+
+| Ratio | Raw MB | Raw Buffers | Comp MB | Comp Buffers | Test 1 | Test 2 | Test 3 |
+| ----- | -----: | ----------: | ------: | -----------: | -----: | -----: | -----: |
+|   90% |    450 |      54,931 |      50 |      ~16,062 | 56.46% | 56.47% | 56.48% |
+|   60% |    300 |      36,621 |     200 |      ~64,248 | 79.40% | 79.40% | 79.40% |
+|   30% |    150 |      18,310 |     350 |     ~112,433 | 89.46% | 89.46% | 89.43% |
+
+*We are clearly increasing our hit ratio.  The tests only ran for 5 minutes each and the performance of my list management is still poor, so the hit ratios for all tests weren't close to their theorectical averages (because the first hit to a page counts as a miss, so it'll never be 100%).*
+
 **[2015-11-19]**
 *Tyche now supports options processing in a more sane (consistent) manner.  This options struct serves as a nice way to share options with functions.*
 
