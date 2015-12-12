@@ -6,6 +6,7 @@
      e) Ensure that a scan protection element exists.
      f) Debug logging is probably a good idea for Managers and Workers.
      g) Manager should print tidy, parsable results.
+     h) A fixed ratio of 100 should be supported to completely bypass all offloading and list sweeping.
 2. Reporting
      a) Totals: buffers read, per second, peak?, etc
      b) Buffer hits, misses/faults, and hit ratio.
