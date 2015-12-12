@@ -15,13 +15,13 @@ Latest Changelog Entries
 
 *The following table shows that hit ratio is indeed being affected as expected.  This test used 888 MB of data in 8KB pages.  Tyche was given 500 MB of RAM to use.  There were 112991 pages to choose from in the tests.*
 
-| Ratio | Raw MB | Raw Buffers | Comp MB | Comp Buffers | Test 1 | Test 2 | Test 3 |
-| ----- | -----: | ----------: | ------: | -----------: | -----: | -----: | -----: |
-|   90% |    450 |      54,931 |      50 |      ~16,062 | 56.46% | 56.47% | 56.48% |
-|   60% |    300 |      36,621 |     200 |      ~64,248 | 79.40% | 79.40% | 79.40% |
-|   30% |    150 |      18,310 |     350 |     ~112,433 | 89.46% | 89.46% | 89.43% |
+| Ratio | Raw MB | Raw Buffers | Comp MB | Comp Buffers | Acquisitions | Test 1 | Test 2 | Test 3 |
+| ----: | -----: | ----------: | ------: | -----------: | -----------: | -----: | -----: | -----: |
+|   90% |    450 |      54,931 |      50 |      ~16,062 |    2,138,648 | 56.46% | 56.47% | 56.48% |
+|   60% |    300 |      36,621 |     200 |      ~64,248 |    1,439,809 | 79.40% | 79.40% | 79.40% |
+|   30% |    150 |      18,310 |     350 |     ~112,433 |    1,070,778 | 89.46% | 89.46% | 89.43% |
 
-*We are clearly increasing our hit ratio.  The tests only ran for 5 minutes each and the performance of my list management is still poor, so the hit ratios for all tests weren't close to their theorectical averages (because the first hit to a page counts as a miss, so it'll never be 100%).*
+*We are clearly increasing our hit ratio.  The tests only ran for 5 minutes each (3 rounds, averaged) and the performance of my list management is still poor, so the hit ratios for all tests weren't close to their theorectical averages (because the first hit to a page counts as a miss, so it'll never be 100%).*
 
 **[2015-11-19]**
 *Tyche now supports options processing in a more sane (consistent) manner.  This options struct serves as a nice way to share options with functions.*
