@@ -38,6 +38,9 @@ struct buffer {
   uint16_t data_length;           /* Number of bytes originally in *data. */
   uint16_t comp_length;           /* Number of bytes in *data if it was compressed.  Set to 0 when not used. */
   void *data;                     /* Pointer to the memory holding the page data, whether raw or compressed. */
+
+  /* Tracking for the list we're part of. */
+  Buffer *next;                   /* Pointer to the next neighbor since lists are singularly linked. */
 };
 
 

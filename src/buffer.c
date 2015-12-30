@@ -65,6 +65,10 @@ Buffer* buffer__initialize(bufferid_t id, char *page_filespec) {
   new_buffer->comp_length = 0;
   new_buffer->data = NULL;
 
+  /* Tracking for the list we're part of. */
+  new_buffer->next = NULL;
+
+  /* If we weren't given a filespec, then we're done.  Peace out. */
   if (page_filespec == NULL)
     return new_buffer;
 
@@ -314,6 +318,9 @@ int buffer__copy(Buffer *src, Buffer *dst) {
   free(dst->data);
   dst->data = malloc(src->comp_length > 0 ? src->comp_length : src->data_length);
   memcpy(dst->data, src->data, (src->comp_length > 0 ? src->comp_length : src->data_length));
+
+  /* Tracking for the list we're part of. */
+  dst->next = src->next;
 
   return E_OK;
 }

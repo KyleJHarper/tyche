@@ -86,13 +86,43 @@ List* list__initialize() {
   list->offload_to = NULL;
   list->restore_to = NULL;
   list->clock_hand_index = 0;
-  list->sweep_goal = 10;
+  list->sweep_goal = 5;
 
-  /* Buffer Array Itself */
-  for (int i = 0; i < BUFFER_POOL_SIZE; i++)
-    list->pool[i] = NULL;
+  /* Head Nodes of the List and Skiplist (Index) */
+  list->head = NULL;
+  list->levels = 0;
+  SkiplistNode *slnode = NULL;
+  for(int i=0; i<SKIPLIST_MAX; i++) {
+    slnode = (SkiplistNode *)malloc(sizeof(SkiplistNode));
+    if(slnode == NULL)
+      show_error(E_GENERIC, "Failed to allocate memory for an slnode for list initialization.  This is fatal.");
+    // The skiplist index heads should always target the list head buffer.
+    slnode->target = list->head;
+    // The right pointer (next) is always NULL starting off.
+    slnode->right = NULL;
+    // Typically the down pointer will be the head of the next lower level.  But level 0 is the end, so just set it to NULL.
+    if(i == 0) {
+      slnode->down = NULL;
+      continue;
+    }
+    slnode->down = list->indexes[i-1];
+  }
 
   return list;
+}
+
+
+/* list__initialize_skiplistnode
+ * Simply builds an empty skiplist node.
+ */
+SkiplistNode* list__initialize_skiplistnode(Buffer *buf) {
+  SkiplistNode *slnode = (SkiplistNode *)malloc(sizeof(SkiplistNode));
+  if(slnode == NULL)
+    show_error(E_GENERIC, "Failed to allocate memory for a Skiplist Node.  This is fatal.");
+  slnode->down = NULL;
+  slnode->right = NULL;
+  slnode->target = buf;
+  return slnode;
 }
 
 
@@ -152,63 +182,68 @@ int list__release_write_lock(List *list) {
 /* list__add
  * Adds a node to the list specified.  Buffer must be created by caller.  We will lock the list here so insertion is guaranteed
  * to be sort-ordered.  We will also fail safely if the buffer already exists because we don't want duplicates.
- * Note: this function is not responsible for managing list sizes or HCRS logic.  It just adds buffers.
  */
 int list__add(List *list, Buffer *buf) {
-  /* Get a write lock, which guarantees flushing all readers first. */
+  /* Get a write lock. */
   list__acquire_write_lock(list);
+  int rv = E_OK;
 
   /* Make sure we have room to add a new buffer before we proceed. */
   const uint BUFFER_SIZE = BUFFER_OVERHEAD + (buf->comp_length == 0 ? buf->data_length : buf->comp_length);
   if (list->max_size < list->current_size + BUFFER_SIZE) {
-    /* If our current size and sweep goal won't yield enough results, increase the goal until it will. */
+    /* Determine the minimum sweep goal we need, then use the larger of the two. */
     const uint8_t ORIGINAL_SWEEP_GOAL = list->sweep_goal;
-    while (BUFFER_SIZE > (list->current_size * list->sweep_goal / 100) && list->sweep_goal < 99)
-      list->sweep_goal++;
-    if (list->sweep_goal >= 99)
-      show_error(E_GENERIC, "The list__add function needs %d bytes freed but the current list size (%d bytes) cannot achieve that even with our sweep goal maxed.", list->current_size);
-    const uint BYTES_FREED = list__sweep(list);
+    list->sweep_goal = ((100 * list->max_size / (list->current_size + BUFFER_SIZE)) + 1);
+    if (list->sweep_goal < ORIGINAL_SWEEP_GOAL)
+      list->sweep_goal = ORIGINAL_SWEEP_GOAL;
+    if (list->sweep_goal > 99)
+      show_error(E_GENERIC, "When trying to add a buffer, sweep goal was incremented to 100+ which would eliminate the entire list.  This is, I believe, a condition that should never happen.");
+    list__sweep(list);
     list->sweep_goal = ORIGINAL_SWEEP_GOAL;
-    if (BYTES_FREED < BUFFER_SIZE)
-      show_error(E_GENERIC, "The list__sweep() function was couldn't free enough bytes to store the buffer.  Bytes reclaimed: %d, needed, %d.", BYTES_FREED, BUFFER_SIZE);
   }
 
-  /* We now own the lock and no one should be scanning the list.  We have bytes free to hold it.  We can safely scan and edit. */
-  int rv = E_OK, low = 0, high = list->count, mid = 0;
-  for(;;) {
-    // Reset mid and begin testing.
-    mid = (low + high)/2;
-    // If low > high or mid is at the top of the list then we didn't find it.  Time to shift items and update.
-    if (low > high || mid == list->count) {
-      // Integer division can give us the wrong mid since we're post-checking.  Make sure by checking to see if low > mid.
-      if (low > mid)
-        mid = low;
-      for(int i=list->count; i>mid; i--)
-        list->pool[i] = list->pool[i-1];
-      list->pool[mid] = buf;
-      list->count++;
-      list->current_size += BUFFER_SIZE;
-      if (list->clock_hand_index >= mid)
-        list->clock_hand_index++;
+  // Decide how many levels we're willing to set the node upon.
+  int levels = 0;
+  for(int random_value=rand(); (random_value & 1) == 1; random_value >>= 1) {
+    levels++;
+    if(levels == list->levels) {
+      list->levels++;
       break;
     }
+  }
 
-    // If the pool[mid] ID matches, we have an error.  We can't add an existing buffer (duplicate).
-    if (list->pool[mid]->id == buf->id) {
+  // Build a local stack starting at the heads of the indexes, leaving us bread-crumbs when we're ready to insert.
+  SkiplistNode *slstack[levels];
+  slstack[levels] = list->indexes[levels];
+
+  // Traverse the levels to find the ideal location at each level.
+  for(int i = levels; i >= 0; i--) {
+    // Try shifting right until the ->right member is NULL or its value is too high.
+    while(slstack[i]->right != NULL && slstack[i]->right->target->id <= buf->id)
+      slstack[i] = slstack[i]->right;
+    // If the buffer already exists, flag it with rv and leave.
+    if(slstack[i]->target->id == buf->id) {
       rv = E_BUFFER_ALREADY_EXISTS;
       break;
     }
+    // Modify the next slstack node to look at the more-forward position we just jumped to.
+    slstack[i-1] = slstack[i]->down;
+  }
 
-    // If our current pool[mid] ID is too high, update low.
-    if (list->pool[mid]->id < buf->id) {
-      low = mid + 1;
-      continue;
+  // Loop through the slstack and begin linking them together if our slstack building above is still E_OK.
+  if (rv == E_OK) {
+    SkiplistNode *slnode = NULL;
+    for(int i = levels; i >= 0; i--) {
+      // Create a new Skiplist Node for each level we'll be inserting at and insert it into that index.
+      slnode = list__initialize_skiplistnode(buf);
+      slnode->right = slstack[i]->right;
+      slstack[i]->right = slnode;
     }
-
-    // If the pool[mid] ID is too low, we need to update high.
-    if (list->pool[mid]->id > buf->id) {
-      high = mid - 1;
-      continue;
+    // Now that the Nodes all exist we can set their ->down and ->target members.
+    for(int i = levels; i >= 0; i--) {
+      if(i != 0)
+        slstack[i]->right->down = slstack[i-1]->right;
+      slstack[i]->right->target = buf;
     }
   }
 
@@ -568,12 +603,12 @@ int list__balance(List *list, uint ratio) {
 
   // Try to sweep() the raw list if it shrunk.  Attempt to do this with a single call, if even necessary.
   if(list->current_size > list->max_size) {
-    uint8_t original_sweep_goal = list->sweep_goal;
+    const uint8_t ORIGINAL_SWEEP_GOAL = list->sweep_goal;
     list->sweep_goal = (100 * list->max_size / list->current_size) + 1;
     if (list->sweep_goal > 99)
       show_error(E_GENERIC, "When trying to balance the lists, sweep goal was incremented to 100+ which would eliminate the entire list.  This is, I believe, a condition that should never happen.");
     list__sweep(list);
-    list->sweep_goal = original_sweep_goal;
+    list->sweep_goal = ORIGINAL_SWEEP_GOAL;
   }
 
   // All done.  Release our lock and go home.

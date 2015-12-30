@@ -159,6 +159,9 @@ void manager__spawn_worker(Manager *mgr) {
     show_error(E_GENERIC, "Unable to get a worker ID.  This should never happen.");
   mgr->workers[peon.id] = &peon;
 
+  /* While srand should affect all threads per POSIX, call it per-thread anyway since each thread uses list__* functions.  For skiplist. */
+  srand((uint)(time(NULL)));
+
   /* Begin the main loop for grabbing buffers. */
   Buffer *buf = NULL;
   bufferid_t id_to_get = 0;

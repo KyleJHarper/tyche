@@ -37,39 +37,56 @@
  *       again a linked list also requires 16 bytes per buffer more which rapidly diminishes this savings.
  * We are not arguing that an array is better; we're simply explaining our decision.  Remember, this is just one implementation.
  */
-#define BUFFER_POOL_SIZE 2000000   /* 2 Million - This would be better done as VLA from list__initialize() but it's ok for now. */
+
+
+/* Build the Skiplist & Node Structures. */
+typedef struct skiplistnode SkiplistNode;
+struct skiplistnode {
+  /* Directions for Traversal.  Left-To-Right Mentality. */
+  SkiplistNode *right;  /* The next highest node in the skiplist graph. */
+  SkiplistNode *down;   /* The next more-granular node in the skiplist graph. */
+
+  /* Buffer Reference to the List Item Itself */
+  Buffer *target;       /* The buffer this node points to.  Always NULL when *up exists. */
+};
+
 
 /* Build the typedef and structure for a List */
+#define SKIPLIST_MAX 32
 typedef struct list List;
 struct list {
   /* Size and Counter Members */
-  uint32_t count;                   /* Number of buffers in the list. */
-  uint64_t current_size;            /* Number of bytes currently allocated to the buffers in this list. */
-  uint64_t max_size;                /* Maximum number of bytes this buffer is allowed to hold, ever. */
+  uint32_t count;                       /* Number of buffers in the list. */
+  uint64_t current_size;                /* Number of bytes currently allocated to the buffers in this list. */
+  uint64_t max_size;                    /* Maximum number of bytes this buffer is allowed to hold, ever. */
 
   /* Locking, Reference Counters, and Similar Members */
-  pthread_mutex_t lock;             /* For operations requiring exclusive locking of the list (writing to it). */
-  pthread_t lock_owner;             /* Stores the pthread_self() value to avoid double/dead locking. */
-  uint8_t lock_depth;               /* The depth of functions which have locked us, to ensure deeper calls don't release locks. */
-  pthread_cond_t writer_condition;  /* The condition variable for writers to wait for when attempting to drain a list of refs. */
-  pthread_cond_t reader_condition;  /* The condition variable for readers to wait for when attempting to increment ref count. */
-  uint32_t ref_count;               /* Number of threads pinning this list (searching it) */
-  uint8_t pending_writers;          /* Value to indicate how many writers are waiting to edit the list. */
+  pthread_mutex_t lock;                 /* For operations requiring exclusive locking of the list (writing to it). */
+  pthread_t lock_owner;                 /* Stores the pthread_self() value to avoid double/dead locking. */
+  uint8_t lock_depth;                   /* The depth of functions which have locked us, to ensure deeper calls don't release locks. */
+  pthread_cond_t writer_condition;      /* The condition variable for writers to wait for when attempting to drain a list of refs. */
+  pthread_cond_t reader_condition;      /* The condition variable for readers to wait for when attempting to increment ref count. */
+  uint32_t ref_count;                   /* Number of threads pinning this list (searching it) */
+  uint8_t pending_writers;              /* Value to indicate how many writers are waiting to edit the list. */
 
   /* Management and Administration Members */
-  List *offload_to;                 /* The target list to offload buffers to.  Currently raw -> comp and comp -> free() */
-  List *restore_to;                 /* The target list to restore buffers to.  Currently, comp -> raw. */
-  uint32_t clock_hand_index;        /* The current index to be checked when sweeping is invoked. */
-  uint8_t sweep_goal;               /* The percentage of memory we want to free up whenever we sweep, relative to current_size. */
-  uint32_t sweeps;                  /* Number of times the list has been swept. */
-  uint64_t sweep_cost;              /* Time in ns spent sweeping lists. */
+  List *offload_to;                     /* The target list to offload buffers to.  Currently raw -> comp and comp -> free() */
+  List *restore_to;                     /* The target list to restore buffers to.  Currently, comp -> raw. */
+  uint32_t clock_hand_index;            /* The current index to be checked when sweeping is invoked. */
+  uint8_t sweep_goal;                   /* Minimum percentage of memory we want to free up whenever we sweep, relative to current_size. */
+  uint32_t sweeps;                      /* Number of times the list has been swept. */
+  uint64_t sweep_cost;                  /* Time in ns spent sweeping lists. */
 
-  /* Buffer Array Itself */
-  Buffer *pool[BUFFER_POOL_SIZE];   /* Array of pointers to Buffers since we're avoiding the linked list. */
+  /* Management of Nodes for Skiplist and Buffers */
+  Buffer *head;                         /* The head of the list of buffers. */
+  SkiplistNode *indexes[SKIPLIST_MAX];  /* List of the heads of the bottom-most (least-granular) Skiplists. */
+  uint8_t levels;                       /* The current height of the skip list thus far. */
 };
+
 
 /* Function prototypes.  Not required, but whatever. */
 List* list__initialize();
+SkiplistNode* list__initialize_skiplistnode(Buffer *buf);
 int list__add(List *list, Buffer *buf);
 int list__remove(List *list, bufferid_t id);
 int list__update_ref(List *list, int delta);

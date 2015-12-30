@@ -45,4 +45,5 @@
      j) List restoration fails if the buffer found (compressed) is list__removed()'d before we restore it.
 6. Niceness
      a) A progress indicator.
+     b) Update all the documentation in the source files.
 
