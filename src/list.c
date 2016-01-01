@@ -88,9 +88,10 @@ List* list__initialize() {
   list->clock_hand_index = 0;
   list->sweep_goal = 5;
 
-  /* Head Nodes of the List and Skiplist (Index) */
-  list->head = NULL;
-  list->levels = 0;
+  /* Head Nodes of the List and Skiplist (Index). Make the Buffer list head a dummy buffer. */
+  list->head = buffer__initialize(BUFFER_ID_MAX, NULL);
+  list->head->next = list->head;
+  list->levels = 1;
   SkiplistNode *slnode = NULL;
   for(int i=0; i<SKIPLIST_MAX; i++) {
     slnode = (SkiplistNode *)malloc(sizeof(SkiplistNode));
@@ -204,46 +205,61 @@ int list__add(List *list, Buffer *buf) {
 
   // Decide how many levels we're willing to set the node upon.
   int levels = 0;
-  for(int random_value=rand(); (random_value & 1) == 1; random_value >>= 1) {
-    levels++;
+  for(int random_value=rand(); random_value != 0; random_value >>= 1) {
+    if(levels + 1 < SKIPLIST_MAX)
+      levels++;
     if(levels == list->levels) {
+      // We've reached the highest current level, increment ->levels and move on.  This will cap at 32 (exponent of int) or SKIPLIST_MAX.
       list->levels++;
       break;
     }
   }
 
-  // Build a local stack starting at the heads of the indexes, leaving us bread-crumbs when we're ready to insert.
-  SkiplistNode *slstack[levels];
-  slstack[levels] = list->indexes[levels];
+  // Build a local stack based on the main list->indexes[] to build breadcrumbs.
+  SkiplistNode *slstack[SKIPLIST_MAX];
+  for(int i = 0; i < SKIPLIST_MAX; i++)
+    slstack[i] = list->indexes[i];
 
-  // Traverse the levels to find the ideal location at each level.
-  for(int i = levels; i >= 0; i--) {
+  // Traverse the list to find the ideal location at each level.
+  for(int i = list->levels; i >= 0; i--) {
     // Try shifting right until the ->right member is NULL or its value is too high.
     while(slstack[i]->right != NULL && slstack[i]->right->target->id <= buf->id)
       slstack[i] = slstack[i]->right;
+    // If this node's ->target is NULL, we never left the index's head.  Just continue to the next level.
+    if(slstack[i]->target == NULL)
+      continue;
     // If the buffer already exists, flag it with rv and leave.
     if(slstack[i]->target->id == buf->id) {
       rv = E_BUFFER_ALREADY_EXISTS;
       break;
     }
-    // Modify the next slstack node to look at the more-forward position we just jumped to.
-    slstack[i-1] = slstack[i]->down;
+    // Modify the next slstack node to look at the more-forward position we just jumped to.  If we're at index 0, skip it, we're done.
+    if(i != 0)
+      slstack[i-1] = slstack[i]->down;
   }
 
   // Loop through the slstack and begin linking them together if our slstack building above is still E_OK.
   if (rv == E_OK) {
     SkiplistNode *slnode = NULL;
-    for(int i = levels; i >= 0; i--) {
+    for(int i = 0; i < levels; i++) {
       // Create a new Skiplist Node for each level we'll be inserting at and insert it into that index.
       slnode = list__initialize_skiplistnode(buf);
       slnode->right = slstack[i]->right;
       slstack[i]->right = slnode;
     }
-    // Now that the Nodes all exist we can set their ->down and ->target members.
-    for(int i = levels; i >= 0; i--) {
-      if(i != 0)
-        slstack[i]->right->down = slstack[i-1]->right;
-      slstack[i]->right->target = buf;
+    // Now that the Nodes all exist (if any) and our slstack's ->right members point to them, we can set their ->down members.
+    for(int i = levels - 1; i > 0; i--)
+      slstack[i]->right->down = slstack[i-1]->right;
+    // Finally, modify buffer list to insert *buf; even if no Skiplist Nodes were inserted. Since we searched, slstack[0] should be closest.
+    Buffer nearest_neighbor = slstack[0]->target;
+    // Move right in the buffer list.  ->head is always max, so no need to check anything but ->id.
+    while(nearest_neighbor->next->id <= buf->id)
+      nearest_neighbor = nearest_neighbor->next;
+    if(nearest_neighbor->id == buf->id) {
+      rv = E_BUFFER_ALREADY_EXISTS;
+    } else {
+      buf->next = nearest_neighbor->next;
+      nearest_neighbor->next = buf;
     }
   }
 

@@ -30,6 +30,7 @@
      g) Update Makefile to create a debug and release verion of tyche and compare performance.
      h) Profile with valgrind to find memory leaks.
      i) Profile with instrumentation (gprof, valgrind --tool=callgrind) and optimize weak points.
+     j) Once stable, try testing malloc vs tcmalloc vs jemalloc.  See if any real results exist.
 5. Skip List
      a) Switch from list->pool[] to a singly linked circular list with list->head.  Still sorted.
      b) Create a **skip_list with an index pointer, high pointer, and low pointer.
