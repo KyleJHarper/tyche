@@ -320,7 +320,8 @@ int buffer__copy(Buffer *src, Buffer *dst) {
   memcpy(dst->data, src->data, (src->comp_length > 0 ? src->comp_length : src->data_length));
 
   /* Tracking for the list we're part of. */
-  dst->next = src->next;
+  // We do NOT copy ->next data because that's handled by list__* functions.
+  dst->next = NULL;
 
   return E_OK;
 }

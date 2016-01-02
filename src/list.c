@@ -85,12 +85,12 @@ List* list__initialize() {
   /* Management and Administration Members */
   list->offload_to = NULL;
   list->restore_to = NULL;
-  list->clock_hand_index = 0;
   list->sweep_goal = 5;
 
   /* Head Nodes of the List and Skiplist (Index). Make the Buffer list head a dummy buffer. */
   list->head = buffer__initialize(BUFFER_ID_MAX, NULL);
   list->head->next = list->head;
+  list->clock_hand = list->head;
   list->levels = 1;
   SkiplistNode *slnode = NULL;
   for(int i=0; i<SKIPLIST_MAX; i++) {
@@ -205,8 +205,8 @@ int list__add(List *list, Buffer *buf) {
 
   // Decide how many levels we're willing to set the node upon.
   int levels = 0;
-  for(int random_value=rand(); random_value != 0; random_value >>= 1) {
-    if(levels + 1 < SKIPLIST_MAX)
+  for(int random_value = rand(); random_value != 0; random_value >>= 1) {
+    if(levels < SKIPLIST_MAX)
       levels++;
     if(levels == list->levels) {
       // We've reached the highest current level, increment ->levels and move on.  This will cap at 32 (exponent of int) or SKIPLIST_MAX.
@@ -220,13 +220,13 @@ int list__add(List *list, Buffer *buf) {
   for(int i = 0; i < SKIPLIST_MAX; i++)
     slstack[i] = list->indexes[i];
 
-  // Traverse the list to find the ideal location at each level.
+  // Traverse the list to find the ideal location at each level.  Since we're searching, use list->levels as the start height.
   for(int i = list->levels; i >= 0; i--) {
     // Try shifting right until the ->right member is NULL or its value is too high.
     while(slstack[i]->right != NULL && slstack[i]->right->target->id <= buf->id)
       slstack[i] = slstack[i]->right;
-    // If this node's ->target is NULL, we never left the index's head.  Just continue to the next level.
-    if(slstack[i]->target == NULL)
+    // If this node's ->target is the lists's head, we never left the index's head.  Just continue to the next level.
+    if(slstack[i]->target == list->head)
       continue;
     // If the buffer already exists, flag it with rv and leave.
     if(slstack[i]->target->id == buf->id) {
@@ -261,6 +261,9 @@ int list__add(List *list, Buffer *buf) {
       buf->next = nearest_neighbor->next;
       nearest_neighbor->next = buf;
     }
+    // And finally, update the list metrics since we're all good!
+    list->current_size += BUFFER_SIZE;
+    list->count++;
   }
 
   /* Let go of the write lock we acquired. */
@@ -277,44 +280,56 @@ int list__add(List *list, Buffer *buf) {
 int list__remove(List *list, bufferid_t id) {
   /* Get a write lock, which guarantees flushing all readers first. */
   list__acquire_write_lock(list);
+  int rv = E_BUFFER_NOT_FOUND;
 
-  /* We now have the list locked and can begin searching for the index of id. */
-  int low = 0, high = list->count, mid = 0, rv = E_OK;
-  for(;;) {
-    // Reset mid and begin testing.  Start with boundary testing to break if we're done.
-    mid = (low + high)/2;
-    if (high < low || low > high || mid >= list->count) {
-      rv = E_BUFFER_NOT_FOUND;
-      break;
-    }
+  /* Build a local stack of SkipistNode pointers to serve as a reference later. */
+  SkiplistNode *slstack[SKIPLIST_MAX];
+  for(int i = 0; i < SKIPLIST_MAX; i++)
+    slstack[i] = list->indexes[i];
 
-    // If the pool[mid] ID matches, we found the right index.  Victimize the buffer, collapse array downward, & update the list.
-    if (list->pool[mid]->id == id) {
-      const uint BUFFER_SIZE = BUFFER_OVERHEAD + (list->pool[mid]->comp_length == 0 ? list->pool[mid]->data_length : list->pool[mid]->comp_length);
-      if (buffer__victimize(list->pool[mid]) != 0)
-        show_error(rv, "The list__remove function received an error when trying to victimize the buffer (%d).\n", rv);
-      buffer__destroy(list->pool[mid]);
-      for (int i=mid; i<list->count - 1; i++)
-        list->pool[i] = list->pool[i+1];
-      list->pool[list->count - 1] = NULL;
-      list->count--;
-      list->current_size -= BUFFER_SIZE;
-      if (list->clock_hand_index >= mid)
-        list->clock_hand_index--;
-      break;
-    }
+  /* Start forward scanning until we find it at each level.  If a level is missing it, set that pointer to NULL. */
+  int levels = 0;
+  for(int i = list->levels - 1; i >= 0; i--) {
+    // Shift right until the ->right target ID is too high.  Do NOT land on matches!  We don't have ->left pointers.
+    while(slstack[i]->right != NULL && slstack[i]->right->target->id < id)
+      slstack[i] = slstack[i]->right;
+    // Set the next slstack index to the ->down member of the most-forward position thus far.  Skip if we're at 0.
+    if(i != 0)
+      slstack[i-1] = slstack[i]->down;
+    // If ->right exists and its id matches increment levels so we can modify the skiplist levels later.
+    if(slstack[i]->right != NULL && slstack[i]->right->target->id == id)
+      levels++;
+  }
 
-    // If our current pool[mid] ID is too high, update low.
-    if (list->pool[mid]->id < id) {
-      low = mid + 1;
-      continue;
-    }
+  /* Set up the nearest neighbor from slstack[0] and start removing nodes and the buffer. */
+  Buffer *nearest_neighbor = slstack[0]->target;
+  while(nearest_neighbor->next != NULL && nearest_neighbor->next->id < id)
+    nearest_neighbor = nearest_neighbor->next;
+  // We should be close-as-can-be.  If ->next matches, victimize and remove it.  Otherwise we're still E_BUFFER_NOT_FOUND.
+  if(nearest_neighbor->next->id == id) {
+    rv = E_OK;
+    Buffer *buf = nearest_neighbor->next;
+    const uint BUFFER_SIZE = BUFFER_OVERHEAD + (buf->comp_length == 0 ? buf->data_length : buf->comp_length);
+    int victimize_status = buffer__victimize(buf);
+    if (victimize_status != 0)
+      show_error(victimize_status, "The list__remove function received an error when trying to victimize the buffer (%d).", victimize_status);
+    // Update the list metrics and move the clock hand if it's pointing at the same address as buf.
+    if(list->clock_hand == buf)
+      list->clock_hand = list->clock_hand->next;
+    list->count--;
+    list->current_size -= BUFFER_SIZE;
+    // Now change our ->next pointer for nearest_neighbor to drop this from the list, then destroy buf.
+    nearest_neighbor->next = buf->next;
+    buffer__destroy(buf);
+  }
 
-    // If the pool[mid] ID is too low, we need to update high.
-    if (list->pool[mid]->id > id) {
-      high = mid - 1;
-      continue;
-    }
+  /* Remove the Skiplist Nodes that were found at various levels. */
+  SkiplistNode *slnode = NULL;
+  for(int i = levels - 1; i >=0; i--) {
+    // Each of these levels was already found to have the node, so ->right->right has to exist or at least be NULL.
+    slnode = slstack[i]->right;
+    slstack[i]->right = slstack[i]->right->right;
+    free(slnode);
   }
 
   /* Let go of the write lock we acquired. */
@@ -331,38 +346,45 @@ int list__search(List *list, Buffer **buf, bufferid_t id) {
   /* Update the ref count so we can begin searching. */
   list__update_ref(list, 1);
 
-  /* Begin searching the list. */
-  int rv = E_BUFFER_NOT_FOUND, low = 0, high = list->count, mid = 0;
-  for(;;) {
-    // Reset mid and begin testing.  Start with boundary testing to break if we're done.
-    mid = (low + high)/2;
-    if (high < low || low > high || mid >= list->count)
-      break;
-
-    // If the pool[mid] ID matches, we found the right index.  Hooray!  Update ref count if possible.  If not, let caller know.
-    if (list->pool[mid]->id == id) {
-      rv = buffer__lock(list->pool[mid]);
-      if (rv == E_OK) {
-        // We got a good buffer, update the ref and assign it to our pointer argument.
-        *buf = list->pool[mid];
+  /* Begin searching the list at the highest level's index head. */
+  int rv = E_BUFFER_NOT_FOUND;
+  SkiplistNode *slnode = list->indexes[list->levels];
+  while(rv == E_BUFFER_NOT_FOUND) {
+    // Move right until we can't go farther.
+    while(slnode->right != NULL && slnode->right->target->id <= id)
+      slnode = slnode->right;
+    // If the node matches, we're done!  Try to update the ref and assign everything appropriately.
+    if(slnode->target->id == id) {
+      rv = buffer__lock(slnode->target);
+      if(rv == E_OK) {
+        *buf = slnode->target;
         buffer__update_ref(*buf, 1);
       }
       // If E_OK or victimized we still need to unlock it.
-      if (rv == E_OK || rv == E_BUFFER_IS_VICTIMIZED)
-        buffer__unlock(list->pool[mid]);
+      if(rv == E_OK || rv == E_BUFFER_IS_VICTIMIZED)
+        buffer__unlock(slnode->target);
+    }
+    // If we can't move down, leave.
+    if(slnode->down == NULL)
       break;
-    }
+    slnode = slnode->down;
+  }
 
-    // If our current pool[mid] ID is too high, update low.
-    if (list->pool[mid]->id < id) {
-      low = mid + 1;
-      continue;
-    }
-
-    // If the pool[mid] ID is too low, we need to update high.
-    if (list->pool[mid]->id > id) {
-      high = mid - 1;
-      continue;
+  /* If we're still E_BUFFER_NOT_FOUND, scan the nearest_neighbor until we find it. */
+  if(rv == E_BUFFER_NOT_FOUND) {
+    Buffer *nearest_neighbor = slnode->target;
+    while(nearest_neighbor->next <= id)
+      nearest_neighbor = nearest_neighbor->next;
+    // If we got a match, score.  Our nearest_neighbor is now the match.  Update ref and assign things.
+    if(nearest_neighbor->id == id) {
+      rv = buffer__lock(nearest_neighbor);
+      if(rv == E_OK) {
+        *buf = nearest_neighbor;
+        buffer__update_ref(*buf, 1);
+      }
+      // If E_OK or victimized we still need to unlock it.
+      if(rv == E_OK || rv == E_BUFFER_IS_VICTIMIZED)
+        buffer__unlock(nearest_neighbor);
     }
   }
 
@@ -373,11 +395,7 @@ int list__search(List *list, Buffer **buf, bufferid_t id) {
   if (rv == E_BUFFER_NOT_FOUND && list->offload_to != NULL) {
     rv = list__search(list->offload_to, buf, id);
     if (rv == E_OK) {
-      // We found it!  Remove our reference pin from the compressed buffer we just found.
-      buffer__lock(*buf);
-      buffer__update_ref(*buf, -1);
-      buffer__unlock(*buf);
-      // Restore the buffer.  Restoration always sets ref_count to 1 for us.
+      // Found it!  Restoration requires caller's pin to avoid a race, so do NOT buffer__update_ref() the buffer.
       if (list__restore(list, buf) != E_OK)
         show_error(E_GENERIC, "Failed to list__restore a buffer.  This should never happen.");
     }
@@ -566,6 +584,7 @@ int list__pop(List *list, uint64_t bytes_needed) {
 /* list__restore
  * Takes the buffer specified and adds it back to the list specified after decompressing the data member and updating all of the
  * tracking data.
+ * Requires buf to have one pin from the caller!!  Otherwise a race condition is risked.
  */
 int list__restore(List *list, Buffer **buf) {
   // Make sure we have a list, an offload_to, and a valid buffer.
@@ -576,9 +595,14 @@ int list__restore(List *list, Buffer **buf) {
   if (buf == NULL)
     show_error(E_GENERIC, "The list__restore function was given an invalid buffer.  This should never happen.");
 
-  // Copy the buffer so we can begin restoring it.
+  // Lock both lists, for safety.
+  list__acquire_write_lock(list);
+  list__acquire_write_lock(list->offload_to);
+
+  // Copy the buffer so we can begin restoring it.  Bump comp_hits since it's most logical here.
   Buffer *new_buf = buffer__initialize(0, NULL);
   buffer__copy(*buf, new_buf);
+  new_buf->comp_hits++;
 
   // Decompress the new_buf Buffer
   if (buffer__decompress(new_buf) != E_OK)
@@ -587,12 +611,19 @@ int list__restore(List *list, Buffer **buf) {
   new_buf->victimized = 0;
   new_buf->ref_count = 1;
 
+  // Now that we're done with **buf, remove the pin our caller sent us so that list__remove() won't hang on victimization.
+  buffer__lock(*buf);
+  buffer__update_ref(*buf, -1);
+  buffer__unlock(*buf);
+
   // Add the decompressed copy to the list source list and remove the compressed buffer from the offload list.
   list__add(list, new_buf);
   list__remove(list->offload_to, (*buf)->id);
 
-  // Assign the source pointer to our local copy's address and leave.
+  // Assign the source pointer to our local copy's address, release write locks, and leave.
   *buf = new_buf;
+  list__release_write_lock(list);
+  list__release_write_lock(list->offload_to);
   return E_OK;
 }
 

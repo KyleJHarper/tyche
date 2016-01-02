@@ -72,13 +72,13 @@ struct list {
   /* Management and Administration Members */
   List *offload_to;                     /* The target list to offload buffers to.  Currently raw -> comp and comp -> free() */
   List *restore_to;                     /* The target list to restore buffers to.  Currently, comp -> raw. */
-  uint32_t clock_hand_index;            /* The current index to be checked when sweeping is invoked. */
   uint8_t sweep_goal;                   /* Minimum percentage of memory we want to free up whenever we sweep, relative to current_size. */
   uint32_t sweeps;                      /* Number of times the list has been swept. */
   uint64_t sweep_cost;                  /* Time in ns spent sweeping lists. */
 
   /* Management of Nodes for Skiplist and Buffers */
   Buffer *head;                         /* The head of the list of buffers. */
+  Buffer *clock_hand;                   /* The current Buffer to be checked when sweeping is invoked. */
   SkiplistNode *indexes[SKIPLIST_MAX];  /* List of the heads of the bottom-most (least-granular) Skiplists. */
   uint8_t levels;                       /* The current height of the skip list thus far. */
 };
