@@ -287,7 +287,7 @@ int list__remove(List *list, bufferid_t id) {
   for(int i = 0; i < SKIPLIST_MAX; i++)
     slstack[i] = list->indexes[i];
 
-  /* Start forward scanning until we find it at each level.  If a level is missing it, set that pointer to NULL. */
+  /* Start forward scanning until we find it at each level. */
   int levels = 0;
   for(int i = list->levels - 1; i >= 0; i--) {
     // Shift right until the ->right target ID is too high.  Do NOT land on matches!  We don't have ->left pointers.
@@ -325,7 +325,7 @@ int list__remove(List *list, bufferid_t id) {
 
   /* Remove the Skiplist Nodes that were found at various levels. */
   SkiplistNode *slnode = NULL;
-  for(int i = levels - 1; i >=0; i--) {
+  for(int i = levels - 1; i >= 0; i--) {
     // Each of these levels was already found to have the node, so ->right->right has to exist or at least be NULL.
     slnode = slstack[i]->right;
     slstack[i]->right = slstack[i]->right->right;
@@ -411,7 +411,7 @@ int list__search(List *list, Buffer **buf, bufferid_t id) {
  * lock the list for the caller since list-poofing isn't a reality like buffer poofing.
  */
 int list__update_ref(List *list, int delta) {
-  /* Do we own the lock?  If so, we don't need to mess with reference counting.  Avoids reader interference. */
+  /* Do we own the lock as a writer?  If so, we don't need to mess with reference counting.  Avoids deadlocking. */
   if (pthread_equal(list->lock_owner, pthread_self()))
     return E_OK;
 
@@ -462,22 +462,20 @@ uint list__sweep(List *list) {
   temp_list->offload_to = temp_list;
   int rv = 0;
 
-  // Sanity Checks
+  // Sanity Check.  Then start looping to free up memory.
   if (list->offload_to == NULL)
     show_error(E_GENERIC, "The list__sweep() function was given a list that doesn't have an offload_to target.  This is definitely a problem.");
   while (BYTES_NEEDED > bytes_freed) {
-    // Sweeping until we find a buffer to remove.  Popularity is halved until a victim is found.  The race condition on this is ok.
+    // Scan until we find a buffer to remove.  Popularity is halved until a victim is found.  Skip head matches.
     for(;;) {
-      if (list->clock_hand_index >= list->count)
-        list->clock_hand_index = 0;
-      if (list->pool[list->clock_hand_index]->popularity == 0)
+      if (list->clock_hand->popularity == 0 && list->clock_hand != list->head)
         break;
-      list->pool[list->clock_hand_index]->popularity = list->pool[list->clock_hand_index]->popularity >> 1;
-      list->clock_hand_index++;
+      list->clock_hand->popularity >>= 1;
+      list->clock_hand = list->clock_hand->next;
     }
     // We only reach this when an unpopular victim id is found.  Let's get to work copying the buffer and compressing it.
     buf = buffer__initialize(0, NULL);
-    buffer__copy(list->pool[list->clock_hand_index], buf);
+    buffer__copy(list->clock_hand, buf);
     rv = buffer__compress(buf);
     if (rv != E_OK)
       show_error(rv, "Failed to compress a buffer when performing list__sweep().  This shouldn't happen.  Return code was %d.", rv);
@@ -490,7 +488,7 @@ uint list__sweep(List *list) {
     rv = list__add(temp_list, buf);
     if (rv != E_OK)
       show_error(rv, "Failed to send buf to the temp_list while sweeping.  Not sure how.  Return code is %d.", rv);
-    rv = list__remove(list, list->pool[list->clock_hand_index]->id);
+    rv = list__remove(list, list->clock_hand->id);
     if (rv != E_OK)
       show_error(rv, "Failed to remove the selected victim while sweeping.  Not sure how.  Return code is %d", rv);
     bytes_freed += buf->data_length - buf->comp_length;
@@ -499,11 +497,17 @@ uint list__sweep(List *list) {
   // Now that we've freed up memory, move stuff from the temp_list to the offload (compressed) list.
   if (temp_list->current_size + list->offload_to->current_size > list->offload_to->max_size)
     list__pop(list->offload_to, temp_list->current_size);
-  // This function is the ONLY one who should ever decrement popularity, creating "generations" for list__pop()-ing later.
-  for (int i=0; i<list->offload_to->count; i++)
-    list->offload_to->pool[i]->popularity--;
-  for (int i=0; i<temp_list->count; i++)
-    list__push(list->offload_to, temp_list->pool[i]);
+  // Decrement popularity, creating "generations" for list__pop()-ing later.
+  Buffer *current = list->offload_to->head;
+  while(current->next != list->offload_to->head) {
+    current = current->next;
+    current->popularity--;
+  }
+  current = temp_list->head;
+  while(current->next != temp_list->head) {
+    current = current->next;
+    list__push(list->offload_to, current);
+  }
 
   // Wrap up and leave.
   clock_gettime(CLOCK_MONOTONIC, &end);
@@ -543,10 +547,6 @@ int list__push(List *list, Buffer *buf) {
 
 /* list__pop
  * A wrapper to scan for the least popular buffer(s) in a compressed list and have it/them removed until bytes_needed is satisfied.
- * To prevent excessive looping and work, we scan for the lowest popularity once, then remove buffers with that popularity.  If
- * our goal still isn't met, the low-threshold is incremented and we do it again.  This doesn't give true FIFO, but it give FIFO in
- * regard to "generations" of buffers.  Each generation is added with list__push() calls (from list__sweep()) and their popularity
- * is set to MAX_POPULARITY; at the end of each list__sweep() we decrement all buffers' popularity members.
  * See:  list__push() for this function's counterpart.
  */
 int list__pop(List *list, uint64_t bytes_needed) {
@@ -556,24 +556,63 @@ int list__pop(List *list, uint64_t bytes_needed) {
 
   // The caller will usually lock the list, but we'll do it just to be safe.
   list__acquire_write_lock(list);
-  // Loop through and eliminate buffers until we have enough space to add everything.  First, find the lowest value.
+
+  // Set up some tracking items.
   uint8_t lowest_popularity = MAX_POPULARITY;
-  for(uint32_t i = 0; i < list->count; i++)
-    lowest_popularity = lowest_popularity < list->pool[i]->popularity ? lowest_popularity : list->pool[i]->popularity;
+  Buffer *current = NULL;
+  int to_be_freed[MAX_POPULARITY+1];
+  SkiplistNode *popularity_slstack[MAX_POPULARITY+1];
+  SkiplistNode *slstack_forward_nodes[MAX_POPULARITY+1];
+  SkiplistNode *slnode = NULL;
+  for(int i = 0; i <= MAX_POPULARITY; i++) {
+    popularity_slstack[i] = list__initialize_skiplistnode(NULL);
+    slstack_forward_nodes[i] = popularity_slstack[i];
+    to_be_freed[i] = 0;
+  }
+
+  // Loop until we find enough memory to free up.
+  current = list->head;
   while (bytes_needed > (list->max_size - list->current_size)) {
-    // Just for safety...
-    if (lowest_popularity > MAX_POPULARITY)
-      show_error(E_GENERIC, "The list__pop() function exceeded MAX_POPULARITY (%d) with %d without freeing enough memory.  This is fatal.", MAX_POPULARITY, lowest_popularity);
-    // Remove buffers from the generation with popularity of lowest_popularity until we have enough space.
-    for (uint32_t i = 0; i < list->count; i++) {
-      if (list->pool[i]->popularity == lowest_popularity) {
-        list__remove(list, list->pool[i]->id);
-        if (bytes_needed <= (list->max_size - list->current_size))
-          break;
-        i--;
+    while(current->next != list->head) {
+      current = current->next;
+      // Rapidly decline to the lowest popularity item and track all occurrences of the generation.
+      if(current->popularity > lowest_popularity)
+        continue;
+      to_be_freed[current->popularity] += BUFFER_OVERHEAD + (current->comp_length == 0 ? current->data_length : current->comp_length);
+      // Set lowest and add a new node to this stack's list.  The ->right is always NULL, so just change the forward pointer.
+      lowest_popularity = current->popularity;
+      slnode = list__initialize_skiplistnode(current);
+      slstack_forward_nodes[lowest_popularity]->right = slnode;
+      slstack_forward_nodes[lowest_popularity] = slnode;
+      // If a long enough list exists to free all required memory, leave.
+      if(to_be_freed[lowest_popularity] >= bytes_needed)
+        break;
+    }
+    // Free up the memory at the lowest priority.  We'll kill slnodes later below.
+    slnode = popularity_slstack[lowest_popularity];
+    while(slnode->right != NULL) {
+      slnode = slnode->right;
+      list__remove(list, slnode->target->id);
+      slnode->target = NULL;
+    }
+    // Set current to the most-forward position of the next lowest popularity found in case we need to scan for more memory.
+    for(int new_low = lowest_popularity+1; new_low <= MAX_POPULARITY; new_low++) {
+      if(popularity_slstack[new_low]->right != NULL) {
+        current = slstack_forward_nodes[new_low]->target;
+        lowest_popularity = new_low;
+        break;
       }
     }
-    lowest_popularity++;
+  }
+
+  // Clean up the memory we used to build the slstacks.
+  for(int i = 0; i <= MAX_POPULARITY; i++) {
+    while(popularity_slstack[i]->right != NULL) {
+      slnode = popularity_slstack[i]->right;
+      popularity_slstack[i]->right = slnode->right;
+      free(slnode);
+    }
+    free(popularity_slstack[i]);
   }
 
   list__release_write_lock(list);

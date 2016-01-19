@@ -8,8 +8,20 @@
 #include <stdio.h>
 #include <pthread.h>
 #include "buffer.h"
+#include "list.h"
 
 int main() {
+  // -- SkiplistNode Information
+  printf("\n");
+  /* Directions for Traversal.  Left-To-Right Mentality. */
+  printf("Size of SkiplistNode->right           : %zu Bytes\n", sizeof((SkiplistNode *)0)->right);
+  printf("Size of SkiplistNode->down            : %zu Bytes\n", sizeof((SkiplistNode *)0)->down);
+  /* Buffer Reference to the List Item Itself */
+  printf("Size of SkiplistNode->target          : %zu Bytes\n", sizeof((SkiplistNode *)0)->target);
+  printf("Size of SkiplistNode                  : %zu Bytes\n", sizeof(SkiplistNode));
+
+
+  // -- Buffer Information
   printf("\n");
   /* Attributes for typical buffer organization and management. */
   printf("Size of Buffer->id           : %zu Bytes\n", sizeof((Buffer *)0)->id);
@@ -25,8 +37,8 @@ int main() {
   printf("Size of Buffer->data_length  : %zu Bytes\n", sizeof((Buffer *)0)->data_length);
   printf("Size of Buffer->comp_length  : %zu Bytes\n", sizeof((Buffer *)0)->comp_length);
   printf("Size of Buffer->data         : %zu Bytes\n", sizeof((Buffer *)0)->data);
-
-
+  /* Tracking for the list we're part of. */
+  printf("Size of Buffer->next         : %zu Bytes\n", sizeof((Buffer *)0)->next);
   printf("Size of Buffer               : %zu Bytes\n", sizeof(Buffer));
 
   printf("\n\n%10s%10s\n", "PAGE_SIZE", "Overhead");
