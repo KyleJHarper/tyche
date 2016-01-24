@@ -159,7 +159,7 @@ void tests__synchronized_readwrite(List *raw_list) {
       show_error(E_GENERIC, "The list count (%d) cannot be less than or equal to the list floor (%d)", rwopts.list_count, rwopts.list_floor);
   }
   raw_list->max_size = 100 * 1024 * 1024;
-  Buffer *temp;
+  Buffer *temp = NULL, *current = NULL;
   char *sample_data = "some text, hooray for me";
   // Change the lock count so it's reasonable.
   opts.max_locks = rwopts.list_count / 2;
@@ -179,7 +179,7 @@ void tests__synchronized_readwrite(List *raw_list) {
   for (int i=0; i<rwopts.worker_count; i++)
     pthread_create(&workers[i], NULL, (void *) &tests__read, &rwopts);
 
-  // Start up a chaos monkies for insanity.
+  // Start up a chaos monkeys for insanity.
   pthread_t chaos_monkeys[rwopts.chaos_monkeys];
   for (int i=0; i<rwopts.chaos_monkeys; i++)
     pthread_create(&chaos_monkeys[i], NULL, (void *) &tests__chaos, &rwopts);
@@ -191,9 +191,11 @@ void tests__synchronized_readwrite(List *raw_list) {
     pthread_join(chaos_monkeys[i], NULL);
 
   int has_failures = 0;
-  for (int i=0; i<raw_list->count; i++) {
-    if (raw_list->pool[i]->ref_count != 0) {
-      printf("Buffer ID number %d has non-zero ref_count: %d  (lock_id %d)\n", raw_list->pool[i]->id, raw_list->pool[i]->ref_count, raw_list->pool[i]->lock_id);
+  current = raw_list->head;
+  while(current->next != raw_list->head) {
+    current = current->next;
+    if (current->ref_count != 0) {
+      printf("Buffer ID number %d has non-zero ref_count: %d  (lock_id %d)\n", current->id, current->ref_count, current->lock_id);
       has_failures++;
     }
   }
@@ -214,7 +216,7 @@ void tests__read(ReadWriteOpts *rwopts) {
   srand(time(0));
   int rv = 0;
   bufferid_t id_to_get = 0;
-  Buffer *selected;
+  Buffer *selected = NULL;
   for (int i=0; i<rwopts->reads_per_worker; i++) {
     for(;;) {
       id_to_get = rand() % rwopts->list_count;
@@ -263,14 +265,20 @@ void tests__elements(List *raw_list) {
   Buffer *elem1 = buffer__initialize(1, NULL);  list__add(raw_list, elem1);
   Buffer *elem2 = buffer__initialize(2, NULL);  list__add(raw_list, elem2);
   Buffer *elem3 = buffer__initialize(3, NULL);  list__add(raw_list, elem3);
+  Buffer *buf = NULL;
+  for(int i=0; i<500; i++) {
+    buf = buffer__initialize(i, NULL);
+    list__add(raw_list, buf);
+  }
 
   printf("Number of raw  elements: %d\n", raw_list->count);
-
+tests__list_structure(raw_list);
   list__remove(raw_list, elem1->id);
   list__remove(raw_list, elem2->id);
   list__remove(raw_list, elem3->id);
 
   printf("Number of raw  elements: %d\n", raw_list->count);
+tests__list_structure(raw_list);
   return;
 }
 
@@ -283,11 +291,9 @@ void tests__elements(List *raw_list) {
 void tests__io(char *pages[]) {
   int id_to_get = 128;
   while (id_to_get >= opts.page_count && id_to_get != 0)
-    id_to_get /= 2;
-  if (id_to_get == 0) {
-    printf("The tests__io function reached id_to_get value of 0... are you sure you pointed tyche to a directory with pages?");
-    exit(1);
-  }
+    id_to_get >>= 1;
+  if (id_to_get == 0)
+    show_error(E_GENERIC, "The tests__io function reached id_to_get value of 0... are you sure you pointed tyche to a directory with pages?");
 
   // Looks like we have a valid ID to get.  Let's see if it actually works...
   Buffer *buf = buffer__initialize(id_to_get, pages[id_to_get - 1]);
@@ -305,30 +311,59 @@ void tests__io(char *pages[]) {
  * test but it would preclude us from testing JUST compression, which is the point here.
  */
 void tests__compression() {
-  /* Test 1:  make sure the LZ4_* functions can compress and decompress data. */
-  // -- Basic stuff
-  void *src = "Lorem ipsum dolor. Sit amet amet mollis vitae posuere egestas iaculis aptent. Ante ac molestie laoreet et ut. Tristique aptent egestas purus lorem mattis. Pharetra ultricies risus. Eget scelerisque augue. Fames iaculis donec. Pellentesque donec tristique at libero vulputate metus morbi lectus. Eu quam in nibh tellus wisi. At aliquam sagittis aenean sit accumsan. Cupidatat gravida facilisis gravida imperdiet inceptos lacus ultricies dignissim fringilla nunc sed magna mollis quisque purus semper tempor. A velit in suspendisse curabitur ut sollicitudin mi adipiscing. A pellentesque sociosqu exercitationem sit pede. Vestibulum sed sed. Odio nulla lectus. Convallis quam egestas magnis est sit. Metus porta tellus. Scelerisque sollicitudin auctor non dictum dolor condimentum ipsum adipiscing ornare a nec. Tempor felis urna. Placerat proin elementum rem litora praesent ut semper et. Eleifend ac vel nam praesent mauris libero non conubia quis id gravida. Vel est augue. Vel non lacus magna lorem nisl diam sit eu. Vestibulum placerat molestie congue bibendum vulputate metus ultrices sollicitudin. Convallis arcu mollitia. Purus id magna. Volutpat erat vitae mi donec id nonummy et pellentesque. Orci ipsum diam. Sollicitudin congue viverra. Erat massa elit commodo dui mi sit purus convallis enim diam magna varius tempor consectetuer ac amet nulla et ultrices in in ut est ac leo orci et mauris volutpat suspendisse exercitation diam. Eros aenean pulvinar. Maecenas interdum aliquam. Ante sapien donec donec nam sit lectus phasellus nullam vestibulum lacus non. Aliquam blandit nulla. Duis et gravida velit quam nascetur turpis nam in. Eleifend ac sodales sed nisl integer sollicitudin mauris orci aliquam duis mauris. Posuere dui nec. Nunc tristique nascetur. Dignissim velit malesuada tincidunt cras morbi morbi at mauris. Eget nec erat. Sed euismod faucibus. Accumsan fermentum eget. Nec faucibus curabitur pede dictum morbi. Dapibus erat reprehenderit. Natoque corporis cras in risus nam. Ac rhoncus in eros feugiat eros aut fames magna malesuada maecenas amet. Integer aliquam erat nisl neque amet. Ac dolor tellus dolor at perferendis. Risus dolor ultricies. Justo at ultrices aenean tempus magna amet ac eget at turpis in. Nunc habitant blandit et purus semper. Adipiscing voluptatem porttitor. Sapien elementum justo pellentesque duis ligula lorem ultrices ultricies. Nam lectus euismod ultricies praesent et error sed eleifend. Con dolor morbi. Aenean est sit. Nec interdum nonummy eu leo sit. Pellentesque consequat morbi. Lacus augue vitae. Et sit wisi. Dolor ante placerat. Netus commodo proin. Gravida facilisis bibendum metus non eget. Consectetuer libero eu sit vehicula turpis suspendisse wisi netus. Aenean massa faucibus neque sodales urna. In dictum aliquam. Amet suscipit neque. In auctor lectus purus sagittis vestibulum tristique vestibulum et. Condimentum leo at. Lorem ante scelerisque. At non maecenas totam risus nibh. Massa lorem venenatis torquent gravida libero. Elementum id placerat. Nulla suspendisse dolore. Tellus necessitatibus vitae praesent sed per. Pellentesque egestas rhoncus aenean aliquam molestie. Arcu sociis tincidunt nisl consequat semper magna quisque justo. Feugiat condimentum eget nec sed iaculis et mi facilisis dis sit cursus odio pellentesque mauris volutpat orci massa dolor eget et. Pede nulla urna. Sollicitudin sodales nisl. Eget ut nulla. A id vestibulum. Egestas ac risus. In iaculis nascetur fermentum sociosqu cras rutrum vestibulum vehicula a aliquam rhoncus ornare nulla et. Mauris sed condimentum. Sem ut felis sed per enim malesuada magna quam. Con maecenas dui. Habitasse feugiat purus. Volutpat lectus orci. Est etiam justo. Odio nec consequat. Posuere et et. Condimentum nunc faucibus viverra amet sapien urna iste eget suspendisse eget quam. Vulputate nullam porta tortor quis aenean. Ut blandit augue. Nulla ligula quam. Non in mauris. Egestas laoreet tincidunt. Aliquam duis at congue lacus est nascetur velit lorem proin neque egestas. Tortor vitae bibendum. Parturient neque lacus. Pede a ultrices leo lacus vivamus";
-  int src_size = 4096;
-  int dst_max_size = 10000;
+  // Set up some basic stuff
+  void *src = "Lorem ipsum dolor. Sit amet amet mollis vitae posuere egestas iaculis aptent. Ante ac molestie laoreet et ut. "
+              "Tristique aptent egestas purus lorem mattis. Pharetra ultricies risus. Eget scelerisque augue. Fames iaculis donec. "
+              "Pellentesque donec tristique at libero vulputate metus morbi lectus. Eu quam in nibh tellus wisi. At aliquam "
+              "sagittis aenean sit accumsan. Cupidatat gravida facilisis gravida imperdiet inceptos lacus ultricies dignissim "
+              "fringilla nunc sed magna mollis quisque purus semper tempor. A velit in suspendisse curabitur ut sollicitudin mi "
+              "adipiscing. A pellentesque sociosqu exercitationem sit pede. Vestibulum sed sed. Odio nulla lectus. Convallis quam "
+              "egestas magnis est sit. Metus porta tellus. Scelerisque sollicitudin auctor non dictum dolor condimentum ipsum "
+              "adipiscing ornare a nec. Tempor felis urna. Placerat proin elementum rem litora praesent ut semper et. Eleifend ac "
+              "vel nam praesent mauris libero non conubia quis id gravida. Vel est augue. Vel non lacus magna lorem nisl diam sit "
+              "eu. Vestibulum placerat molestie congue bibendum vulputate metus ultrices sollicitudin. Convallis arcu mollitia. "
+              "Purus id magna. Volutpat erat vitae mi donec id nonummy et pellentesque. Orci ipsum diam. Sollicitudin congue "
+              "viverra. Erat massa elit commodo dui mi sit purus convallis enim diam magna varius tempor consectetuer ac amet "
+              "nulla et ultrices in in ut est ac leo orci et mauris volutpat suspendisse exercitation diam. Eros aenean pulvinar. "
+              "Maecenas interdum aliquam. Ante sapien donec donec nam sit lectus phasellus nullam vestibulum lacus non. Aliquam "
+              "blandit nulla. Duis et gravida velit quam nascetur turpis nam in. Eleifend ac sodales sed nisl integer sollicitudin "
+              "mauris orci aliquam duis mauris. Posuere dui nec. Nunc tristique nascetur. Dignissim velit malesuada tincidunt cras "
+              "morbi morbi at mauris. Eget nec erat. Sed euismod faucibus. Accumsan fermentum eget. Nec faucibus curabitur pede "
+              "dictum morbi. Dapibus erat reprehenderit. Natoque corporis cras in risus nam. Ac rhoncus in eros feugiat eros aut "
+              "fames magna malesuada maecenas amet. Integer aliquam erat nisl neque amet. Ac dolor tellus dolor at perferendis. "
+              "Risus dolor ultricies. Justo at ultrices aenean tempus magna amet ac eget at turpis in. Nunc habitant blandit et "
+              "purus semper. Adipiscing voluptatem porttitor. Sapien elementum justo pellentesque duis ligula lorem ultrices "
+              "ultricies. Nam lectus euismod ultricies praesent et error sed eleifend. Con dolor morbi. Aenean est sit. Nec "
+              "interdum nonummy eu leo sit. Pellentesque consequat morbi. Lacus augue vitae. Et sit wisi. Dolor ante placerat. "
+              "Netus commodo proin. Gravida facilisis bibendum metus non eget. Consectetuer libero eu sit vehicula turpis "
+              "suspendisse wisi netus. Aenean massa faucibus neque sodales urna. In dictum aliquam. Amet suscipit neque. In "
+              "auctor lectus purus sagittis vestibulum tristique vestibulum et. Condimentum leo at. Lorem ante scelerisque. At "
+              "non maecenas totam risus nibh. Massa lorem venenatis torquent gravida libero. Elementum id placerat. Nulla "
+              "suspendisse dolore. Tellus necessitatibus vitae praesent sed per. Pellentesque egestas rhoncus aenean aliquam "
+              "molestie. Arcu sociis tincidunt nisl consequat semper magna quisque justo. Feugiat condimentum eget nec sed "
+              "iaculis et mi facilisis dis sit cursus odio pellentesque mauris volutpat orci massa dolor eget et. Pede nulla "
+              "urna. Sollicitudin sodales nisl. Eget ut nulla. A id vestibulum. Egestas ac risus. In iaculis nascetur fermentum "
+              "sociosqu cras rutrum vestibulum vehicula a aliquam rhoncus ornare nulla et. Mauris sed condimentum. Sem ut felis "
+              "sed per enim malesuada magna quam. Con maecenas dui. Habitasse feugiat purus. Volutpat lectus orci. Est etiam "
+              "justo. Odio nec consequat. Posuere et et. Condimentum nunc faucibus viverra amet sapien urna iste eget suspendisse "
+              "eget quam. Vulputate nullam porta tortor quis aenean. Ut blandit augue. Nulla ligula quam. Non in mauris. Egestas "
+              "laoreet tincidunt. Aliquam duis at congue lacus est nascetur velit lorem proin neque egestas. Tortor vitae "
+              "bibendum. Parturient neque lacus. Pede a ultrices leo lacus vivamus";
+  int src_size = strlen(src);
+  int dst_max_size = LZ4_compressBound(src_size);
   void *dst = (void *)malloc(dst_max_size);
   int rv = 0;
   void *new_src = (void *)malloc(src_size);
-  // -- Compress
+
+  /* Test 1:  make sure the LZ4_* functions can compress and decompress data. */
   rv = LZ4_compress_default(src, dst, src_size, dst_max_size);
-  if (rv < 1) {
-    printf("The rv was negative when compressing a char pointer, indicating an error: %d\n", rv);
-    exit(rv);
-  }
-  // -- Decompress
+  if (rv < 1)
+    show_error(E_GENERIC, "The rv was negative when attempting basic compression of a void* dataset: %d\n", rv);
   rv = LZ4_decompress_fast(dst, new_src, src_size);
-  if (rv < 0) {
-    printf("The rv was negative when decompressing a char pointer, indicating an error: %d\n", rv);
-    exit(rv);
-  }
-  if (memcmp(src, new_src, src_size) != 0) {
-    printf("src and new_src don't match from test 1.\n");
-    exit(1);
-  }
+  if (rv < 0)
+    show_error(E_GENERIC, "The rv was negative when decompressing a char pointer, indicating an error: %d\n", rv);
+  if (memcmp(src, new_src, src_size) != 0)
+    show_error(E_GENERIC, "src and new_src don't match from test 1.\n");
   printf("Test 1: passed\n");
 
   /* Test 2:  the LZ4 compression function needs to return the size of the compressed data. */
@@ -340,23 +375,15 @@ void tests__compression() {
   buf->data = (void *)malloc(src_size);
   buf->data_length = src_size;
   memcpy(buf->data, src, buf->data_length);
-  // -- Compress
   rv = LZ4_compress_default(src, buf->data, buf->data_length, dst_max_size);
-  if (rv < 0) {
-    printf("The rv was negative when compressing a buffer element, indicating an error: %d\n", rv);
-    exit(rv);
-  }
-  // -- Decompress
+  if (rv < 0)
+    show_error(E_GENERIC, "The rv was negative when compressing a buffer element, indicating an error: %d\n", rv);
   memset(new_src, 0, src_size);
   rv = LZ4_decompress_fast(buf->data, new_src, buf->data_length);
-  if (rv < 0) {
-    printf("The rv was negative when decompressing a buffer element, indicating an error: %d\n", rv);
-    exit(rv);
-  }
-  if (memcmp(src, new_src, src_size) != 0) {
-    printf("src and new_src don't match from test 3.\n");
-    exit(1);
-  }
+  if (rv < 0)
+    show_error(E_GENERIC, "The rv was negative when decompressing a buffer element, indicating an error: %d\n", rv);
+  if (memcmp(src, new_src, src_size) != 0)
+    show_error(E_GENERIC, "src and new_src don't match from test 3.\n");
   printf("Test 3: passed\n");
 
   /* Test 4:  Same as test 3, but we'll use buffer__compress and buffer__decompress.  Should get comp_time updated. */
@@ -364,24 +391,16 @@ void tests__compression() {
   buf->data = (void *)malloc(src_size);
   buf->data_length = src_size;
   memcpy(buf->data, src, buf->data_length);
-  // -- Compress
   rv = buffer__compress(buf);
-  if (rv != 0) {
-    printf("The rv was non-zero, indicating an error from buffer__compress: %d\n", rv);
-    exit(rv);
-  }
+  if (rv != 0)
+    show_error(E_GENERIC, "The rv was non-zero, indicating an error from buffer__compress: %d\n", rv);
   printf("Compression gave an OK response.    comp_time is %d ns, comp_hits is %d, data_legnth is %d, and comp_length is %d bytes\n", buf->comp_cost, buf->comp_hits, buf->data_length, buf->comp_length);
-  // -- Decompress
   memset(new_src, 0, src_size);
   rv = buffer__decompress(buf);
-  if (rv != 0) {
-    printf("The rv was non-zero, indicating an error from buffer__decompress: %d\n", rv);
-    exit(rv);
-  }
-  if (memcmp(src, buf->data, src_size) != 0) {
-    printf("src and new_src don't match from test 4.\n");
-    exit(1);
-  }
+  if (rv != 0)
+    show_error(E_GENERIC, "The rv was non-zero, indicating an error from buffer__decompress: %d\n", rv);
+  if (memcmp(src, buf->data, src_size) != 0)
+    show_error(E_GENERIC, "src and new_src don't match from test 4.\n");
   printf("Decompression gave an OK response.  comp_time is %d ns, comp_hits is %d, data_legnth is %d, and comp_length is %d bytes\n", buf->comp_cost, buf->comp_hits, buf->data_length, buf->comp_length);
   printf("Test 4: passed\n");
 
@@ -397,7 +416,7 @@ void tests__compression() {
  */
 void tests__move_buffers(List *raw_list, char *pages[]) {
   raw_list->sweep_goal = 30;
-  Buffer *buf;
+  Buffer *buf = NULL;
   uint total_bytes = 0;
 
   // -- TEST 1:  Do sizes match up like they're supposed to when moving items into a list?
@@ -417,10 +436,10 @@ void tests__move_buffers(List *raw_list, char *pages[]) {
   if (total_bytes != raw_list->current_size)
     show_error(E_GENERIC, "Calculated a total size of %d, and raw_list->current_size is %"PRIu64"\n", total_bytes, raw_list->current_size);
   printf("Total bytes measured in buffers matches the list size, success!\n");
-  while(raw_list->count > 0)
-    list__remove(raw_list, raw_list->pool[0]->id);
-  while(raw_list->offload_to->count > 0)
-    list__remove(raw_list->offload_to, raw_list->offload_to->pool[0]->id);
+  while(raw_list->head->next != raw_list->head)
+    list__remove(raw_list, raw_list->head->next->id);
+  while(raw_list->offload_to->head->next != raw_list->offload_to->head)
+    list__remove(raw_list->offload_to, raw_list->offload_to->head->next->id);
   printf("Test 1 Passed:  Does the list size match the known size of data read from disk?\n\n");
 
   // -- TEST 2:  Can we offload from raw to a compressed list?
@@ -434,10 +453,10 @@ void tests__move_buffers(List *raw_list, char *pages[]) {
     printf("Added a buffer with id %d requiring %d bytes, list size is now %"PRIu64"\n", i, buf->data_length, raw_list->current_size);
   }
   printf("All done.  Raw list has %d buffers using %"PRIu64" bytes.  Comp list has %d buffers using %"PRIu64" bytes.\n", raw_list->count, raw_list->current_size, raw_list->offload_to->count, raw_list->offload_to->current_size);
-  while(raw_list->count > 0)
-    list__remove(raw_list, raw_list->pool[0]->id);
-  while(raw_list->offload_to->count > 0)
-    list__remove(raw_list->offload_to, raw_list->offload_to->pool[0]->id);
+  while(raw_list->head->next != raw_list->head)
+    list__remove(raw_list, raw_list->head->next->id);
+  while(raw_list->offload_to->head->next != raw_list->offload_to->head)
+    list__remove(raw_list->offload_to, raw_list->offload_to->head->next->id);
   printf("Test 2 Passed:  Will items overflow from the raw list to the compressed one as needed?\n\n");
 
   // -- TEST 3:  Will offloading properly pop the compressed buffer?
@@ -451,10 +470,10 @@ void tests__move_buffers(List *raw_list, char *pages[]) {
     printf("Added a buffer with id %d requiring %d bytes, list size is now %"PRIu64"\n", i, buf->data_length, raw_list->current_size);
   }
   printf("All done.  Raw list has %d buffers using %"PRIu64" bytes.  Comp list has %d buffers using %"PRIu64" bytes.\n", raw_list->count, raw_list->current_size, raw_list->offload_to->count, raw_list->offload_to->current_size);
-  while(raw_list->count > 0)
-    list__remove(raw_list, raw_list->pool[0]->id);
-  while(raw_list->offload_to->count > 0)
-    list__remove(raw_list->offload_to, raw_list->offload_to->pool[0]->id);
+  while(raw_list->head->next != raw_list->head)
+    list__remove(raw_list, raw_list->head->next->id);
+  while(raw_list->offload_to->head->next != raw_list->offload_to->head)
+    list__remove(raw_list->offload_to, raw_list->offload_to->head->next->id);
   printf("Test 3 Passed:  Will the compressed list pop buffers when out of room?\n\n");
 
   // -- TEST 4:  Can we move items back to the raw list after they've been compressed?
@@ -469,16 +488,19 @@ void tests__move_buffers(List *raw_list, char *pages[]) {
   /* Pick a random buffer from the offload list and do a search for it.  The result should be it getting moved to the raw list. */
   if (raw_list->offload_to->count == 0)
     show_error(E_GENERIC, "The comp_list doesn't have anything in the pool.  Can't do this test.");
-  Buffer *test4_buf;
-  bufferid_t test4_sample_id = raw_list->offload_to->pool[raw_list->offload_to->count - 1]->id;
+  Buffer *test4_buf = NULL, *test4_current = NULL;
+  bufferid_t test4_sample_id = raw_list->offload_to->head->next->id;
   printf("About to start searching for a buffer which should be found in comp list.\n");
-  if (list__search(raw_list, &test4_buf, raw_list->offload_to->pool[raw_list->offload_to->count - 1]->id) != E_OK)
+  if (list__search(raw_list, &test4_buf, test4_sample_id) != E_OK)
     show_error(E_GENERIC, "list__search says it failed to find our buffer.  Boo.");
   printf("The list search buffer returned gave id of %d, the id we wanted was %d.\n", test4_buf->id, test4_sample_id);
   int found_in_raw = 0;
-  for (uint i = 0; i < raw_list->count; i++)
-    if (raw_list->pool[i]->id == test4_sample_id)
+  test4_current = raw_list->head;
+  while(test4_current->next != raw_list->head) {
+    test4_current = test4_current->next;
+    if(test4_current->id == test4_sample_id)
       found_in_raw++;
+  }
   if (found_in_raw == 0)
     show_error(E_GENERIC, "The id we searched for didn't show up in the raw list... this means we failed to restore it.");
   if (found_in_raw > 1)
@@ -511,4 +533,51 @@ void tests__options() {
   printf("opts->hit_ratio      = %"PRIi8"\n",  opts.hit_ratio);
 
   return;
+}
+
+/* tests__list_structure
+ * Spits out a bunch of information about a list.  Mostly for debugging.  Might delete later.
+ */
+void tests__list_structure(List *list) {
+  // List attributes
+  /* Size and Counter Members */
+  printf("          count: %"PRIu32"\n", list->count);
+  printf("   current_size: %"PRIu64"\n", list->current_size);
+  printf("       max_size: %"PRIu64"\n", list->max_size);
+  /* Locking, Reference Counters, and Similar Members */
+  printf("      ref_count: %"PRIu32"\n", list->ref_count);
+  printf("pending_writers: %"PRIu8"\n", list->pending_writers);
+  /* Management and Administration Members */
+  printf("     sweep_goal: %"PRIu8"\n", list->sweep_goal);
+  printf("         sweeps: %"PRIu32"\n", list->sweeps);
+  printf("     sweep_cost: %"PRIu64"\n", list->sweep_cost);
+  /* Management of Nodes for Skiplist and Buffers */
+  printf("         levels: %"PRIu8"\n", list->levels);
+
+  // Skiplist Index information.
+  int count = 0;
+  SkiplistNode *slnode = NULL;
+  for(int i=0; i<SKIPLIST_MAX; i++) {
+    count = 0;
+    slnode = list->indexes[i];
+    while(slnode->right != NULL) {
+      count++;
+      slnode = slnode->right;
+    }
+    printf("Index %d has a count of %d\n", i, count);
+  }
+  for(int i=0; i<SKIPLIST_MAX; i++) {
+    slnode = list->indexes[i];
+    printf("Index %d: ", i);
+    while(slnode->right != NULL) {
+      slnode = slnode->right;
+      printf("%"PRIu32" ", slnode->target->id);
+    }
+    printf("\n");
+  }
+//  Buffer *head;                         /* The head of the list of buffers. */
+//  Buffer *clock_hand;                   /* The current Buffer to be checked when sweeping is invoked. */
+//  SkiplistNode *indexes[SKIPLIST_MAX];  /* List of the heads of the bottom-most (least-granular) Skiplists. */
+//  uint8_t levels;                       /* The current height of the skip list thus far. */
+
 }

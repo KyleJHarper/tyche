@@ -49,7 +49,7 @@ int main(int argc, char **argv) {
   /* Initialize the locker pool and then build the Manager to work with. */
   lock__initialize();
   Manager *mgr = manager__initialize(0, pages);
-
+srand(time(0));
   /* If a test was specified, run it instead of the manager(s) and then leave. */
   if (opts.test != NULL) {
     tests__run_test(mgr->raw_list, pages);

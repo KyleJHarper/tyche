@@ -10,10 +10,9 @@
 
 /* Includes */
 #include <stdint.h>
+#include <inttypes.h>
 #include <pthread.h>
 #include "buffer.h"
-#include "list.h"
-
 
 /* A list is simply the collection of buffers, metadata to describe the list for management, and control attributes to protect it.
  * List functions come in reader and writer flavors.
@@ -21,21 +20,6 @@
  *   Writer functions can safely rely on the list__acquire_write_lock() to block new readers and wait on existing readers.  Writers
  *   can also safely rely on the list__release_write_lock() to unblock other writers and readers (in that order!).
  * In short: writers have priority but are patient for existing readers.
- *
- * -- A Note About The Pool (Specifically: No Linked List)
- * Short Version:
- * People jump to "OMG linked list!"... and if someone wants to fork this and prove it's faster, go ahead.
- *
- * Longer Version:
- * The ephemeral nature of buffers and the ever-changing status of the list often leads developers to leap toward a linked list.
- * There is NOTHING WRONG with that approach.  You will need skip-lists or similar techniques to ensure rapid searching, but again
- * a linked list is fine.
- * Tyche opts to use an array because:
- *   1.  No need to manage a skip list, period.
- *   2.  No need to have a Buffer->next* or Buffer->prev*, saving 16 bytes per buffer (64-bit platform, gcc).
- *   3.  Overhead is genuinely minimal for the higher numbered elements that will never be used.  A linked list avoids this, but
- *       again a linked list also requires 16 bytes per buffer more which rapidly diminishes this savings.
- * We are not arguing that an array is better; we're simply explaining our decision.  Remember, this is just one implementation.
  */
 
 
@@ -93,11 +77,11 @@ int list__update_ref(List *list, int delta);
 int list__search(List *list, Buffer **buf, bufferid_t id);
 int list__acquire_write_lock(List *list);
 int list__release_write_lock(List *list);
-uint list__sweep(List *list);
+uint32_t list__sweep(List *list);
 int list__push(List *list, Buffer *buf);
 int list__pop(List *list, uint64_t bytes_needed);
 int list__restore(List *list, Buffer **buf);
-int list__balance(List *list, uint ratio);
+int list__balance(List *list, uint32_t ratio);
 
 
 #endif /* SRC_LIST_H_ */

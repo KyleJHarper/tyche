@@ -101,12 +101,12 @@ List* list__initialize() {
     slnode->target = list->head;
     // The right pointer (next) is always NULL starting off.
     slnode->right = NULL;
-    // Typically the down pointer will be the head of the next lower level.  But level 0 is the end, so just set it to NULL.
-    if(i == 0) {
-      slnode->down = NULL;
-      continue;
-    }
-    slnode->down = list->indexes[i-1];
+    // Set the down pointer to NULL to start.  If we're above level 0, point to the next lower level.
+    slnode->down = NULL;
+    if(i != 0)
+      slnode->down = list->indexes[i-1];
+    // Assign it to the correct index.
+    list->indexes[i] = slnode;
   }
 
   return list;
@@ -190,7 +190,7 @@ int list__add(List *list, Buffer *buf) {
   int rv = E_OK;
 
   /* Make sure we have room to add a new buffer before we proceed. */
-  const uint BUFFER_SIZE = BUFFER_OVERHEAD + (buf->comp_length == 0 ? buf->data_length : buf->comp_length);
+  const uint32_t BUFFER_SIZE = BUFFER_OVERHEAD + (buf->comp_length == 0 ? buf->data_length : buf->comp_length);
   if (list->max_size < list->current_size + BUFFER_SIZE) {
     /* Determine the minimum sweep goal we need, then use the larger of the two. */
     const uint8_t ORIGINAL_SWEEP_GOAL = list->sweep_goal;
@@ -205,15 +205,10 @@ int list__add(List *list, Buffer *buf) {
 
   // Decide how many levels we're willing to set the node upon.
   int levels = 0;
-  for(int random_value = rand(); random_value != 0; random_value >>= 1) {
-    if(levels < SKIPLIST_MAX)
-      levels++;
-    if(levels == list->levels) {
-      // We've reached the highest current level, increment ->levels and move on.  This will cap at 32 (exponent of int) or SKIPLIST_MAX.
-      list->levels++;
-      break;
-    }
-  }
+  while((levels < SKIPLIST_MAX) && (levels < list->levels) && (rand() % 2 == 0))
+    levels++;
+  if(levels == list->levels)
+    list->levels++;
 
   // Build a local stack based on the main list->indexes[] to build breadcrumbs.
   SkiplistNode *slstack[SKIPLIST_MAX];
@@ -221,7 +216,7 @@ int list__add(List *list, Buffer *buf) {
     slstack[i] = list->indexes[i];
 
   // Traverse the list to find the ideal location at each level.  Since we're searching, use list->levels as the start height.
-  for(int i = list->levels; i >= 0; i--) {
+  for(int i = list->levels-1; i >= 0; i--) {
     // Try shifting right until the ->right member is NULL or its value is too high.
     while(slstack[i]->right != NULL && slstack[i]->right->target->id <= buf->id)
       slstack[i] = slstack[i]->right;
@@ -248,10 +243,10 @@ int list__add(List *list, Buffer *buf) {
       slstack[i]->right = slnode;
     }
     // Now that the Nodes all exist (if any) and our slstack's ->right members point to them, we can set their ->down members.
-    for(int i = levels - 1; i > 0; i--)
+    for(int i = levels - 1; i >= 0; i--)
       slstack[i]->right->down = slstack[i-1]->right;
     // Finally, modify buffer list to insert *buf; even if no Skiplist Nodes were inserted. Since we searched, slstack[0] should be closest.
-    Buffer nearest_neighbor = slstack[0]->target;
+    Buffer *nearest_neighbor = slstack[0]->target;
     // Move right in the buffer list.  ->head is always max, so no need to check anything but ->id.
     while(nearest_neighbor->next->id <= buf->id)
       nearest_neighbor = nearest_neighbor->next;
@@ -268,6 +263,7 @@ int list__add(List *list, Buffer *buf) {
 
   /* Let go of the write lock we acquired. */
   list__release_write_lock(list);
+printf("la-6\n");
   return rv;
 }
 
@@ -309,7 +305,7 @@ int list__remove(List *list, bufferid_t id) {
   if(nearest_neighbor->next->id == id) {
     rv = E_OK;
     Buffer *buf = nearest_neighbor->next;
-    const uint BUFFER_SIZE = BUFFER_OVERHEAD + (buf->comp_length == 0 ? buf->data_length : buf->comp_length);
+    const uint32_t BUFFER_SIZE = BUFFER_OVERHEAD + (buf->comp_length == 0 ? buf->data_length : buf->comp_length);
     int victimize_status = buffer__victimize(buf);
     if (victimize_status != 0)
       show_error(victimize_status, "The list__remove function received an error when trying to victimize the buffer (%d).", victimize_status);
@@ -373,7 +369,7 @@ int list__search(List *list, Buffer **buf, bufferid_t id) {
   /* If we're still E_BUFFER_NOT_FOUND, scan the nearest_neighbor until we find it. */
   if(rv == E_BUFFER_NOT_FOUND) {
     Buffer *nearest_neighbor = slnode->target;
-    while(nearest_neighbor->next <= id)
+    while(nearest_neighbor->next->id <= id)
       nearest_neighbor = nearest_neighbor->next;
     // If we got a match, score.  Our nearest_neighbor is now the match.  Update ref and assign things.
     if(nearest_neighbor->id == id) {
@@ -446,7 +442,7 @@ int list__update_ref(List *list, int delta) {
  * Note:  We attempt to free a percentage of ->current_size, NOT ->max_size!  There are pros/cons to both; in normal usage the
  * current size should always be high enough to avoid errors because sweeping shouldn't be called until we're low on memory.
  */
-uint list__sweep(List *list) {
+uint32_t list__sweep(List *list) {
   // Acquire a list lock just to ensure we're operating safely.
   list__acquire_write_lock(list);
 
@@ -454,8 +450,8 @@ uint list__sweep(List *list) {
   struct timespec start, end;
   clock_gettime(CLOCK_MONOTONIC, &start);
   list->sweeps++;
-  uint bytes_freed = 0;
-  const uint BYTES_NEEDED = list->current_size * list->sweep_goal / 100;
+  uint32_t bytes_freed = 0;
+  const uint32_t BYTES_NEEDED = list->current_size * list->sweep_goal / 100;
   Buffer *buf = NULL;
   List *temp_list = list__initialize();
   temp_list->max_size = BYTES_NEEDED * 2;
@@ -671,7 +667,7 @@ int list__restore(List *list, Buffer **buf) {
  * Redistributes memory between a list and it's offload target.  The list__sweep() and list__push/pop() functions will handle the
  * buffer migration while respecting the new boundaries.
  */
-int list__balance(List *list, uint ratio) {
+int list__balance(List *list, uint32_t ratio) {
   // As always, be safe.
   if (list == NULL)
     show_error(E_GENERIC, "The list__balance function was given a NULL list.  This should never happen.");

@@ -45,6 +45,8 @@ extern Options opts;
  * this is just a pthread_mutex_t array but if we add attributes it'll be much easier to update this way.
  */
 void lock__initialize() {
+  // Free the locker_pool in case it's being re-set by a test or whatever.  This is safe on 1st run because we start as NULL.
+  free(locker_pool);
   locker_pool = calloc(opts.max_locks, sizeof(Lock));
   if (locker_pool == NULL)
     show_error(E_GENERIC, "Failed to calloc memory for the locker pool.");
