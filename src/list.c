@@ -263,7 +263,6 @@ int list__add(List *list, Buffer *buf) {
 
   /* Let go of the write lock we acquired. */
   list__release_write_lock(list);
-printf("la-6\n");
   return rv;
 }
 
@@ -326,6 +325,9 @@ int list__remove(List *list, bufferid_t id) {
     slnode = slstack[i]->right;
     slstack[i]->right = slstack[i]->right->right;
     free(slnode);
+    // If the list's skip-index at this level is empty, drop the list levels height.
+    if(list->indexes[i]->right == NULL)
+      list->levels--;
   }
 
   /* Let go of the write lock we acquired. */

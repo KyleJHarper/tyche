@@ -262,23 +262,39 @@ void tests__chaos(ReadWriteOpts *rwopts) {
  * Simply creates buffers and assigns them to the list.  Should update the counts and so forth.
  */
 void tests__elements(List *raw_list) {
-  Buffer *elem1 = buffer__initialize(1, NULL);  list__add(raw_list, elem1);
-  Buffer *elem2 = buffer__initialize(2, NULL);  list__add(raw_list, elem2);
-  Buffer *elem3 = buffer__initialize(3, NULL);  list__add(raw_list, elem3);
   Buffer *buf = NULL;
-  for(int i=0; i<500; i++) {
+  int element_count = 5000;
+  if(opts.extended_test_options != NULL && strcmp(opts.extended_test_options, "") != 0) {
+    printf("Extended options were found; updating test values with options specified: %s\n", opts.extended_test_options);
+    char *token = NULL;
+    token = strtok(opts.extended_test_options, ",");
+    if(token != NULL)
+      element_count = atoi(token);
+    if (element_count  == 0)
+      show_error(E_GENERIC, "One or more of the extended options passed in ended up 0, this means you sent a 0 or bad input:\n");
+  }
+
+  // Add all the buffers.
+  printf("Step 1.  Adding %d dummy buffers to the list.\n", element_count);
+  for(int i=0; i<element_count; i++) {
     buf = buffer__initialize(i, NULL);
     list__add(raw_list, buf);
   }
 
-  printf("Number of raw  elements: %d\n", raw_list->count);
-tests__list_structure(raw_list);
-  list__remove(raw_list, elem1->id);
-  list__remove(raw_list, elem2->id);
-  list__remove(raw_list, elem3->id);
+  // Display the statistics of the list.
+  printf("\nStep 2.  Showing list statistics.\n");
+  tests__list_structure(raw_list);
 
-  printf("Number of raw  elements: %d\n", raw_list->count);
-tests__list_structure(raw_list);
+  // Remove the buffers.
+  printf("\nStep 3.  Removing all the dummy buffers.\n");
+  while(raw_list->head->next != raw_list->head)
+    list__remove(raw_list, raw_list->head->next->id);
+
+  // Display the statistics of the list again.
+  printf("\nStep 4.  Showing list statistics.\n");
+  tests__list_structure(raw_list);
+
+  printf("Test 'elements': All Passed\n");
   return;
 }
 
@@ -555,29 +571,20 @@ void tests__list_structure(List *list) {
   printf("         levels: %"PRIu8"\n", list->levels);
 
   // Skiplist Index information.
-  int count = 0;
+  int count = 0, out_of_order = 0;
   SkiplistNode *slnode = NULL;
-  for(int i=0; i<SKIPLIST_MAX; i++) {
+  for(int i=0; i<list->levels; i++) {
     count = 0;
+    out_of_order = 0;
     slnode = list->indexes[i];
     while(slnode->right != NULL) {
+      slnode = slnode->right;
       count++;
-      slnode = slnode->right;
+      if((slnode->right != NULL) && (slnode->target->id >= slnode->right->target->id))
+        out_of_order++;
     }
-    printf("Index %d has a count of %d\n", i, count);
+    printf("Index %02d:  in order - %s, count %d (%3.1f%%)\n", i, out_of_order == 0 ? "yes" : "no", count, 100 * (double)count/list->count);
   }
-  for(int i=0; i<SKIPLIST_MAX; i++) {
-    slnode = list->indexes[i];
-    printf("Index %d: ", i);
-    while(slnode->right != NULL) {
-      slnode = slnode->right;
-      printf("%"PRIu32" ", slnode->target->id);
-    }
-    printf("\n");
-  }
-//  Buffer *head;                         /* The head of the list of buffers. */
-//  Buffer *clock_hand;                   /* The current Buffer to be checked when sweeping is invoked. */
-//  SkiplistNode *indexes[SKIPLIST_MAX];  /* List of the heads of the bottom-most (least-granular) Skiplists. */
-//  uint8_t levels;                       /* The current height of the skip list thus far. */
+  printf("Indexes %02d - %02d are all 0 / 0.0%%\n", list->levels, SKIPLIST_MAX);
 
 }

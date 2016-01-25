@@ -54,7 +54,7 @@ void options__process(int argc, char **argv) {
   opts.dataset_size = 0;
   opts.dataset_max = MAX_DATASET_MAX;
   /* Resource Control */
-  opts.max_memory = 1024 * 1024;
+  opts.max_memory = 10 * 1024 * 1024;
   opts.fixed_ratio = -1;
   opts.workers = sysconf(_SC_NPROCESSORS_ONLN) > 0 ? (uint16_t)sysconf(_SC_NPROCESSORS_ONLN) : 1;
   opts.lock_ratio = 1;
@@ -207,7 +207,7 @@ void options__show_help() {
   fprintf(stderr, "    %2s   %-10s   %s", "-f", "1 - 100",   "Fixed ratio.  Percentage RAM guaranteed for the raw buffer list.  Default: disabled (-1)\n");
   fprintf(stderr, "    %2s   %-10s   %s", "-h", "",          "Show this help.\n");
   fprintf(stderr, "    %2s   %-10s   %s", "-l", "1 - 255",   "Number of buffers sharing each buffer lock.  Defaults to 1.\n");
-  fprintf(stderr, "    %2s   %-10s   %s", "-m", "<number>",  "Maximum number of bytes (RAM) to use for all buffers.  Default: 1 MB.\n");
+  fprintf(stderr, "    %2s   %-10s   %s", "-m", "<number>",  "Maximum number of bytes (RAM) to use for all buffers.  Default: 10 MB.\n");
   fprintf(stderr, "    %2s   %-10s   %s", "-n", "<number>",  "Maximum number of pages to use from the sample data pages.  Default: unlimited.\n");
   fprintf(stderr, "    %2s   %-10s   %s", "-p", "/some/dir", "The directory to scan for pages of sample data.  Default: ./sample_data.\n");
   fprintf(stderr, "    %2s   %-10s   %s", "-r", "1 - 100",   "Hit Ratio to ensure as a minimum (by searching raw list when too low).  Default: disabled (-1)\n");
@@ -233,6 +233,8 @@ void options__show_extended_test_options() {
   fprintf(stderr, "  d) Number of read operations to perform for each worker.\n");
   fprintf(stderr, "  e) Time to spent, in milliseconds, 'using' the buffer for each read.  Helps simulate usage for pinning.\n");
   fprintf(stderr, "  f) Number of workers to spawn for reading.  Each one will do read_operations (d above) reads each.\n");
+  fprintf(stderr, "elements: a\n");
+  fprintf(stderr, "  a) Number of Buffer elements to add/remove from the list.\n");
   fprintf(stderr, "\n");
 
   return;

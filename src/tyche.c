@@ -46,10 +46,10 @@ int main(int argc, char **argv) {
   opts.max_locks = (uint32_t)(opts.page_count / opts.lock_ratio);
   io__build_pages_array(pages);
 
-  /* Initialize the locker pool and then build the Manager to work with. */
+  /* Initialize the locker pool and then build the Manager to work with.  Fire an srand() for tests__* just in case. */
+  srand(time(NULL));
   lock__initialize();
   Manager *mgr = manager__initialize(0, pages);
-srand(time(0));
   /* If a test was specified, run it instead of the manager(s) and then leave. */
   if (opts.test != NULL) {
     tests__run_test(mgr->raw_list, pages);
