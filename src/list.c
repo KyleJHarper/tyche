@@ -194,12 +194,14 @@ int list__add(List *list, Buffer *buf) {
   if (list->max_size < list->current_size + BUFFER_SIZE) {
     /* Determine the minimum sweep goal we need, then use the larger of the two. */
     const uint8_t ORIGINAL_SWEEP_GOAL = list->sweep_goal;
-    list->sweep_goal = ((100 * list->max_size / (list->current_size + BUFFER_SIZE)) + 1);
+    list->sweep_goal = (100 * (list->current_size + BUFFER_SIZE) / list->current_size) - 99;
     if (list->sweep_goal < ORIGINAL_SWEEP_GOAL)
       list->sweep_goal = ORIGINAL_SWEEP_GOAL;
     if (list->sweep_goal > 99)
       show_error(E_GENERIC, "When trying to add a buffer, sweep goal was incremented to 100+ which would eliminate the entire list.  This is, I believe, a condition that should never happen.");
+printf("About to sweep with sweep goal of %"PRIu8" max size of %"PRIu64" current_size %"PRIu64" buffer_size %"PRIu32".\n", list->sweep_goal, list->max_size, list->current_size, BUFFER_SIZE);
     list__sweep(list);
+printf("Done sweeping.\n");
     list->sweep_goal = ORIGINAL_SWEEP_GOAL;
   }
 
@@ -214,7 +216,6 @@ int list__add(List *list, Buffer *buf) {
   SkiplistNode *slstack[SKIPLIST_MAX];
   for(int i = 0; i < SKIPLIST_MAX; i++)
     slstack[i] = list->indexes[i];
-
   // Traverse the list to find the ideal location at each level.  Since we're searching, use list->levels as the start height.
   for(int i = list->levels-1; i >= 0; i--) {
     // Try shifting right until the ->right member is NULL or its value is too high.
@@ -242,6 +243,7 @@ int list__add(List *list, Buffer *buf) {
       slnode->right = slstack[i]->right;
       slstack[i]->right = slnode;
     }
+
     // Now that the Nodes all exist (if any) and our slstack's ->right members point to them, we can set their ->down members.
     for(int i = levels - 1; i >= 0; i--)
       slstack[i]->right->down = slstack[i-1]->right;
@@ -458,7 +460,7 @@ uint32_t list__sweep(List *list) {
   List *temp_list = list__initialize();
   temp_list->max_size = BYTES_NEEDED * 2;
   temp_list->offload_to = temp_list;
-  int rv = 0;
+  int rv = E_OK;
 
   // Sanity Check.  Then start looping to free up memory.
   if (list->offload_to == NULL)
@@ -471,6 +473,7 @@ uint32_t list__sweep(List *list) {
       list->clock_hand->popularity >>= 1;
       list->clock_hand = list->clock_hand->next;
     }
+
     // We only reach this when an unpopular victim id is found.  Let's get to work copying the buffer and compressing it.
     buf = buffer__initialize(0, NULL);
     buffer__copy(list->clock_hand, buf);
@@ -484,6 +487,7 @@ uint32_t list__sweep(List *list) {
 
     // Assign the new buffer to the temp_list, track the size difference, and remove the original buffer.
     rv = list__add(temp_list, buf);
+printf("Assigning buffer id %"PRIu32" to temp_list with new size of %"PRIu64" and next id is %"PRIu32"\n", buf->id, temp_list->current_size, buf->next->id);
     if (rv != E_OK)
       show_error(rv, "Failed to send buf to the temp_list while sweeping.  Not sure how.  Return code is %d.", rv);
     rv = list__remove(list, list->clock_hand->id);
@@ -491,7 +495,11 @@ uint32_t list__sweep(List *list) {
       show_error(rv, "Failed to remove the selected victim while sweeping.  Not sure how.  Return code is %d", rv);
     bytes_freed += buf->data_length - buf->comp_length;
   }
-
+Buffer *grr = temp_list->head;
+while(grr->next != temp_list->head) {
+  grr = grr->next;
+  printf("Id is %"PRIu32"\n", grr->id);
+}
   // Now that we've freed up memory, move stuff from the temp_list to the offload (compressed) list.
   if (temp_list->current_size + list->offload_to->current_size > list->offload_to->max_size)
     list__pop(list->offload_to, temp_list->current_size);
@@ -504,8 +512,10 @@ uint32_t list__sweep(List *list) {
   current = temp_list->head;
   while(current->next != temp_list->head) {
     current = current->next;
+printf("Sending id %"PRIu32" for list__push\n", current->id);
     list__push(list->offload_to, current);
   }
+printf("hmm\n");
 
   // Wrap up and leave.
   clock_gettime(CLOCK_MONOTONIC, &end);
@@ -528,7 +538,7 @@ int list__push(List *list, Buffer *buf) {
 
   // The caller will usually lock the list, but we'll do it just to be safe.
   list__acquire_write_lock(list);
-
+printf("rawr 1\n");
   // Buffers being recently pushed are popular with regard to other items in a compressed list.  This helps emulate FIFO.
   buf->popularity = MAX_POPULARITY;
 
@@ -536,7 +546,9 @@ int list__push(List *list, Buffer *buf) {
   buf->victimized = 0;
 
   // That's really all for now.  The list__add() function will handle list size tracking and so forth.
+printf("rawr 2 %"PRIu32"\n", buf->id);
   list__add(list, buf);
+printf("rawr 3 %"PRIu32"\n", buf->id);
   list__release_write_lock(list);
 
   return E_OK;

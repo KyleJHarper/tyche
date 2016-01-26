@@ -273,6 +273,8 @@ void tests__elements(List *raw_list) {
     if (element_count  == 0)
       show_error(E_GENERIC, "One or more of the extended options passed in ended up 0, this means you sent a 0 or bad input:\n");
   }
+  opts.max_memory = BUFFER_OVERHEAD * element_count;
+  raw_list->max_size = opts.max_memory;
 
   // Add all the buffers.
   printf("Step 1.  Adding %d dummy buffers to the list.\n", element_count);
@@ -364,7 +366,7 @@ void tests__compression() {
               "justo. Odio nec consequat. Posuere et et. Condimentum nunc faucibus viverra amet sapien urna iste eget suspendisse "
               "eget quam. Vulputate nullam porta tortor quis aenean. Ut blandit augue. Nulla ligula quam. Non in mauris. Egestas "
               "laoreet tincidunt. Aliquam duis at congue lacus est nascetur velit lorem proin neque egestas. Tortor vitae "
-              "bibendum. Parturient neque lacus. Pede a ultrices leo lacus vivamus";
+              "bibendum. Parturient neque lacus. Pede a ultrices leo lacus vivamus.";
   int src_size = strlen(src);
   int dst_max_size = LZ4_compressBound(src_size);
   void *dst = (void *)malloc(dst_max_size);
@@ -466,7 +468,7 @@ void tests__move_buffers(List *raw_list, char *pages[]) {
     buf = buffer__initialize(i, pages[i]);
     buf->popularity = MAX_POPULARITY/(i+1);
     list__add(raw_list, buf);
-    printf("Added a buffer with id %d requiring %d bytes, list size is now %"PRIu64"\n", i, buf->data_length, raw_list->current_size);
+    printf("Added a buffer with id %d requiring %d bytes, list size is now %"PRIu64" (max: %"PRIu64")\n", i, buf->data_length, raw_list->current_size, raw_list->max_size);
   }
   printf("All done.  Raw list has %d buffers using %"PRIu64" bytes.  Comp list has %d buffers using %"PRIu64" bytes.\n", raw_list->count, raw_list->current_size, raw_list->offload_to->count, raw_list->offload_to->current_size);
   while(raw_list->head->next != raw_list->head)
