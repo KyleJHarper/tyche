@@ -178,7 +178,8 @@ void tests__synchronized_readwrite(List *raw_list) {
   pthread_t workers[rwopts.worker_count];
   for (int i=0; i<rwopts.worker_count; i++)
     pthread_create(&workers[i], NULL, (void *) &tests__read, &rwopts);
-
+sleep(3);
+printf("Rawr\n");
   // Start up a chaos monkeys for insanity.
   pthread_t chaos_monkeys[rwopts.chaos_monkeys];
   for (int i=0; i<rwopts.chaos_monkeys; i++)
@@ -217,10 +218,13 @@ void tests__read(ReadWriteOpts *rwopts) {
   int rv = 0;
   bufferid_t id_to_get = 0;
   Buffer *selected = NULL;
+printf("whee\n");
   for (int i=0; i<rwopts->reads_per_worker; i++) {
     for(;;) {
       id_to_get = rand() % rwopts->list_count;
+printf("About to search for %"PRIu32"\n", id_to_get);
       rv = list__search(rwopts->raw_list, &selected, id_to_get);
+printf("Done searching.\n");
       if (rv == E_OK)
         break;
       if (rv == E_BUFFER_NOT_FOUND || rv == E_BUFFER_POOFED || E_BUFFER_IS_VICTIMIZED)
@@ -228,6 +232,7 @@ void tests__read(ReadWriteOpts *rwopts) {
       printf("We should never hit this (rv is %d).\n", rv);
     }
     usleep(rand() % rwopts->sleep_delay);  // This just emulates some random time the reader will use this buffer.
+printf("1\n");
     rv = buffer__lock(selected);
     if (rv == E_OK || rv == E_BUFFER_IS_VICTIMIZED) {
       buffer__update_ref(selected, -1);
@@ -263,6 +268,7 @@ void tests__chaos(ReadWriteOpts *rwopts) {
  */
 void tests__elements(List *raw_list) {
   Buffer *buf = NULL;
+  int rv = E_OK;
   int element_count = 5000;
   if(opts.extended_test_options != NULL && strcmp(opts.extended_test_options, "") != 0) {
     printf("Extended options were found; updating test values with options specified: %s\n", opts.extended_test_options);
@@ -287,13 +293,24 @@ void tests__elements(List *raw_list) {
   printf("\nStep 2.  Showing list statistics.\n");
   tests__list_structure(raw_list);
 
+  // Search for an item just to prove it works.
+  printf("\nStep 3.  Searching for a buffer, just to prove it works.\n");
+  buf = NULL;
+  rv = list__search(raw_list, &buf, 1);
+  if (rv != E_OK)
+    show_error(E_GENERIC, "Failed to search for a buffer which should have existed.  rv was %d\n", rv);
+  printf("Got the buffer, it's ref count is %"PRIu16".\n", buf->ref_count);
+  buffer__lock(buf);
+  buffer__update_ref(buf, -1);
+  buffer__unlock(buf);
+
   // Remove the buffers.
-  printf("\nStep 3.  Removing all the dummy buffers.\n");
+  printf("\nStep 4.  Removing all the dummy buffers.\n");
   while(raw_list->head->next != raw_list->head)
     list__remove(raw_list, raw_list->head->next->id);
 
   // Display the statistics of the list again.
-  printf("\nStep 4.  Showing list statistics.\n");
+  printf("\nStep 5.  Showing list statistics.\n");
   tests__list_structure(raw_list);
 
   printf("Test 'elements': All Passed\n");
@@ -468,7 +485,6 @@ void tests__move_buffers(List *raw_list, char *pages[]) {
     buf = buffer__initialize(i, pages[i]);
     buf->popularity = MAX_POPULARITY/(i+1);
     list__add(raw_list, buf);
-    printf("Added a buffer with id %d requiring %d bytes, list size is now %"PRIu64" (max: %"PRIu64")\n", i, buf->data_length, raw_list->current_size, raw_list->max_size);
   }
   printf("All done.  Raw list has %d buffers using %"PRIu64" bytes.  Comp list has %d buffers using %"PRIu64" bytes.\n", raw_list->count, raw_list->current_size, raw_list->offload_to->count, raw_list->offload_to->current_size);
   while(raw_list->head->next != raw_list->head)
@@ -485,7 +501,6 @@ void tests__move_buffers(List *raw_list, char *pages[]) {
     buf = buffer__initialize(i, pages[i]);
     buf->popularity = MAX_POPULARITY/(i+1);
     list__add(raw_list, buf);
-    printf("Added a buffer with id %d requiring %d bytes, list size is now %"PRIu64"\n", i, buf->data_length, raw_list->current_size);
   }
   printf("All done.  Raw list has %d buffers using %"PRIu64" bytes.  Comp list has %d buffers using %"PRIu64" bytes.\n", raw_list->count, raw_list->current_size, raw_list->offload_to->count, raw_list->offload_to->current_size);
   while(raw_list->head->next != raw_list->head)
@@ -501,7 +516,6 @@ void tests__move_buffers(List *raw_list, char *pages[]) {
     buf = buffer__initialize(i, pages[i]);
     buf->popularity = MAX_POPULARITY/(i+1);
     list__add(raw_list, buf);
-    printf("Added a buffer with id %d requiring %d bytes, list size is now %"PRIu64"\n", i, buf->data_length, raw_list->current_size);
   }
   /* Pick a random buffer from the offload list and do a search for it.  The result should be it getting moved to the raw list. */
   if (raw_list->offload_to->count == 0)

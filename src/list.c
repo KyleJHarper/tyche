@@ -199,9 +199,7 @@ int list__add(List *list, Buffer *buf) {
       list->sweep_goal = ORIGINAL_SWEEP_GOAL;
     if (list->sweep_goal > 99)
       show_error(E_GENERIC, "When trying to add a buffer, sweep goal was incremented to 100+ which would eliminate the entire list.  This is, I believe, a condition that should never happen.");
-printf("About to sweep with sweep goal of %"PRIu8" max size of %"PRIu64" current_size %"PRIu64" buffer_size %"PRIu32".\n", list->sweep_goal, list->max_size, list->current_size, BUFFER_SIZE);
     list__sweep(list);
-printf("Done sweeping.\n");
     list->sweep_goal = ORIGINAL_SWEEP_GOAL;
   }
 
@@ -487,7 +485,6 @@ uint32_t list__sweep(List *list) {
 
     // Assign the new buffer to the temp_list, track the size difference, and remove the original buffer.
     rv = list__add(temp_list, buf);
-printf("Assigning buffer id %"PRIu32" to temp_list with new size of %"PRIu64" and next id is %"PRIu32"\n", buf->id, temp_list->current_size, buf->next->id);
     if (rv != E_OK)
       show_error(rv, "Failed to send buf to the temp_list while sweeping.  Not sure how.  Return code is %d.", rv);
     rv = list__remove(list, list->clock_hand->id);
@@ -495,11 +492,7 @@ printf("Assigning buffer id %"PRIu32" to temp_list with new size of %"PRIu64" an
       show_error(rv, "Failed to remove the selected victim while sweeping.  Not sure how.  Return code is %d", rv);
     bytes_freed += buf->data_length - buf->comp_length;
   }
-Buffer *grr = temp_list->head;
-while(grr->next != temp_list->head) {
-  grr = grr->next;
-  printf("Id is %"PRIu32"\n", grr->id);
-}
+
   // Now that we've freed up memory, move stuff from the temp_list to the offload (compressed) list.
   if (temp_list->current_size + list->offload_to->current_size > list->offload_to->max_size)
     list__pop(list->offload_to, temp_list->current_size);
@@ -510,12 +503,12 @@ while(grr->next != temp_list->head) {
     current->popularity--;
   }
   current = temp_list->head;
-  while(current->next != temp_list->head) {
-    current = current->next;
-printf("Sending id %"PRIu32" for list__push\n", current->id);
+  Buffer *next = current->next;
+  while(next != temp_list->head) {
+    current = next;
+    next = next->next;
     list__push(list->offload_to, current);
   }
-printf("hmm\n");
 
   // Wrap up and leave.
   clock_gettime(CLOCK_MONOTONIC, &end);
@@ -538,7 +531,7 @@ int list__push(List *list, Buffer *buf) {
 
   // The caller will usually lock the list, but we'll do it just to be safe.
   list__acquire_write_lock(list);
-printf("rawr 1\n");
+
   // Buffers being recently pushed are popular with regard to other items in a compressed list.  This helps emulate FIFO.
   buf->popularity = MAX_POPULARITY;
 
@@ -546,9 +539,7 @@ printf("rawr 1\n");
   buf->victimized = 0;
 
   // That's really all for now.  The list__add() function will handle list size tracking and so forth.
-printf("rawr 2 %"PRIu32"\n", buf->id);
   list__add(list, buf);
-printf("rawr 3 %"PRIu32"\n", buf->id);
   list__release_write_lock(list);
 
   return E_OK;
