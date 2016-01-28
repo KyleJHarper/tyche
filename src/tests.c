@@ -218,13 +218,10 @@ void tests__read(ReadWriteOpts *rwopts) {
   int rv = 0;
   bufferid_t id_to_get = 0;
   Buffer *selected = NULL;
-printf("whee\n");
   for (int i=0; i<rwopts->reads_per_worker; i++) {
     for(;;) {
       id_to_get = rand() % rwopts->list_count;
-printf("About to search for %"PRIu32"\n", id_to_get);
       rv = list__search(rwopts->raw_list, &selected, id_to_get);
-printf("Done searching.\n");
       if (rv == E_OK)
         break;
       if (rv == E_BUFFER_NOT_FOUND || rv == E_BUFFER_POOFED || E_BUFFER_IS_VICTIMIZED)
@@ -232,7 +229,6 @@ printf("Done searching.\n");
       printf("We should never hit this (rv is %d).\n", rv);
     }
     usleep(rand() % rwopts->sleep_delay);  // This just emulates some random time the reader will use this buffer.
-printf("1\n");
     rv = buffer__lock(selected);
     if (rv == E_OK || rv == E_BUFFER_IS_VICTIMIZED) {
       buffer__update_ref(selected, -1);

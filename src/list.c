@@ -243,7 +243,7 @@ int list__add(List *list, Buffer *buf) {
     }
 
     // Now that the Nodes all exist (if any) and our slstack's ->right members point to them, we can set their ->down members.
-    for(int i = levels - 1; i >= 0; i--)
+    for(int i = levels - 1; i > 0; i--)
       slstack[i]->right->down = slstack[i-1]->right;
     // Finally, modify buffer list to insert *buf; even if no Skiplist Nodes were inserted. Since we searched, slstack[0] should be closest.
     Buffer *nearest_neighbor = slstack[0]->target;
