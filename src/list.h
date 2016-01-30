@@ -59,6 +59,8 @@ struct list {
   uint8_t sweep_goal;                   /* Minimum percentage of memory we want to free up whenever we sweep, relative to current_size. */
   uint32_t sweeps;                      /* Number of times the list has been swept. */
   uint64_t sweep_cost;                  /* Time in ns spent sweeping lists. */
+  uint32_t offloads;                    /* Number of buffers removed from the list (offloaded from raw, popped from compressed). */
+  uint32_t restorations;                /* Number of buffers restored to the raw list (compressed list doesn't use this). */
 
   /* Management of Nodes for Skiplist and Buffers */
   Buffer *head;                         /* The head of the list of buffers. */
@@ -82,6 +84,7 @@ int list__push(List *list, Buffer *buf);
 int list__pop(List *list, uint64_t bytes_needed);
 int list__restore(List *list, Buffer **buf);
 int list__balance(List *list, uint32_t ratio);
+int list__destroy(List *list);
 
 
 #endif /* SRC_LIST_H_ */

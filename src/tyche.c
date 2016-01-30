@@ -41,12 +41,14 @@ int main(int argc, char **argv) {
   options__process(argc, argv);
 
   /* Get a list of the pages we have to work with.  Build array large enough to store all, even if opts->dataset_max is set. */
+printf("1\n");
   io__get_page_count();
   char *pages[opts.page_count];
   opts.max_locks = (uint32_t)(opts.page_count / opts.lock_ratio);
   io__build_pages_array(pages);
 
   /* Initialize the locker pool and then build the Manager to work with.  Fire an srand() for tests__* just in case. */
+printf("2\n");
   srand(time(NULL));
   lock__initialize();
   Manager *mgr = manager__initialize(0, pages);
@@ -58,8 +60,14 @@ int main(int argc, char **argv) {
   }
 
   /* Run the managers. */
+printf("3\n");
   manager__start(mgr);
 
+  /* Clean up and send final notice. */
+  manager__destroy(mgr);
+  //lock__destroy();
+  for(int i=0; i<opts.page_count; i++)
+    free(pages[i]);
   printf("Tyche finished, shutting down.\n");
   return 0;
 }

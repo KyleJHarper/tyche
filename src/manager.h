@@ -50,6 +50,7 @@ int manager__start(Manager *mgr);
 void manager__timer(Manager *mgr);
 void manager__spawn_worker(Manager *mgr);
 void manager__assign_worker_id(workerid_t *referring_id_ptr);
+int manager__destroy(Manager *mgr);
 
 
 #endif /* SRC_MANAGER_H_ */

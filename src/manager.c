@@ -15,6 +15,7 @@
 #include "list.h"
 #include "error.h"
 #include "manager.h"
+#include <locale.h>  //Remove after testing.
 
 
 /* We need to know what one billion is for clock timing. */
@@ -61,6 +62,8 @@ Manager* manager__initialize(managerid_t id, char **pages) {
   mgr->workers = calloc(opts.workers, sizeof(Worker *));
   if(mgr->workers == NULL)
     show_error(E_GENERIC, "Failed to calloc the memory for the workers pool for a manager.");
+  mgr->hits = 0;
+  mgr->misses = 0;
 
   /* Create the listset for this manager to use. */
   List *raw_list = list__initialize();
@@ -116,11 +119,13 @@ int manager__start(Manager *mgr) {
   uint64_t total_acquisitions = mgr->hits + mgr->misses;
   clock_gettime(CLOCK_MONOTONIC, &end);
   mgr->run_duration = (BILLION *(end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec) / MILLION;
-  printf("Buffer Acquisitions: %"PRIu64" (%"PRIu64" hits, %"PRIu64" misses)\n", total_acquisitions, mgr->hits, mgr->misses);
-  printf("Pages in Data Set  : %"PRIu32" (%"PRIu64" bytes)\n",opts.page_count, opts.dataset_size);
-  printf("Hit Ratio          : %4.2f%%\n", 100.0 * mgr->hits / total_acquisitions);
-  printf("Fixed Memory Ratio : %"PRIu8"%% (%"PRIu64" bytes raw, %"PRIu64" bytes compressed)\n", opts.fixed_ratio, mgr->raw_list->max_size, mgr->comp_list->max_size);
-  printf("Manager run time   : %"PRIu32"\n", mgr->run_duration);
+  printf("Buffer Acquisitions : %"PRIu64" (%"PRIu64" hits, %"PRIu64" misses)\n", total_acquisitions, mgr->hits, mgr->misses);
+  printf("Pages in Data Set   : %"PRIu32" (%"PRIu64" bytes)\n",opts.page_count, opts.dataset_size);
+  printf("Raw List Migrations : %"PRIu32" offloads, %"PRIu32" restorations\n", mgr->raw_list->offloads, mgr->comp_list->restorations);
+  printf("Comp List Migrations: %"PRIu32" offloads\n", mgr->comp_list->offloads);
+  printf("Hit Ratio           : %4.2f%%\n", 100.0 * mgr->hits / total_acquisitions);
+  printf("Fixed Memory Ratio  : %"PRIu8"%% (%"PRIu64" bytes raw, %"PRIu64" bytes compressed)\n", opts.fixed_ratio, mgr->raw_list->max_size, mgr->comp_list->max_size);
+  printf("Manager run time    : %"PRIu32"\n", mgr->run_duration);
   return E_OK;
 }
 
@@ -137,6 +142,8 @@ void manager__timer(Manager *mgr) {
   while(opts.duration > (uint16_t)(current.tv_sec - start.tv_sec)) {
     usleep(RECHECK_RESOLUTION);
     clock_gettime(CLOCK_MONOTONIC, &current);
+    setlocale(LC_NUMERIC, "");
+    printf("List has %"PRIu32" raw buffers (%'"PRIu64" bytes) and %"PRIu32" comp buffers (%'"PRIu64" bytes).\n", mgr->raw_list->count, mgr->raw_list->current_size, mgr->comp_list->count, mgr->comp_list->current_size);
   }
 
   /* Flag the manager is no longer runnable, which will stop all workers. */
@@ -166,6 +173,7 @@ void manager__spawn_worker(Manager *mgr) {
   Buffer *buf = NULL;
   bufferid_t id_to_get = 0;
   int rv = 0;
+printf("hmm %u\n", peon.id);
   while(mgr->runnable != 0) {
     /* Go find buffers to play with!  If the one we need doesn't exist, get it and add it. */
     id_to_get = rand() % opts.page_count;
@@ -198,6 +206,7 @@ void manager__spawn_worker(Manager *mgr) {
   pthread_mutex_unlock(&mgr->lock);
 
   // All done.
+printf("worker done\n");
   pthread_exit(0);
 }
 
@@ -214,4 +223,15 @@ void manager__assign_worker_id(workerid_t *referring_id_ptr) {
     next_worker_id = 0;
   pthread_mutex_unlock(&next_worker_id_mutex);
   return;
+}
+
+
+/* manager__destroy
+ * Deconstruct the members of a Manager object.
+ */
+int manager__destroy(Manager *mgr) {
+  list__destroy(mgr->comp_list);
+  list__destroy(mgr->raw_list);
+  free(mgr->workers);
+  return E_OK;
 }

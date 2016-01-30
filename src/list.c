@@ -86,6 +86,10 @@ List* list__initialize() {
   list->offload_to = NULL;
   list->restore_to = NULL;
   list->sweep_goal = 5;
+  list->sweeps = 0;
+  list->sweep_cost = 0;
+  list->offloads = 0;
+  list->restorations = 0;
 
   /* Head Nodes of the List and Skiplist (Index). Make the Buffer list head a dummy buffer. */
   list->head = buffer__initialize(BUFFER_ID_MAX, NULL);
@@ -371,6 +375,7 @@ int list__search(List *list, Buffer **buf, bufferid_t id) {
   /* If we're still E_BUFFER_NOT_FOUND, scan the nearest_neighbor until we find it. */
   if(rv == E_BUFFER_NOT_FOUND) {
     Buffer *nearest_neighbor = slnode->target;
+printf("nearest_neighbor is %p\n", nearest_neighbor);
     while(nearest_neighbor->next->id <= id)
       nearest_neighbor = nearest_neighbor->next;
     // If we got a match, score.  Our nearest_neighbor is now the match.  Update ref and assign things.
@@ -508,6 +513,7 @@ uint32_t list__sweep(List *list) {
     current = next;
     next = next->next;
     list__push(list->offload_to, current);
+    list->offloads++;
   }
 
   // Wrap up and leave.
@@ -594,6 +600,7 @@ int list__pop(List *list, uint64_t bytes_needed) {
     while(slnode->right != NULL) {
       slnode = slnode->right;
       list__remove(list, slnode->target->id);
+      list->offloads++;
       slnode->target = NULL;
     }
     // Set current to the most-forward position of the next lowest popularity found in case we need to scan for more memory.
@@ -662,6 +669,7 @@ int list__restore(List *list, Buffer **buf) {
 
   // Assign the source pointer to our local copy's address, release write locks, and leave.
   *buf = new_buf;
+  list->restorations++;
   list__release_write_lock(list);
   list__release_write_lock(list->offload_to);
   return E_OK;
@@ -700,5 +708,16 @@ int list__balance(List *list, uint32_t ratio) {
 
   // All done.  Release our lock and go home.
   list__release_write_lock(list);
+  return E_OK;
+}
+
+
+/* list__destroy
+ * Frees the data held by a list.
+ */
+int list__destroy(List *list) {
+  while(list->head->next != list->head)
+    list__remove(list, list->head->next->id);
+  free(list);
   return E_OK;
 }
