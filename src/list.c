@@ -259,10 +259,9 @@ int list__add(List *list, Buffer *buf) {
     } else {
       buf->next = nearest_neighbor->next;
       nearest_neighbor->next = buf;
+      list->current_size += BUFFER_SIZE;
+      list->count++;
     }
-    // And finally, update the list metrics since we're all good!
-    list->current_size += BUFFER_SIZE;
-    list->count++;
   }
 
   /* Let go of the write lock we acquired. */
@@ -375,9 +374,12 @@ int list__search(List *list, Buffer **buf, bufferid_t id) {
   /* If we're still E_BUFFER_NOT_FOUND, scan the nearest_neighbor until we find it. */
   if(rv == E_BUFFER_NOT_FOUND) {
     Buffer *nearest_neighbor = slnode->target;
-printf("nearest_neighbor is %p\n", nearest_neighbor);
-    while(nearest_neighbor->next->id <= id)
+//printf("nearest_neighbor is %p, count is %"PRIu32", list is %p\n", nearest_neighbor, list->count, list);
+    printf("(%u) slnode->target is %p\n", (unsigned int)pthread_self(), slnode->target);
+    while(nearest_neighbor->next->id <= id) {
+      printf("(%u) nearest_neighbor->next->id is %"PRIu32"\n", (unsigned int)pthread_self(), nearest_neighbor->next->id);
       nearest_neighbor = nearest_neighbor->next;
+    }
     // If we got a match, score.  Our nearest_neighbor is now the match.  Update ref and assign things.
     if(nearest_neighbor->id == id) {
       rv = buffer__lock(nearest_neighbor);

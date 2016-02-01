@@ -173,7 +173,6 @@ void manager__spawn_worker(Manager *mgr) {
   Buffer *buf = NULL;
   bufferid_t id_to_get = 0;
   int rv = 0;
-printf("hmm %u\n", peon.id);
   while(mgr->runnable != 0) {
     /* Go find buffers to play with!  If the one we need doesn't exist, get it and add it. */
     id_to_get = rand() % opts.page_count;
@@ -206,7 +205,6 @@ printf("hmm %u\n", peon.id);
   pthread_mutex_unlock(&mgr->lock);
 
   // All done.
-printf("worker done\n");
   pthread_exit(0);
 }
 

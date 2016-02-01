@@ -265,6 +265,7 @@ void tests__chaos(ReadWriteOpts *rwopts) {
 void tests__elements(List *raw_list) {
   Buffer *buf = NULL;
   int rv = E_OK;
+  int id = 0;
   int element_count = 5000;
   if(opts.extended_test_options != NULL && strcmp(opts.extended_test_options, "") != 0) {
     printf("Extended options were found; updating test values with options specified: %s\n", opts.extended_test_options);
@@ -279,10 +280,17 @@ void tests__elements(List *raw_list) {
   raw_list->max_size = opts.max_memory;
 
   // Add all the buffers.
-  printf("Step 1.  Adding %d dummy buffers to the list.\n", element_count);
-  for(int i=0; i<element_count; i++) {
-    buf = buffer__initialize(i, NULL);
-    list__add(raw_list, buf);
+  printf("Step 1.  Adding %d dummy buffers to the list in with random IDs.\n", element_count);
+  buf = buffer__initialize(1, NULL);
+  list__add(raw_list, buf);
+  while(raw_list->count < element_count) {
+    id = rand() % (element_count * 10);
+printf("Adding buffer id %d\n", id);
+    buf = buffer__initialize(id, NULL);
+    if (list__add(raw_list, buf) != E_OK) {
+printf("Kicking out %d (duplicate)\n", id);
+      free(buf);
+    }
   }
 
   // Display the statistics of the list.
@@ -583,20 +591,49 @@ void tests__list_structure(List *list) {
   printf("         levels: %"PRIu8"\n", list->levels);
 
   // Skiplist Index information.
-  int count = 0, out_of_order = 0;
-  SkiplistNode *slnode = NULL;
+  int count = 0, out_of_order = 0, downs_wrong = 0, downs = 0;
+  SkiplistNode *slnode = NULL, *sldown = NULL;
+  // Step 1:  For each level...
   for(int i=0; i<list->levels; i++) {
     count = 0;
     out_of_order = 0;
+    downs_wrong = 0;
     slnode = list->indexes[i];
+    // Step 2:  For each slnode moving rightward...
     while(slnode->right != NULL) {
+      downs = 0;
+      sldown = slnode;
+      // Step 3:  For each slnode looking downward...
+      while(sldown->down != NULL) {
+        if(sldown->target->id == sldown->down->target->id)
+          downs++;
+        sldown = sldown->down;
+      }
+      if(downs != i)
+        downs_wrong++;
       slnode = slnode->right;
       count++;
       if((slnode->right != NULL) && (slnode->target->id >= slnode->right->target->id))
         out_of_order++;
     }
-    printf("Index %02d:  in order - %s, count %d (%3.1f%%)\n", i, out_of_order == 0 ? "yes" : "no", count, 100 * (double)count/list->count);
+    printf("Index %02d:  in order - %s, down pointers correct - %s, count %d (%3.1f%%)\n", i, out_of_order == 0 ? "yes" : "no", downs_wrong == 0 ? "yes" : "no", count, 100 * (double)count/list->count);
+    if(out_of_order != 0) {
+      printf("Index was out of order displaying: ");
+      slnode = list->indexes[i];
+      while(slnode->right != NULL) {
+        slnode = slnode->right;
+        printf(" %"PRIu32, slnode->target->id);
+      }
+      printf("\n");
+    }
   }
   printf("Indexes %02d - %02d are all 0 / 0.0%%\n", list->levels, SKIPLIST_MAX);
-
+  out_of_order = 0;
+  Buffer *nearest_neighbor = list->head->next;
+  while(nearest_neighbor->next != list->head) {
+    if(nearest_neighbor->id >= nearest_neighbor->next->id)
+      out_of_order++;
+    nearest_neighbor = nearest_neighbor->next;
+  }
+  printf("In order from head: %s\n", out_of_order == 0 ? "yes" : "no");
 }
