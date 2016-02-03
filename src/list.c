@@ -376,12 +376,8 @@ int list__search(List *list, Buffer **buf, bufferid_t id) {
   /* If we're still E_BUFFER_NOT_FOUND, scan the nearest_neighbor until we find it. */
   if(rv == E_BUFFER_NOT_FOUND) {
     Buffer *nearest_neighbor = slnode->target;
-//printf("nearest_neighbor is %p, count is %"PRIu32", list is %p\n", nearest_neighbor, list->count, list);
-    printf("(%u) slnode->target is %p\n", (unsigned int)pthread_self(), slnode->target);
-    while(nearest_neighbor->next->id <= id) {
-      printf("(%u) nearest_neighbor->next->id is %"PRIu32"\n", (unsigned int)pthread_self(), nearest_neighbor->next->id);
+    while(nearest_neighbor->next->id <= id)
       nearest_neighbor = nearest_neighbor->next;
-    }
     // If we got a match, score.  Our nearest_neighbor is now the match.  Update ref and assign things.
     if(nearest_neighbor->id == id) {
       rv = buffer__lock(nearest_neighbor);

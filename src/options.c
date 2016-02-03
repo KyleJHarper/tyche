@@ -198,12 +198,12 @@ void options__show_help() {
   fprintf(stderr, "tyche - Example Program for the Adaptive Compressed Cache Replacement Strategy (ACCRS)\n");
   fprintf(stderr, "        This is an implementation of ACCRS and is NOT intended as a tool or API!\n");
   fprintf(stderr, "\n");
-  fprintf(stderr, "  Usage: tyche <-p pages_directory> <-m memory_size> [-bdfhlnrtw]\n");
+  fprintf(stderr, "  Usage: tyche <-p pages_directory> <-m memory_size> [-bdfhlmnprtwX]\n");
   fprintf(stderr, "     ex: tyche -d /data/pages/8k -m 10000000\n");
   fprintf(stderr, "\n");
   fprintf(stderr, "  Options:\n");
   fprintf(stderr, "    %2s   %-10s   %s", "-b", "<number>",  "Maximum number of bytes to use from the data pages.  Default: unlimited.\n");
-  fprintf(stderr, "    %2s   %-10s   %s", "-d", "<number>",  "Duration to run tyche, in seconds.  Default: 5 sec\n");
+  fprintf(stderr, "    %2s   %-10s   %s", "-d", "<number>",  "Duration to run tyche, in seconds (+/- 1 sec).  Default: 5 sec\n");
   fprintf(stderr, "    %2s   %-10s   %s", "-f", "1 - 100",   "Fixed ratio.  Percentage RAM guaranteed for the raw buffer list.  Default: disabled (-1)\n");
   fprintf(stderr, "    %2s   %-10s   %s", "-h", "",          "Show this help.\n");
   fprintf(stderr, "    %2s   %-10s   %s", "-l", "1 - 255",   "Number of buffers sharing each buffer lock.  Defaults to 1.\n");

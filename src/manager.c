@@ -121,11 +121,11 @@ int manager__start(Manager *mgr) {
   mgr->run_duration = (BILLION *(end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec) / MILLION;
   printf("Buffer Acquisitions : %"PRIu64" (%"PRIu64" hits, %"PRIu64" misses)\n", total_acquisitions, mgr->hits, mgr->misses);
   printf("Pages in Data Set   : %"PRIu32" (%"PRIu64" bytes)\n",opts.page_count, opts.dataset_size);
-  printf("Raw List Migrations : %"PRIu32" offloads, %"PRIu32" restorations\n", mgr->raw_list->offloads, mgr->comp_list->restorations);
-  printf("Comp List Migrations: %"PRIu32" offloads\n", mgr->comp_list->offloads);
+  printf("Raw List Migrations : %"PRIu32" offloads, %"PRIu32" restorations\n", mgr->raw_list->offloads, mgr->raw_list->restorations);
+  printf("Comp List Migrations: %"PRIu32" offloads (popped)\n", mgr->comp_list->offloads);
   printf("Hit Ratio           : %4.2f%%\n", 100.0 * mgr->hits / total_acquisitions);
   printf("Fixed Memory Ratio  : %"PRIu8"%% (%"PRIu64" bytes raw, %"PRIu64" bytes compressed)\n", opts.fixed_ratio, mgr->raw_list->max_size, mgr->comp_list->max_size);
-  printf("Manager run time    : %"PRIu32"\n", mgr->run_duration);
+  printf("Manager run time    : %.1f sec\n", 1.0 * mgr->run_duration / 1000);
   return E_OK;
 }
 
@@ -135,16 +135,21 @@ int manager__start(Manager *mgr) {
  */
 void manager__timer(Manager *mgr) {
   /* Create time structures so we can break out after the right duration. */
-  const uint RECHECK_RESOLUTION = 100000;
+  const uint RECHECK_RESOLUTION = 250000;
+  uint16_t elapsed = 0;
   struct timespec start, current;
   clock_gettime(CLOCK_MONOTONIC, &start);
   clock_gettime(CLOCK_MONOTONIC, &current);
-  while(opts.duration > (uint16_t)(current.tv_sec - start.tv_sec)) {
+  while(opts.duration > elapsed) {
+    elapsed = (uint16_t)(current.tv_sec - start.tv_sec);
     usleep(RECHECK_RESOLUTION);
     clock_gettime(CLOCK_MONOTONIC, &current);
     setlocale(LC_NUMERIC, "");
-    printf("List has %"PRIu32" raw buffers (%'"PRIu64" bytes) and %"PRIu32" comp buffers (%'"PRIu64" bytes).\n", mgr->raw_list->count, mgr->raw_list->current_size, mgr->comp_list->count, mgr->comp_list->current_size);
+    fprintf(stderr, "\r%-90s", "");
+    fprintf(stderr, "\r%"PRIu16" sec remaining.  %'"PRIu32" raw (%'"PRIu32" comp) buffers.  %'"PRIu32" restorations.  %'"PRIu32" pops.", opts.duration - elapsed, mgr->raw_list->count, mgr->comp_list->count, mgr->raw_list->restorations, mgr->comp_list->offloads);
+    fflush(stderr);
   }
+  fprintf(stderr, "\n");
 
   /* Flag the manager is no longer runnable, which will stop all workers. */
   mgr->runnable = 0;
