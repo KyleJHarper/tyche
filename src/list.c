@@ -236,20 +236,8 @@ int list__add(List *list, Buffer *buf) {
       slstack[i-1] = slstack[i]->down;
   }
 
-  // Loop through the slstack and begin linking them together if our slstack building above is still E_OK.
+  // Continue searching the list from slstack[0] to ensure it doesn't already exist.  Then add to the list.
   if (rv == E_OK) {
-    SkiplistNode *slnode = NULL;
-    for(int i = 0; i < levels; i++) {
-      // Create a new Skiplist Node for each level we'll be inserting at and insert it into that index.
-      slnode = list__initialize_skiplistnode(buf);
-      slnode->right = slstack[i]->right;
-      slstack[i]->right = slnode;
-    }
-
-    // Now that the Nodes all exist (if any) and our slstack's ->right members point to them, we can set their ->down members.
-    for(int i = levels - 1; i > 0; i--)
-      slstack[i]->right->down = slstack[i-1]->right;
-    // Finally, modify buffer list to insert *buf; even if no Skiplist Nodes were inserted. Since we searched, slstack[0] should be closest.
     Buffer *nearest_neighbor = slstack[0]->target;
     // Move right in the buffer list.  ->head is always max, so no need to check anything but ->id.
     while(nearest_neighbor->next->id <= buf->id)
@@ -262,6 +250,20 @@ int list__add(List *list, Buffer *buf) {
       list->current_size += BUFFER_SIZE;
       list->count++;
     }
+  }
+
+  // Loop through the slstack and begin linking Skiplist Nodes together everything is still E_OK.
+  if (rv == E_OK) {
+    SkiplistNode *slnode = NULL;
+    for(int i = 0; i < levels; i++) {
+      // Create a new Skiplist Node for each level we'll be inserting at and insert it into that index.
+      slnode = list__initialize_skiplistnode(buf);
+      slnode->right = slstack[i]->right;
+      slstack[i]->right = slnode;
+    }
+    // Now that the Nodes all exist (if any) and our slstack's ->right members point to them, we can set their ->down members.
+    for(int i = levels - 1; i > 0; i--)
+      slstack[i]->right->down = slstack[i-1]->right;
   }
 
   /* Let go of the write lock we acquired. */

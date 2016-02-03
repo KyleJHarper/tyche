@@ -285,12 +285,10 @@ void tests__elements(List *raw_list) {
   list__add(raw_list, buf);
   while(raw_list->count < element_count) {
     id = rand() % (element_count * 10);
-printf("Adding buffer id %d\n", id);
     buf = buffer__initialize(id, NULL);
-    if (list__add(raw_list, buf) != E_OK) {
-printf("Kicking out %d (duplicate)\n", id);
+    rv = list__add(raw_list, buf);
+    if (rv != E_OK)
       free(buf);
-    }
   }
 
   // Display the statistics of the list.
