@@ -38,7 +38,7 @@ struct manager {
   pthread_mutex_t lock;   // Lock for operations on the manager which require atomicity.
 
   /* Workers and Their Aggregate Data */
-  Worker **workers;       // The pool of workers this manager has assigned to it.
+  Worker *workers;        // The pool of workers this manager has assigned to it.
   uint64_t hits;          // Total hits for all workers.
   uint64_t misses;        // Total misses for all workers.
 };

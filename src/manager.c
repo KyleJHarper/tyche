@@ -11,11 +11,12 @@
 #include <time.h>
 #include <inttypes.h>
 #include <pthread.h>
+#include <locale.h>
+#include <string.h>
 #include "options.h"
 #include "list.h"
 #include "error.h"
 #include "manager.h"
-#include <locale.h>  //Remove after testing.
 
 
 /* We need to know what one billion is for clock timing. */
@@ -59,7 +60,7 @@ Manager* manager__initialize(managerid_t id, char **pages) {
     show_error(E_GENERIC, "Failed to initialize mutex for a manager.  This is fatal.");
 
   /* Allocate the array of pointers for our **workers element so it's the right size. */
-  mgr->workers = calloc(opts.workers, sizeof(Worker *));
+  mgr->workers = calloc(opts.workers, sizeof(Worker));
   if(mgr->workers == NULL)
     show_error(E_GENERIC, "Failed to calloc the memory for the workers pool for a manager.");
   mgr->hits = 0;
@@ -78,11 +79,6 @@ Manager* manager__initialize(managerid_t id, char **pages) {
   mgr->comp_list = comp_list;
   raw_list->offload_to = comp_list;
   comp_list->restore_to = raw_list;
-
-  /* Allocate the array of pointers for our **workers element so it's the right size. */
-  mgr->workers = calloc(opts.workers, sizeof(Worker *));
-  if(mgr->workers == NULL)
-    show_error(E_GENERIC, "Failed to calloc the memory for the workers pool for a manager.");
 
   /* Synchronize mutexes and conditions to avoid t1 getting the 'raw' lock and t2 getting the 'compressed' lock and deadlocking. */
   comp_list->lock = raw_list->lock;
@@ -112,8 +108,10 @@ int manager__start(Manager *mgr) {
   for(int i=0; i<opts.workers; i++)
     pthread_create(&workers[i], NULL, (void *) &manager__spawn_worker, mgr);
   pthread_join(pt_timer, NULL);
+printf("we've joined timer\n");
   for(int i=0; i<opts.workers; i++)
     pthread_join(workers[i], NULL);
+printf("we've joined all workers\n");
 
   /* Show results and leave.  We */
   uint64_t total_acquisitions = mgr->hits + mgr->misses;
@@ -124,7 +122,7 @@ int manager__start(Manager *mgr) {
   printf("Raw List Migrations : %"PRIu32" offloads, %"PRIu32" restorations\n", mgr->raw_list->offloads, mgr->raw_list->restorations);
   printf("Comp List Migrations: %"PRIu32" offloads (popped)\n", mgr->comp_list->offloads);
   printf("Hit Ratio           : %4.2f%%\n", 100.0 * mgr->hits / total_acquisitions);
-  printf("Fixed Memory Ratio  : %"PRIu8"%% (%"PRIu64" bytes raw, %"PRIu64" bytes compressed)\n", opts.fixed_ratio, mgr->raw_list->max_size, mgr->comp_list->max_size);
+  printf("Fixed Memory Ratio  : %"PRIi8"%% (%"PRIu64" bytes raw, %"PRIu64" bytes compressed)\n", opts.fixed_ratio, mgr->raw_list->max_size, mgr->comp_list->max_size);
   printf("Manager run time    : %.1f sec\n", 1.0 * mgr->run_duration / 1000);
   return E_OK;
 }
@@ -137,16 +135,30 @@ void manager__timer(Manager *mgr) {
   /* Create time structures so we can break out after the right duration. */
   const uint RECHECK_RESOLUTION = 250000;
   uint16_t elapsed = 0;
+  uint64_t hits = 0, misses = 0;
+  int is_locked = 0;
   struct timespec start, current;
   clock_gettime(CLOCK_MONOTONIC, &start);
   clock_gettime(CLOCK_MONOTONIC, &current);
+  setlocale(LC_NUMERIC, "");
   while(opts.duration > elapsed) {
-    elapsed = (uint16_t)(current.tv_sec - start.tv_sec);
     usleep(RECHECK_RESOLUTION);
+    elapsed = (uint16_t)(current.tv_sec - start.tv_sec);
+    hits = 0;
+    misses = 0;
+    if (pthread_mutex_trylock(&mgr->raw_list->lock) == 0) {
+      is_locked = 0;
+      pthread_mutex_unlock(&mgr->raw_list->lock);
+    } else {
+      is_locked = 1;
+    }
+    for(workerid_t i = 0; i<opts.workers; i++) {
+      misses += mgr->workers[i].misses;
+      hits += mgr->workers[i].hits;
+    }
     clock_gettime(CLOCK_MONOTONIC, &current);
-    setlocale(LC_NUMERIC, "");
     fprintf(stderr, "\r%-90s", "");
-    fprintf(stderr, "\r%"PRIu16" sec remaining.  %'"PRIu32" raw (%'"PRIu32" comp) buffers.  %'"PRIu32" restorations.  %'"PRIu32" pops.", opts.duration - elapsed, mgr->raw_list->count, mgr->comp_list->count, mgr->raw_list->restorations, mgr->comp_list->offloads);
+    fprintf(stderr, "\r%"PRIu16" sec remaining.  %'"PRIu32" raw (%'"PRIu32" comp) buffers.  %'"PRIu32" restorations.  %'"PRIu32" pops.  %'"PRIu64" hits.  %'"PRIu64" misses. %d", opts.duration - elapsed, mgr->raw_list->count, mgr->comp_list->count, mgr->raw_list->restorations, mgr->comp_list->offloads, hits, misses, is_locked);
     fflush(stderr);
   }
   fprintf(stderr, "\n");
@@ -162,14 +174,13 @@ void manager__timer(Manager *mgr) {
  */
 void manager__spawn_worker(Manager *mgr) {
   /* Set up our worker. */
-  Worker peon;
-  peon.id = MAX_WORKER_ID;
-  peon.hits = 0;
-  peon.misses = 0;
-  manager__assign_worker_id(&peon.id);
-  if(peon.id == MAX_WORKER_ID)
+  workerid_t id = MAX_WORKER_ID;
+  manager__assign_worker_id(&id);
+  if(id == MAX_WORKER_ID)
     show_error(E_GENERIC, "Unable to get a worker ID.  This should never happen.");
-  mgr->workers[peon.id] = &peon;
+  mgr->workers[id].id = id;
+  mgr->workers[id].hits = 0;
+  mgr->workers[id].misses = 0;
 
   /* While srand should affect all threads per POSIX, call it per-thread anyway since each thread uses list__* functions.  For skiplist. */
   srand((uint)(time(NULL)));
@@ -183,9 +194,9 @@ void manager__spawn_worker(Manager *mgr) {
     id_to_get = rand() % opts.page_count;
     rv = list__search(mgr->raw_list, &buf, id_to_get);
     if(rv == E_OK)
-      peon.hits++;
+      mgr->workers[id].hits++;
     if(rv == E_BUFFER_NOT_FOUND) {
-      peon.misses++;
+      mgr->workers[id].misses++;
       buf = buffer__initialize(id_to_get, mgr->pages[id_to_get]);
       buffer__update_ref(buf, 1);
       rv = list__add(mgr->raw_list, buf);
@@ -203,10 +214,10 @@ void manager__spawn_worker(Manager *mgr) {
     buf = NULL;
   }
 
-  // We ran out of time.  Let's update the manager with our statistics.
+  // We ran out of time.  Let's update the manager with our statistics before we quit.
   pthread_mutex_lock(&mgr->lock);
-  mgr->hits += peon.hits;
-  mgr->misses += peon.misses;
+  mgr->hits += mgr->workers[id].hits;
+  mgr->misses += mgr->workers[id].misses;
   pthread_mutex_unlock(&mgr->lock);
 
   // All done.
