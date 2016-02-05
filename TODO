@@ -5,7 +5,7 @@
      d) Research options to accommodate aging and if it's even necessary (newer buffers == more likely to reuse?)
      e) Ensure that a scan protection element exists.
      f) Debug logging is probably a good idea for Managers and Workers.
-     g) Manager should print tidy, parsable results.
+     g) [done] Manager should print tidy, parsable results.
      h) A fixed ratio of 100 should be supported to completely bypass all offloading and list sweeping.
 2. Reporting
      a) Totals: buffers read, per second, peak?, etc
@@ -32,10 +32,10 @@
      i) Profile with instrumentation (gprof, valgrind --tool=callgrind) and optimize weak points.
      j) Once stable, try testing malloc vs tcmalloc vs jemalloc.  See if any real results exist.
 5. Skip List
-     g) List write locks should be much more localized.
-     j) List restoration fails if the buffer found (compressed) is list__removed()'d before we restore it.
-     k) Need a list__destroy() function to remove the *head and other bit (if any) for temp_list in list__sweep().
+     g) [done] List write locks should be much more localized.
+     j) [done] List restoration fails if the buffer found (compressed) is list__removed()'d before we restore it.
+     k) [done] Need a list__destroy() function to remove the *head and other bit (if any) for temp_list in list__sweep().
 6. Niceness
-     a) A progress indicator.
+     a) [done] A progress indicator.
      b) Update all the documentation in the source files.
 

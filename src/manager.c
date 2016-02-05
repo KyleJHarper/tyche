@@ -108,10 +108,8 @@ int manager__start(Manager *mgr) {
   for(int i=0; i<opts.workers; i++)
     pthread_create(&workers[i], NULL, (void *) &manager__spawn_worker, mgr);
   pthread_join(pt_timer, NULL);
-printf("we've joined timer\n");
   for(int i=0; i<opts.workers; i++)
     pthread_join(workers[i], NULL);
-printf("we've joined all workers\n");
 
   /* Show results and leave.  We */
   uint64_t total_acquisitions = mgr->hits + mgr->misses;
@@ -136,7 +134,6 @@ void manager__timer(Manager *mgr) {
   const uint RECHECK_RESOLUTION = 250000;
   uint16_t elapsed = 0;
   uint64_t hits = 0, misses = 0;
-  int is_locked = 0;
   struct timespec start, current;
   clock_gettime(CLOCK_MONOTONIC, &start);
   clock_gettime(CLOCK_MONOTONIC, &current);
@@ -146,22 +143,19 @@ void manager__timer(Manager *mgr) {
     elapsed = (uint16_t)(current.tv_sec - start.tv_sec);
     hits = 0;
     misses = 0;
-    if (pthread_mutex_trylock(&mgr->raw_list->lock) == 0) {
-      is_locked = 0;
-      pthread_mutex_unlock(&mgr->raw_list->lock);
-    } else {
-      is_locked = 1;
-    }
     for(workerid_t i = 0; i<opts.workers; i++) {
       misses += mgr->workers[i].misses;
       hits += mgr->workers[i].hits;
     }
     clock_gettime(CLOCK_MONOTONIC, &current);
+    if(opts.quiet == 1)
+      continue;
     fprintf(stderr, "\r%-90s", "");
-    fprintf(stderr, "\r%"PRIu16" sec remaining.  %'"PRIu32" raw (%'"PRIu32" comp) buffers.  %'"PRIu32" restorations.  %'"PRIu32" pops.  %'"PRIu64" hits.  %'"PRIu64" misses. %d", opts.duration - elapsed, mgr->raw_list->count, mgr->comp_list->count, mgr->raw_list->restorations, mgr->comp_list->offloads, hits, misses, is_locked);
+    fprintf(stderr, "\r%"PRIu16" sec remaining.  %'"PRIu32" raw (%'"PRIu32" comp) buffers.  %'"PRIu32" restorations.  %'"PRIu32" pops.  %'"PRIu64" hits.  %'"PRIu64" misses.", opts.duration - elapsed, mgr->raw_list->count, mgr->comp_list->count, mgr->raw_list->restorations, mgr->comp_list->offloads, hits, misses);
     fflush(stderr);
   }
-  fprintf(stderr, "\n");
+  if(opts.quiet == 0)
+    fprintf(stderr, "\n");
 
   /* Flag the manager is no longer runnable, which will stop all workers. */
   mgr->runnable = 0;

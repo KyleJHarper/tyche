@@ -38,6 +38,9 @@ struct options {
   /* Run Test? */
   char *test;                   // Name of a test to run.
   char *extended_test_options;  // Extended options required for some tests.
+
+  /* Niceness Features */
+  uint8_t quiet;                // Should we suppress most output.  0 == Normal, 1 == Quiet.
 };
 
 

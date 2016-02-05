@@ -398,9 +398,26 @@ int list__search(List *list, Buffer **buf, bufferid_t id) {
   if (rv == E_BUFFER_NOT_FOUND && list->offload_to != NULL) {
     rv = list__search(list->offload_to, buf, id);
     if (rv == E_OK) {
-      // Found it!  Restoration requires caller's pin to avoid a race, so do NOT buffer__update_ref() the buffer.
-      if (list__restore(list, buf) != E_OK)
-        show_error(E_GENERIC, "Failed to list__restore a buffer.  This should never happen.");
+      // Found it!  To avoid a race, release our pin, acquire the write lock, and then search again under its protection.
+      buffer__lock(*buf);
+      buffer__update_ref(*buf, -1);
+      buffer__unlock(*buf);
+      list__acquire_write_lock(list);
+      rv = list__search(list->offload_to, buf, id);
+      if (rv == E_OK) {
+        // We won any race to restore the given buffer.  Release our pin (again), restore it, and release the write lock protecting us.
+        buffer__lock(*buf);
+        buffer__update_ref(*buf, -1);
+        buffer__unlock(*buf);
+        if (list__restore(list, buf) != E_OK)
+          show_error(E_GENERIC, "Failed to list__restore a buffer.  This should never happen.");
+        list__release_write_lock(list);
+      } else {
+        // We lost a race to restore the buffer.  It should exist in the raw list now.  Release the write lock and start all over.
+        list__release_write_lock(list);
+        // Currently list should equate to ->offload_to->restore_to; but this behavior may change later, so be pedantic, even if circular.
+        rv = list__search(list->offload_to->restore_to, buf, id);
+      }
     }
   }
 
@@ -631,7 +648,7 @@ int list__pop(List *list, uint64_t bytes_needed) {
 /* list__restore
  * Takes the buffer specified and adds it back to the list specified after decompressing the data member and updating all of the
  * tracking data.
- * Requires buf to have one pin from the caller!!  Otherwise a race condition is risked.
+ * Caller MUST acquire the list's write lock; this prevents another reader from pinning the buffer we're about to remove.
  */
 int list__restore(List *list, Buffer **buf) {
   // Make sure we have a list, an offload_to, and a valid buffer.
@@ -657,11 +674,6 @@ int list__restore(List *list, Buffer **buf) {
   // Reset the victimization now that it's a valid buffer.  Set ref_count to 1 manually to avoid a little overhead.
   new_buf->victimized = 0;
   new_buf->ref_count = 1;
-
-  // Now that we're done with **buf, remove the pin our caller sent us so that list__remove() won't hang on victimization.
-  buffer__lock(*buf);
-  buffer__update_ref(*buf, -1);
-  buffer__unlock(*buf);
 
   // Add the decompressed copy to the list source list and remove the compressed buffer from the offload list.
   list__add(list, new_buf);

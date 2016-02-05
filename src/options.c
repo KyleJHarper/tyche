@@ -20,7 +20,7 @@
 
 
 /* Definitions to match most of the options. */
-#define MIN_MEMORY                1048576    // 1 MB
+#define MIN_MEMORY                1024000    // 1MB.  Lowest fixed ration is 1%.  Guarantee enough to sweep 1 sample_data buffer.
 #define MAX_LOCK_RATIO          UINT8_MAX    // 2^8,  255
 #define MAX_WORKERS            UINT16_MAX    // 2^16, 65535
 #define MAX_DURATION           UINT16_MAX    // 2^16, 65535
@@ -65,11 +65,13 @@ void options__process(int argc, char **argv) {
   /* Run Test? */
   opts.test = NULL;
   opts.extended_test_options = NULL;
+  /* Niceness Features */
+  opts.quiet = 0;
 
   /* Process everything passed from CLI now. */
   int c = 0;
   opterr = 0;
-  while ((c = getopt(argc, argv, "b:d:f:hl:m:n:p:r:t:w:X:")) != -1) {
+  while ((c = getopt(argc, argv, "b:d:f:hl:m:n:p:qr:t:w:X:")) != -1) {
     switch (c) {
       case 'b':
         opts.dataset_max = (uint64_t)atoll(optarg);
@@ -99,6 +101,9 @@ void options__process(int argc, char **argv) {
         break;
       case 'p':
         opts.page_directory = optarg;
+        break;
+      case 'q':
+        opts.quiet = 1;
         break;
       case 'r':
         opts.hit_ratio = (int8_t)atoi(optarg);
@@ -198,7 +203,7 @@ void options__show_help() {
   fprintf(stderr, "tyche - Example Program for the Adaptive Compressed Cache Replacement Strategy (ACCRS)\n");
   fprintf(stderr, "        This is an implementation of ACCRS and is NOT intended as a tool or API!\n");
   fprintf(stderr, "\n");
-  fprintf(stderr, "  Usage: tyche <-p pages_directory> <-m memory_size> [-bdfhlmnprtwX]\n");
+  fprintf(stderr, "  Usage: tyche <-p pages_directory> <-m memory_size> [-bdfhlmnpqrtwX]\n");
   fprintf(stderr, "     ex: tyche -d /data/pages/8k -m 10000000\n");
   fprintf(stderr, "\n");
   fprintf(stderr, "  Options:\n");
@@ -210,6 +215,7 @@ void options__show_help() {
   fprintf(stderr, "    %2s   %-10s   %s", "-m", "<number>",  "Maximum number of bytes (RAM) to use for all buffers.  Default: 10 MB.\n");
   fprintf(stderr, "    %2s   %-10s   %s", "-n", "<number>",  "Maximum number of pages to use from the sample data pages.  Default: unlimited.\n");
   fprintf(stderr, "    %2s   %-10s   %s", "-p", "/some/dir", "The directory to scan for pages of sample data.  Default: ./sample_data.\n");
+  fprintf(stderr, "    %2s   %-10s   %s", "-q", "",          "Suppress most output, namely tracking/status.  Default: false.\n");
   fprintf(stderr, "    %2s   %-10s   %s", "-r", "1 - 100",   "Hit Ratio to ensure as a minimum (by searching raw list when too low).  Default: disabled (-1)\n");
   fprintf(stderr, "    %2s   %-10s   %s", "-t", "test_name", "Run an internal test.  Specify 'help' to see available tests.  (For debugging).\n");
   fprintf(stderr, "    %2s   %-10s   %s", "-w", "<number>",  "Number of workers (threads) to use while testing.  Defaults to CPU count.\n");

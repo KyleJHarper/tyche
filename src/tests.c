@@ -565,6 +565,8 @@ void tests__options() {
   /* Test Management */
   printf("opts->duration       = %"PRIu16"\n", opts.duration);
   printf("opts->hit_ratio      = %"PRIi8"\n",  opts.hit_ratio);
+  /* Niceness Features */
+  printf("opts->quiet          = %"PRIi8"\n",  opts.quiet);
 
   return;
 }
