@@ -1,5 +1,16 @@
 Contains a simple note for each tagged release.  We will try to follow SEMVER.  Be aware, all 0.x.y releases are developmental and are NOT guaranteed compatible according to SEMVER.  Major version 0 should go away after major release 1... as will this notice probably.
 
+0.0.7 (2016-02-06)
+- Switched from an array of buffers to a circular linked list.  This allows insertion and deletion to happen without growing or shrinking the entire list, nor keeping a "free" list.  See 'skiplist' for ordering/searching.
+- A skiplist implementation with a traditional coin-toss (50/50) was implemented to replace the binary search we lost when we switched off of an array of buffers.
+- All tests were completely overhauled to support the new list structure and skiplist indexing system.  Additional -X option sets were created to support better edge case testing.
+- The manager and worker structs and functions for basic working and tracking now exist.  This will be the foothold for ACCRS logic to stem from.
+- Status output was added, if desired.
+- Destruction functions (*__destroy()) were created to help prevent memory leakes.  A future optimization branch will be worked on that will help eliminate even more un-free()'d memory... but for now I fixed the biggest offenders.
+- The sizes binary (program) was updated to help understand per-object space requirements on each system.
+- A race condition with list__restore() was causing thread 2 (the loser of the race) to cause a segmentation violation (SIGSEGV).  This was fixed.
+- The list__acquire_write_lock not only flushes buffers, but the list__update_ref() function aborts early if the current thread is the owner of the write lock.  This helps avoid self-induced deadlocks within a thread and useless broadcasting.
+
 0.0.6 (2015-12-12)
 - Got the basics of buffer management done.  We can now read buffers from disk and offload them like we want.  Hooray.
 - Performance tests outlined major performance problems in list management.  Will be fixed in 0.0.7 most likely.
