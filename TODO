@@ -7,12 +7,7 @@
      f) Debug logging is probably a good idea for Managers and Workers.
      g) [done] Manager should print tidy, parsable results.
      h) A fixed ratio of 100 should be supported to completely bypass all offloading and list sweeping.
-2. Reporting
-     a) Totals: buffers read, per second, peak?, etc
-     b) Buffer hits, misses/faults, and hit ratio.
-     c) Data set information: files found, average size, max size, minimum size, etc.
-     d) Logging support, particularly for the manager__* functions.
-3. FAQ
+2. FAQ
      a) Why no size_t?  (Because I want to ensure minium sizes in almost all cases)
      b) Why so much uint/uintX_t?  Because I usually need to accommodate the given size and negative numbers don't exist.
      c) Why no <bla> optimization?  Probably because I'm new to C and didn't know about it.
@@ -20,7 +15,7 @@
      e) Why C?  To *hopefully* avoid bias in higher level langages; though they might have optimizations.
      f) Why lz4?  Partly it's compression speed+efficiency, but mostly it's decompression speed.
      g) Locker?  In theory, it reduces memory use by using shared locks among a small number of buffers.  Configurable.
-4. Optimizations
+3. Optimizations
      a) Using const on all functions where appropriate.
      b) Figure out how to stop double-scanning with io__* to get the page count.
      c) Inline functions like lock__acquire/release (or simply remove them?)
@@ -31,11 +26,9 @@
      h) Profile with valgrind to find memory leaks.
      i) Profile with instrumentation (gprof, valgrind --tool=callgrind) and optimize weak points.
      j) Once stable, try testing malloc vs tcmalloc vs jemalloc.  See if any real results exist.
-5. Skip List
-     g) [done] List write locks should be much more localized.
-     j) [done] List restoration fails if the buffer found (compressed) is list__removed()'d before we restore it.
-     k) [done] Need a list__destroy() function to remove the *head and other bit (if any) for temp_list in list__sweep().
-6. Niceness
-     a) [done] A progress indicator.
-     b) Update all the documentation in the source files.
+     k) See if list__add can use localized (buffer) locking.
+     l) Research localized locking for list__remove(), though I doubt it's reasonable.
+     m) See if independent locks for comp list can allow comp list to do work independent of raw list.
+4. Niceness
+     a) Update all the documentation in the source files.
 
