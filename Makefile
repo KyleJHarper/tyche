@@ -2,7 +2,6 @@
 
 CC     = gcc
 CFLAGS += -Wall -std=gnu99 -pthread
-#CFLAGS += -Wall -std=gnu99 -pthread -O3
 
 SRCDIR = src
 OBJDIR = obj
@@ -15,7 +14,7 @@ OBJECTS  := $(SOURCES:$(SRCDIR)/%.c=$(OBJDIR)/%.o)
 # Targets
 # The clock_gettime() on this gcc version requires -lrt.
 build:
-	$(CC) $(CFLAGS) -g -pg -o $(BINDIR)/tyche     \
+	$(CC) $(CFLAGS) -g -pg -Os -o $(BINDIR)/tyche     \
 		$(SRCDIR)/list.c    \
 		$(SRCDIR)/lz4.c     \
 		$(SRCDIR)/options.c \
@@ -27,9 +26,9 @@ build:
 		$(SRCDIR)/tests.c   \
 		$(SRCDIR)/tyche.c   \
 		-lrt
-	$(CC) $(CFLAGS) -o $(BINDIR)/hello $(SRCDIR)/hello.c
-	$(CC) $(CFLAGS) -o $(BINDIR)/sizes $(SRCDIR)/sizes.c
-	$(CC) $(CFLAGS) -o $(BINDIR)/tyche_release     \
+	$(CC) $(CFLAGS)     -o $(BINDIR)/hello $(SRCDIR)/hello.c
+	$(CC) $(CFLAGS)     -o $(BINDIR)/sizes $(SRCDIR)/sizes.c
+	$(CC) $(CFLAGS) -O3 -o $(BINDIR)/tyche_release     \
 		$(SRCDIR)/list.c    \
 		$(SRCDIR)/lz4.c     \
 		$(SRCDIR)/options.c \
