@@ -151,7 +151,7 @@ void manager__timer(Manager *mgr) {
     if(opts.quiet == 1)
       continue;
     fprintf(stderr, "\r%-90s", "");
-    fprintf(stderr, "\r%"PRIu16" sec remaining.  %'"PRIu32" raw (%'"PRIu32" comp) buffers.  %'"PRIu32" restorations.  %'"PRIu32" pops.  %'"PRIu64" hits.  %'"PRIu64" misses.", opts.duration - elapsed, mgr->raw_list->count, mgr->comp_list->count, mgr->raw_list->restorations, mgr->comp_list->offloads, hits, misses);
+    fprintf(stderr, "\r%"PRIu16" sec ETA.  %'"PRIu32" raw (%'"PRIu32" comp) buffers.  %'"PRIu32" restorations.  %'"PRIu32" pops.  %'"PRIu64" hits.  %'"PRIu64" misses.", opts.duration - elapsed, mgr->raw_list->count, mgr->comp_list->count, mgr->raw_list->restorations, mgr->comp_list->offloads, hits, misses);
     fflush(stderr);
   }
   if(opts.quiet == 0)
