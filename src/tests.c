@@ -197,7 +197,6 @@ void tests__synchronized_readwrite(List *raw_list) {
       has_failures++;
     }
   }
-  list__destroy(raw_list);
   if (has_failures > 0)
     show_error(E_GENERIC, "Test 'synchronized_readwrite' has failures :(\n");
   if (raw_list->count > rwopts.list_floor || raw_list->count < (rwopts.list_floor - rwopts.chaos_monkeys))
@@ -526,6 +525,9 @@ void tests__move_buffers(List *raw_list, char *pages[]) {
   if (list__search(raw_list, &test4_buf, test4_sample_id) != E_OK)
     show_error(E_GENERIC, "list__search says it failed to find our buffer.  Boo.");
   printf("The list search buffer returned gave id of %d, the id we wanted was %d.\n", test4_buf->id, test4_sample_id);
+  buffer__lock(test4_buf);
+  buffer__update_ref(test4_buf, -1);
+  buffer__unlock(test4_buf);
   int found_in_raw = 0;
   test4_current = raw_list->head;
   while(test4_current->next != raw_list->head) {

@@ -729,6 +729,7 @@ int list__balance(List *list, uint32_t ratio) {
 int list__destroy(List *list) {
   while(list->head->next != list->head)
     list__remove(list, list->head->next->id);
+  list__remove(list, list->head->id);
   free(list);
   return E_OK;
 }
