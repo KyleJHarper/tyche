@@ -6,6 +6,7 @@
  */
 
 #include <pthread.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
 #include <string.h>
@@ -161,9 +162,6 @@ void tests__synchronized_readwrite(List *raw_list) {
   raw_list->max_size = 100 * 1024 * 1024;
   Buffer *temp = NULL, *current = NULL;
   char *sample_data = "some text, hooray for me";
-  // Change the lock count so it's reasonable.
-  opts.max_locks = rwopts.list_count / 2;
-  lock__initialize();
 
   // Create LIST_COUNT buffers with some data in them.
   for (bufferid_t i=1; i<=rwopts.list_count; i++) {
@@ -178,8 +176,7 @@ void tests__synchronized_readwrite(List *raw_list) {
   pthread_t workers[rwopts.worker_count];
   for (int i=0; i<rwopts.worker_count; i++)
     pthread_create(&workers[i], NULL, (void *) &tests__read, &rwopts);
-sleep(3);
-printf("Rawr\n");
+
   // Start up a chaos monkeys for insanity.
   pthread_t chaos_monkeys[rwopts.chaos_monkeys];
   for (int i=0; i<rwopts.chaos_monkeys; i++)
@@ -196,10 +193,11 @@ printf("Rawr\n");
   while(current->next != raw_list->head) {
     current = current->next;
     if (current->ref_count != 0) {
-      printf("Buffer ID number %d has non-zero ref_count: %d  (lock_id %d)\n", current->id, current->ref_count, current->lock_id);
+      printf("Buffer ID number %d has non-zero ref_count: %d\n", current->id, current->ref_count);
       has_failures++;
     }
   }
+  list__destroy(raw_list);
   if (has_failures > 0)
     show_error(E_GENERIC, "Test 'synchronized_readwrite' has failures :(\n");
   if (raw_list->count > rwopts.list_floor || raw_list->count < (rwopts.list_floor - rwopts.chaos_monkeys))

@@ -16,10 +16,14 @@
      f) Why lz4?  Partly it's compression speed+efficiency, but mostly it's decompression speed.
      g) Locker?  In theory, it reduces memory use by using shared locks among a small number of buffers.  Configurable.
 3. Optimizations & Profiling
-     a) Using const on all functions where appropriate.
+     a) [done] Using const on all functions where appropriate.
+        This seems largely argumented, and frankly I can't imagine that gcc can't determine which items are
+        const-capable during optimization (-O3) processes.
      b) Figure out how to stop double-scanning with io__* to get the page count.
-     c) Inline functions like lock__acquire/release (or simply remove them?)
-     d) Switch all uintXX_t types to typedefs so they can be changed more simply in the future; like lockid_t.
+     c) [done] Inline functions like lock__acquire/release (or simply remove them?)
+        Skipping the inline-ing because it's not what I thought it was.  lock__acquire/release were removed.
+     d) [done] Switch all uintXX_t types to typedefs so they can be changed more simply in the future; like lockid_t.
+        Commonly used types have this now.  Others don't need it.
      e) Add uint8_t ->count to Locks.  If >= 2* ->lock_ratio this lock is doing too much; try another Lock.
      f) Rerun performance tests for comparison.
      g) Update Makefile to create a debug and release verion of tyche and compare performance.
@@ -36,4 +40,4 @@
      p) Determine if we can malloc larger chunks and/or reuse them with free lists (might require buffers to be equal sizes).
 4. Niceness
      a) Update all the documentation in the source files.
-
+     b) Add Lock to the sizes binary.

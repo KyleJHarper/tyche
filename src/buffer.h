@@ -12,12 +12,10 @@
 
 /* Include necessary headers here. */
 #include <stdint.h>  /* Used for the uint_ types */
-#include "lock.h"    /* For lockid_t type */
 
 /* Defines used by this header. */
 #define MAX_POPULARITY (UINT8_MAX - 1)
 #define BUFFER_ID_MAX UINT32_MAX
-
 
 /* Build the typedef and structure for a Buffer */
 typedef uint32_t bufferid_t;
@@ -28,7 +26,8 @@ struct buffer {
   uint16_t ref_count;             /* Number of references currently holding this buffer. */
   uint8_t popularity;             /* Rapidly decaying counter used for victim selection with clock sweep.  Ceiling of MAX_POPULARITY. */
   uint8_t victimized;             /* If the buffer has been victimized this is set non-zero.  Prevents incrementing of ref_count. */
-  lockid_t lock_id;               /* Lock ID from the locker_pool[], rather than having a pthread mutex & cond for each Buffer. */
+  pthread_mutex_t lock;           /* The primary locking element for individual buffer protection. */
+  pthread_cond_t condition;       /* The conditional variable for use with the lock when we're blocked and need signaling. */
 
   /* Cost values for each buffer when pulled from disk or compressed/decompressed. */
   uint32_t comp_cost;             /* Time spent, in ns, to compress and decompress a page.  Using clock_gettime(3) */

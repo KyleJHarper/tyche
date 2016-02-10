@@ -12,24 +12,39 @@
 #include <stdlib.h>
 #include <time.h>     /* for clock_gettime() */
 #include <string.h>   /* for memcpy() */
-#include "lock.h"
 #include "error.h"
 #include "buffer.h"
 #include "lz4.h"
 
 
+/* Create a buffer initializer to help save time. */
+const Buffer BUFFER_INITIALIZER = {
+  /* Attributes for typical buffer organization and management. */
+  .id = 0,
+  .ref_count = 0,
+  .popularity = 0,
+  .victimized = 0,
+  .lock = PTHREAD_MUTEX_INITIALIZER,
+  .condition = PTHREAD_COND_INITIALIZER,
+  /* Cost values for each buffer when pulled from disk or compressed/decompressed. */
+  .comp_cost = 0,
+  .io_cost = 0,
+  .comp_hits = 0,
+  /* The actual payload we want to cache (i.e.: the page). */
+  .data_length = 0,
+  .comp_length = 0,
+  .data = NULL,
+  /* Tracking for the list we're part of. */
+  .next = NULL
+};
+
 /* We need to know what one billion is for clock timing. */
 #define BILLION 1000000000L
-
-/* Give extern access to *locker_pool to us, even though I'm sure this is a no no and someone will yell at me. */
-extern Lock *locker_pool;
-
 
 /* Extern the error codes we'll use. */
 extern const int E_OK;
 extern const int E_GENERIC;
 extern const int E_BUFFER_NOT_FOUND;
-extern const int E_BUFFER_POOFED;
 extern const int E_BUFFER_IS_VICTIMIZED;
 extern const int E_BUFFER_MISSING_DATA;
 
@@ -48,25 +63,9 @@ Buffer* buffer__initialize(bufferid_t id, char *page_filespec) {
   Buffer *new_buffer = (Buffer *)malloc(sizeof(Buffer));
   if (new_buffer == NULL)
     show_error(E_GENERIC, "Error malloc-ing a new buffer in buffer__initialize.");
-  /* Attributes for typical buffer organization and management. */
+  /* Load default values via memcpy from a template defined above. */
+  memcpy(new_buffer, &BUFFER_INITIALIZER, sizeof(Buffer));
   new_buffer->id = id;
-  new_buffer->ref_count = 0;
-  new_buffer->popularity = 0;
-  new_buffer->victimized = 0;
-  lock__assign_next_id(&new_buffer->lock_id);
-
-  /* Cost values for each buffer when pulled from disk or compressed/decompressed. */
-  new_buffer->comp_cost = 0;
-  new_buffer->io_cost = 0;
-  new_buffer->comp_hits = 0;
-
-  /* The actual payload we want to cache (i.e.: the page). */
-  new_buffer->data_length = 0;
-  new_buffer->comp_length = 0;
-  new_buffer->data = NULL;
-
-  /* Tracking for the list we're part of. */
-  new_buffer->next = NULL;
 
   /* If we weren't given a filespec, then we're done.  Peace out. */
   if (page_filespec == NULL)
@@ -84,7 +83,8 @@ Buffer* buffer__initialize(bufferid_t id, char *page_filespec) {
   new_buffer->data = malloc(new_buffer->data_length);
   if (new_buffer->data == NULL)
     show_error(E_GENERIC, "Unable to allocate memory when loading a buffer's data member.");
-  fread(new_buffer->data, new_buffer->data_length, 1, fh);
+  if (fread(new_buffer->data, new_buffer->data_length, 1, fh) == 0)
+    show_error(E_GENERIC, "Failed to read the data for a new buffer: %s", page_filespec);
   fclose(fh);
   clock_gettime(CLOCK_MONOTONIC, &end);
   new_buffer->io_cost = BILLION *(end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec;
@@ -95,16 +95,13 @@ Buffer* buffer__initialize(bufferid_t id, char *page_filespec) {
 
 /* buffer__destroy
  * A concise function to completely free up the memory used by a buffer.
- * Caller MUST have victimized the buffer before this is allowed!  This means the buffer's lock will LOCKED!
+ * Caller MUST have victimized the buffer before this is allowed!  This means the buffer's lock will be LOCKED!
  */
 int buffer__destroy(Buffer *buf) {
   if (buf == NULL)
     return E_OK;
   if (buf->victimized == 0)
     show_error(E_GENERIC, "The buffer__destroy() function was called with a non-victimized buffer.  This isn't allowed.");
-
-  /* Save the lock ID so we can unlock it when we're done destroying this buffer. */
-  lockid_t lock_id = buf->lock_id;
 
   /* Free the members which are pointers to other data locations. */
   free(buf->data);
@@ -113,20 +110,15 @@ int buffer__destroy(Buffer *buf) {
   free(buf);
   // Setting buf to NULL here is useless because it's not a double pointer, on purpose.  Caller needs to NULL their own pointers.
 
-  /* Unlock the element with lock_id now that the buffer is gone, in case others use this ID. */
-  lock__release(lock_id);
+  /* Then unlock the element with lock_id now that the buffer is gone, in case others use this ID. */
   return E_OK;
 }
 
 /* buffer__lock
- * Setting a lock just locks the mutex from the *locker_pool.  Since we support concurrency, it's possible to have a thread
- * waiting for a lock on a buffer while another thread is removing that buffer entirely.  So we add a little more logic for that.
+ * Simply locks the ->lock (mutex) of the buffer for times when atomicity matter.
  */
 int buffer__lock(Buffer *buf) {
-  /* Check to make sure the buffer exists. */
-  if (buf == NULL)
-    return E_BUFFER_POOFED;
-  pthread_mutex_lock(&(locker_pool + buf->lock_id)->mutex);
+  pthread_mutex_lock(&buf->lock);
   /* If a buffer is victimized we can still lock it, but the caller needs to know. This is safe because buffer__victimize locks. */
   if (buf->victimized != 0)
     return E_BUFFER_IS_VICTIMIZED;
@@ -135,11 +127,10 @@ int buffer__lock(Buffer *buf) {
 
 
 /* buffer__unlock
- * This will unlock the element in the *locker_pool with the element matching lock_id.  Since this can only be reached at the end
- * of a block who already owns the lock, we don't need any special checking.
+ * Unlocks the ->lock element (mutex) for the given buffer.
  */
 void buffer__unlock(Buffer *buf) {
-  pthread_mutex_unlock(&(locker_pool + buf->lock_id)->mutex);
+  pthread_mutex_unlock(&buf->lock);
 }
 
 
@@ -155,7 +146,7 @@ int buffer__update_ref(Buffer *buf, int delta) {
   // At this point we're safe to modify the ref_count.  When decrementing, check to see if we need to broadcast.
   buf->ref_count += delta;
   if (buf->victimized != 0 && buf->ref_count == 0)
-    pthread_cond_broadcast(&(locker_pool + buf->lock_id)->condition);
+    pthread_cond_broadcast(&buf->condition);
 
   // If we're incrementing we need to update popularity too.
   if (delta > 0 && buf->popularity < MAX_POPULARITY)
@@ -178,7 +169,7 @@ int buffer__victimize(Buffer *buf) {
     return rv;
   buf->victimized = 1;
   while(buf->ref_count != 0)
-    pthread_cond_wait(&(locker_pool + buf->lock_id)->condition, &(locker_pool + buf->lock_id)->mutex);
+    pthread_cond_wait(&buf->condition, &buf->lock);
   return E_OK;
 }
 
@@ -307,7 +298,7 @@ int buffer__copy(Buffer *src, Buffer *dst) {
   dst->ref_count  = src->ref_count;
   dst->popularity = src->popularity;
   dst->victimized = src->victimized;
-  dst->lock_id    = src->lock_id;
+  // The lock and condition do not need to be linked.
 
   /* Cost values for each buffer when pulled from disk or compressed/decompressed. */
   dst->comp_cost = src->comp_cost;

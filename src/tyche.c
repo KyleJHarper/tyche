@@ -22,7 +22,6 @@
 #include "error_codes.h"
 #include "error.h"
 #include "list.h"
-#include "lock.h"
 #include "tests.h"
 #include "io.h"
 #include "options.h"
@@ -43,12 +42,10 @@ int main(int argc, char **argv) {
   /* Get a list of the pages we have to work with.  Build array large enough to store all, even if opts->dataset_max is set. */
   io__get_page_count();
   char *pages[opts.page_count];
-  opts.max_locks = (uint32_t)(opts.page_count / opts.lock_ratio);
   io__build_pages_array(pages);
 
   /* Initialize the locker pool and then build the Manager to work with.  Fire an srand() for tests__* just in case. */
   srand(time(NULL));
-  lock__initialize();
   Manager *mgr = manager__initialize(0, pages);
   /* If a test was specified, run it instead of the manager(s) and then leave. */
   if (opts.test != NULL) {

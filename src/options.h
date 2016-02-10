@@ -28,8 +28,6 @@ struct options {
   uint64_t max_memory;          // Maximum amount of memory tyche can use for buffers.
   int8_t fixed_ratio;           // If non-negative, enforce raw list to this ratio when balancing.
   uint16_t workers;             // Number of worker threads to use simultaneously.
-  uint8_t lock_ratio;           // Number of buffers sharing the same lock.
-  uint32_t max_locks;           // Number of actual locks to create to meet the ratio.
 
   /* Tyche Management */
   uint16_t duration;            // Amount of time for each worker to run, in seconds (s).

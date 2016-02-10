@@ -57,8 +57,6 @@ void options__process(int argc, char **argv) {
   opts.max_memory = 10 * 1024 * 1024;
   opts.fixed_ratio = -1;
   opts.workers = sysconf(_SC_NPROCESSORS_ONLN) > 0 ? (uint16_t)sysconf(_SC_NPROCESSORS_ONLN) : 1;
-  opts.lock_ratio = 1;
-  opts.max_locks = 0;
   /* Tyche Management */
   opts.duration = 5;
   opts.hit_ratio = -1;
@@ -71,7 +69,7 @@ void options__process(int argc, char **argv) {
   /* Process everything passed from CLI now. */
   int c = 0;
   opterr = 0;
-  while ((c = getopt(argc, argv, "b:d:f:hl:m:n:p:qr:t:w:X:")) != -1) {
+  while ((c = getopt(argc, argv, "b:d:f:hm:n:p:qr:t:w:X:")) != -1) {
     switch (c) {
       case 'b':
         opts.dataset_max = (uint64_t)atoll(optarg);
@@ -87,11 +85,6 @@ void options__process(int argc, char **argv) {
       case 'h':
         options__show_help();
         exit(E_OK);
-        break;
-      case 'l':
-        opts.lock_ratio = (uint8_t)atoi(optarg);
-        if(atoi(optarg) > MAX_LOCK_RATIO)
-          opts.lock_ratio = MAX_LOCK_RATIO;
         break;
       case 'm':
         opts.max_memory = (uint64_t)atoll(optarg);
@@ -130,7 +123,7 @@ void options__process(int argc, char **argv) {
         break;
       case '?':
         options__show_help();
-        if (optopt == 'b' || optopt == 'd' || optopt == 'f' || optopt == 'l' || optopt == 'm' || optopt == 'n' || optopt == 'p' || optopt == 'r' || optopt == 't' || optopt == 'w' || optopt == 'X')
+        if (optopt == 'b' || optopt == 'd' || optopt == 'f' || optopt == 'm' || optopt == 'n' || optopt == 'p' || optopt == 'r' || optopt == 't' || optopt == 'w' || optopt == 'X')
           fprintf(stderr, "Option -%c requires an argument.\n", optopt);
         else if (isprint (optopt))
           fprintf(stderr, "Unknown option `-%c'.\n", optopt);
@@ -185,11 +178,6 @@ void options__process(int argc, char **argv) {
   // -- Page limit cannot be 0.
   if (opts.page_limit == 0)
     show_error(E_BAD_CLI, "The page limit (-n) is 0.  You either sent invalid input (atoi() failed), or you misunderstood the option; it limits the number of pages the scan functions will find before moving on with the test.");
-  // -- Locker pool size limit cannot be 0.  It defaults to 1.
-  if (opts.lock_ratio == 0)
-    show_error(E_BAD_CLI, "The lock ratio (-l) is 0.  You either sent invalid input (atoi() failed), or you misunderstood the option; it sets the number of buffers sharing each buffer lock.");
-  if (opts.lock_ratio == MAX_LOCK_RATIO)
-    show_error(E_BAD_CLI, "The lock ratio (-l) is too high.  Maximum allowed value is %"PRIu8, MAX_LOCK_RATIO);
 
   return;
 }
@@ -211,7 +199,6 @@ void options__show_help() {
   fprintf(stderr, "    %2s   %-10s   %s", "-d", "<number>",  "Duration to run tyche, in seconds (+/- 1 sec).  Default: 5 sec\n");
   fprintf(stderr, "    %2s   %-10s   %s", "-f", "1 - 100",   "Fixed ratio.  Percentage RAM guaranteed for the raw buffer list.  Default: disabled (-1)\n");
   fprintf(stderr, "    %2s   %-10s   %s", "-h", "",          "Show this help.\n");
-  fprintf(stderr, "    %2s   %-10s   %s", "-l", "1 - 255",   "Number of buffers sharing each buffer lock.  Defaults to 1.\n");
   fprintf(stderr, "    %2s   %-10s   %s", "-m", "<number>",  "Maximum number of bytes (RAM) to use for all buffers.  Default: 10 MB.\n");
   fprintf(stderr, "    %2s   %-10s   %s", "-n", "<number>",  "Maximum number of pages to use from the sample data pages.  Default: unlimited.\n");
   fprintf(stderr, "    %2s   %-10s   %s", "-p", "/some/dir", "The directory to scan for pages of sample data.  Default: ./sample_data.\n");

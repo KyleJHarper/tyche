@@ -31,7 +31,6 @@
 #include <inttypes.h>
 #include <time.h>     /* for clock_gettime() */
 #include "buffer.h"
-#include "lock.h"
 #include "error.h"
 #include "options.h"
 #include "list.h"

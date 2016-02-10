@@ -92,7 +92,8 @@ int main() {
   printf("Size of Buffer->ref_count       : %3zu Bytes\n", sizeof((Buffer *)0)->ref_count);
   printf("Size of Buffer->popularity      : %3zu Bytes\n", sizeof((Buffer *)0)->popularity);
   printf("Size of Buffer->victimized      : %3zu Bytes\n", sizeof((Buffer *)0)->victimized);
-  printf("Size of Buffer->lock_id         : %3zu Bytes\n", sizeof((Buffer *)0)->lock_id);
+  printf("Size of Buffer->lock            : %3zu Bytes\n", sizeof((Buffer *)0)->lock);
+  printf("Size of Buffer->condition       : %3zu Bytes\n", sizeof((Buffer *)0)->condition);
   /* Cost values for each buffer when pulled from disk or compressed/decompressed. */
   printf("Size of Buffer->comp_cost       : %3zu Bytes\n", sizeof((Buffer *)0)->comp_cost);
   printf("Size of Buffer->io_cost         : %3zu Bytes\n", sizeof((Buffer *)0)->io_cost);

@@ -14,13 +14,12 @@ OBJECTS  := $(SOURCES:$(SRCDIR)/%.c=$(OBJDIR)/%.o)
 # Targets
 # The clock_gettime() on this gcc version requires -lrt.
 build:
-	$(CC) $(CFLAGS) -g -pg -Os -o $(BINDIR)/tyche     \
+	$(CC) $(CFLAGS) -g -pg -O0 -o $(BINDIR)/tyche     \
 		$(SRCDIR)/list.c    \
 		$(SRCDIR)/lz4.c     \
 		$(SRCDIR)/options.c \
 		$(SRCDIR)/buffer.c  \
 		$(SRCDIR)/manager.c \
-		$(SRCDIR)/lock.c    \
 		$(SRCDIR)/error.c   \
 		$(SRCDIR)/io.c      \
 		$(SRCDIR)/tests.c   \
@@ -34,7 +33,6 @@ build:
 		$(SRCDIR)/options.c \
 		$(SRCDIR)/buffer.c  \
 		$(SRCDIR)/manager.c \
-		$(SRCDIR)/lock.c    \
 		$(SRCDIR)/error.c   \
 		$(SRCDIR)/io.c      \
 		$(SRCDIR)/tests.c   \
