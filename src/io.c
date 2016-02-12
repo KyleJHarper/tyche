@@ -26,12 +26,12 @@ extern const int E_GENERIC;
 extern Options opts;
 
 
-/* io__build_pages_array
- * Uses the io__scan_for_pages function to first enumerate all the available pages on disk, then stores them in an array of
- * pointers for use by the caller.  Also respects dataset_max and provides feedback for dataset_size, page_count, and largest
- * detected page size.
+
+/* io__get_pages
+ * Scans the dir_name set in opts to get a count of the files for opts, then assigns the filespecs to a dynamic section of memory.
+ * Also respects dataset_max and provides feedback for dataset_size, page_count, and largest detected page size.
  */
-void io__build_pages_array(char *pages[]) {
+void io__get_pages(char ***pages) {
   PageFilespec *head = NULL;
   PageFilespec *current = NULL;
   PageFilespec *next = NULL;
@@ -39,17 +39,32 @@ void io__build_pages_array(char *pages[]) {
 
   // Start the recursive scan.
   io__scan_for_pages(opts.page_directory, &head);
+  if (head == NULL)
+    show_error(E_GENERIC, "Head is still null which means we found no pages in the root directory.\n");
 
-  // Loop through the list and save values to the array.
-  /* Page count comes in non-zero because of an earlier scan; when we fix that this line can go away. */
-  opts.page_count = 0;
+  // Loop 1: Build a count of the number of elements so we can build our array below.
+  current = head;
+  while(opts.page_count < opts.page_limit) {
+    opts.page_count++;
+    current = current->next;
+    if (current == head)
+      break;
+  }
+
+  // Loop 2: Create the actual array of char pointers by assigning the addresses of the ->filespec members.
+  *pages = calloc(opts.page_count, sizeof(char *));
+printf("c1: page_count is %u, sizeof(char *) is %zu\n", opts.page_count, sizeof(char *));
+  if(*pages == NULL)
+    show_error(E_GENERIC, "Failed to allocate memory for the pages array.");
   current = head;
   for(;;) {
-    if(((opts.dataset_size + current->page_size) < opts.dataset_max) && (opts.page_count < opts.page_limit)) {
-      // We haven't hit our limits (if any was even specified).  Add it up!
+    if(((opts.dataset_size + current->page_size) < opts.dataset_max) && i < opts.page_count) {
+      // We haven't hit our limits.
       opts.dataset_size += current->page_size;
       opts.page_count++;
-      pages[i] = current->filespec;
+printf("c2: fs address is %p\n", current->filespec);
+      *(pages[i]) = current->filespec;
+printf("c3: *pages[i] address is %p\n", *pages[i]);
       i++;
       // Update the smallest/biggest settings.
       if (opts.biggest_page < current->page_size)
@@ -60,38 +75,6 @@ void io__build_pages_array(char *pages[]) {
     // Even if we didn't add it above, we still need to free the memory and update to the next item.
     next = current->next;
     // We don't free(current->filespec) because we assigned the memory address to pages[] above.
-    free(current);
-    current = next;
-    if (current == head)
-      break;
-  }
-
-  return;
-}
-
-
-/* io__get_page_count
- * Scans the dir_name passed to get a count of the files.  This... sucks cuz it requires me to scan the dir twice, but I cannot for
- * the life of me figure out how to get the values assigned to an "array" via a double-pointer + malloc in the scanning function.
- * This function will respect the ->page_limit member of the options struct.
- */
-void io__get_page_count() {
-  PageFilespec *head = NULL;
-  PageFilespec *current = NULL;
-  PageFilespec *next = NULL;
-
-  // Start the recursive scan.
-  io__scan_for_pages(opts.page_directory, &head);
-
-  // Build a count of the number of elements so we can build our array below.
-  if (head == NULL)
-    show_error(E_GENERIC, "Head is still null which means we found no pages in the root directory.\n");
-  current = head;
-  for(;;) {
-    if(opts.page_count < opts.page_limit)
-      opts.page_count++;
-    next = current->next;
-    free(current->filespec);
     free(current);
     current = next;
     if (current == head)

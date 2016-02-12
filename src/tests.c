@@ -52,7 +52,7 @@ void tests__show_available() {
 }
 
 
-void tests__run_test(List *raw_list, char *pages[]) {
+void tests__run_test(List *raw_list, char **pages) {
   /* Start Timer */
   struct timespec start, end;
   clock_gettime(CLOCK_MONOTONIC, &start);
@@ -322,7 +322,7 @@ void tests__elements(List *raw_list) {
  * attempt to read a file into a buffer with buffer__initialize(valid_id, valid_path).  Requires a pointer to the pages array and
  * the page_count.
  */
-void tests__io(char *pages[]) {
+void tests__io(char **pages) {
   int id_to_get = 128;
   while (id_to_get >= opts.page_count && id_to_get != 0)
     id_to_get >>= 1;
@@ -330,7 +330,9 @@ void tests__io(char *pages[]) {
     show_error(E_GENERIC, "The tests__io function reached id_to_get value of 0... are you sure you pointed tyche to a directory with pages?");
 
   // Looks like we have a valid ID to get.  Let's see if it actually works...
+printf("1\n");
   Buffer *buf = buffer__initialize(id_to_get, pages[id_to_get - 1]);
+printf("2\n");
   printf("Found a buffer and loaded it.  ID is %d, data length is %d, and io_cost is %"PRIu32".\n", buf->id, buf->data_length, buf->io_cost);
   buffer__victimize(buf);
   buffer__destroy(buf);
@@ -448,7 +450,7 @@ void tests__compression() {
 /*
  * Make sure that we can create a list, try to put too many buffers in it, and have it offload things as expected.
  */
-void tests__move_buffers(List *raw_list, char *pages[]) {
+void tests__move_buffers(List *raw_list, char **pages) {
   raw_list->sweep_goal = 30;
   Buffer *buf = NULL;
   uint total_bytes = 0;

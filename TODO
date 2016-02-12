@@ -31,4 +31,3 @@
      p) Determine if we can malloc larger chunks and/or reuse them with free lists (might require buffers to be equal sizes).
 4. Niceness
      a) Update all the documentation in the source files.
-     b) Add Lock to the sizes binary.
