@@ -60,7 +60,6 @@ const int BUFFER_OVERHEAD = sizeof(Buffer);
  * going to read into the buffer's ()->data member.
  */
 Buffer* buffer__initialize(bufferid_t id, char *page_filespec) {
-printf("b-1\n");
   Buffer *new_buffer = (Buffer *)malloc(sizeof(Buffer));
   if (new_buffer == NULL)
     show_error(E_GENERIC, "Error malloc-ing a new buffer in buffer__initialize.");

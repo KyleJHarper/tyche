@@ -53,7 +53,6 @@ void io__get_pages(char ***pages) {
 
   // Loop 2: Create the actual array of char pointers by assigning the addresses of the ->filespec members.
   *pages = calloc(opts.page_count, sizeof(char *));
-printf("c1: page_count is %u, sizeof(char *) is %zu\n", opts.page_count, sizeof(char *));
   if(*pages == NULL)
     show_error(E_GENERIC, "Failed to allocate memory for the pages array.");
   current = head;
@@ -61,10 +60,7 @@ printf("c1: page_count is %u, sizeof(char *) is %zu\n", opts.page_count, sizeof(
     if(((opts.dataset_size + current->page_size) < opts.dataset_max) && i < opts.page_count) {
       // We haven't hit our limits.
       opts.dataset_size += current->page_size;
-      opts.page_count++;
-printf("c2: fs address is %p\n", current->filespec);
-      *(pages[i]) = current->filespec;
-printf("c3: *pages[i] address is %p\n", *pages[i]);
+      (*pages)[i] = current->filespec;
       i++;
       // Update the smallest/biggest settings.
       if (opts.biggest_page < current->page_size)

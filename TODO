@@ -16,7 +16,6 @@
      f) Why lz4?  Partly it's compression speed+efficiency, but mostly it's decompression speed.
      g) Locker?  In theory, it reduces memory use by using shared locks among a small number of buffers.  Configurable.
 3. Optimizations & Profiling
-     b) Figure out how to stop double-scanning with io__* to get the page count.
      f) Rerun performance tests for comparison.
      h) Profile with valgrind to find memory leaks.
      i) Profile with instrumentation (gprof, valgrind --tool=callgrind) and optimize weak points.

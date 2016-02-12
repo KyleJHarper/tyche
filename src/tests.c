@@ -330,9 +330,7 @@ void tests__io(char **pages) {
     show_error(E_GENERIC, "The tests__io function reached id_to_get value of 0... are you sure you pointed tyche to a directory with pages?");
 
   // Looks like we have a valid ID to get.  Let's see if it actually works...
-printf("1\n");
   Buffer *buf = buffer__initialize(id_to_get, pages[id_to_get - 1]);
-printf("2\n");
   printf("Found a buffer and loaded it.  ID is %d, data length is %d, and io_cost is %"PRIu32".\n", buf->id, buf->data_length, buf->io_cost);
   buffer__victimize(buf);
   buffer__destroy(buf);
