@@ -4,6 +4,7 @@ Contains a simple note for each tagged release.  We will try to follow SEMVER.  
 - Removed the locker_pool and all lock__* functions (the whole .h and .c files actually).  I like the idea for memory saving when buffers are smaller (1k or less) but the truth is, with regard to time-memory trade-offs, I can't justify the additional complexity.
 - Removed the -l option now that the lock subsystem is permanently 1:1.
 - Fixed another bug in tests__synchronized_readwrite.  list__destroy was being called and shouldn't have been.
+- Determined that, for version 0.0.7, performance can be improved up to ~20% based on workload by using jemalloc vs malloc.
 
 0.0.7 (2016-02-06)
 - Switched from an array of buffers to a circular linked list.  This allows insertion and deletion to happen without growing or shrinking the entire list, nor keeping a "free" list.  See 'skiplist' for ordering/searching.
