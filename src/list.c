@@ -29,7 +29,7 @@
 #include <string.h>
 #include <assert.h>
 #include <inttypes.h>
-#include <time.h>     /* for clock_gettime() */
+#include <time.h>      /* for clock_gettime() */
 #include "buffer.h"
 #include "error.h"
 #include "options.h"
@@ -188,22 +188,17 @@ int list__release_write_lock(List *list) {
  * to be sort-ordered.  We will also fail safely if the buffer already exists because we don't want duplicates.
  */
 int list__add(List *list, Buffer *buf) {
-  /* Get a write lock. */
-  list__acquire_write_lock(list);
   int rv = E_OK;
 
   /* Make sure we have room to add a new buffer before we proceed. */
   const uint32_t BUFFER_SIZE = BUFFER_OVERHEAD + (buf->comp_length == 0 ? buf->data_length : buf->comp_length);
   if (list->max_size < list->current_size + BUFFER_SIZE) {
     /* Determine the minimum sweep goal we need, then use the larger of the two. */
-    const uint8_t ORIGINAL_SWEEP_GOAL = list->sweep_goal;
-    list->sweep_goal = (100 * (list->current_size + BUFFER_SIZE) / list->current_size) - 99;
-    if (list->sweep_goal < ORIGINAL_SWEEP_GOAL)
-      list->sweep_goal = ORIGINAL_SWEEP_GOAL;
-    if (list->sweep_goal > 99)
+    const uint8_t MINIMUM_SWEEP_GOAL = (100 * (list->current_size + BUFFER_SIZE) / list->current_size) - 99;
+    if (MINIMUM_SWEEP_GOAL > 99)
       show_error(E_GENERIC, "When trying to add a buffer, sweep goal was incremented to 100+ which would eliminate the entire list.  This is, I believe, a condition that should never happen.");
-    list__sweep(list);
-    list->sweep_goal = ORIGINAL_SWEEP_GOAL;
+    /* Sweeping uses the write lock and checks the predicate again.  So we're safe to call it unlocked. */
+    list__sweep(list, MINIMUM_SWEEP_GOAL > list->sweep_goal ? MINIMUM_SWEEP_GOAL : list->sweep_goal);
   }
 
   // Decide how many levels we're willing to set the node upon.
@@ -211,21 +206,44 @@ int list__add(List *list, Buffer *buf) {
   while((levels < SKIPLIST_MAX) && (levels < list->levels) && (rand() % 2 == 0))
     levels++;
   if(levels == list->levels)
-    list->levels++;
+    __sync_fetch_and_add(&list->levels, 1);
 
-  // Build a local stack based on the main list->indexes[] to build breadcrumbs.
+  // Get a reference pin so we can be sure to finish our operation before any removal (write) operations are released.
+  list__update_ref(list, 1);
+
+  // Build a local stack based on the main list->indexes[] to build breadcrumbs.  Lock each buffer as we descend the skiplist tree.
+  // until we have the whole chain.  Since scanning always down-and-forward we're safe.
   SkiplistNode *slstack[SKIPLIST_MAX];
+  Buffer *locked_buffers[SKIPLIST_MAX];
+  bufferid_t last_lock_id = BUFFER_ID_MAX;
+  int locked_ids_index = -1;
   for(int i = 0; i < SKIPLIST_MAX; i++)
     slstack[i] = list->indexes[i];
+
   // Traverse the list to find the ideal location at each level.  Since we're searching, use list->levels as the start height.
   for(int i = list->levels-1; i >= 0; i--) {
-    // Try shifting right until the ->right member is NULL or its value is too high.
-    while(slstack[i]->right != NULL && slstack[i]->right->target->id <= buf->id)
-      slstack[i] = slstack[i]->right;
-    // If this node's ->target is the lists's head, we never left the index's head.  Just continue to the next level.
+    for(;;) {
+      // Scan forward until we are as close as we can get.
+      while(slstack[i]->right != NULL && slstack[i]->right->target->id <= buf->id)
+        slstack[i] = slstack[i]->right;
+      // Lock the buffer pointed to by this SkiplistNode to effectively lock this SkiplistNode so we can test it.
+      buffer__lock(slstack[i]->target);
+      // If right is NULL or the ->right member is still bigger, we're as far over as we can go and should have a lock.
+      if(slstack[i]->right == NULL || slstack[i]->right->target->id > buf->id)
+        break;
+      // Otherwise, someone inserted while we acquired this lock.  Release and try moving forward again.
+      buffer__unlock(slstack[i]->target);
+    }
+    // If this node's ->target is the lists's head, we never left the index's head.  Continue to the next level, never lock head.
     if(slstack[i]->target == list->head)
       continue;
-    // If the buffer already exists, flag it with rv and leave.
+    if(last_lock_id == slstack[i]->target->id)
+      continue;
+    // Store the buffer pointer in our lock stack so we can unlock safely later.
+    last_lock_id = slstack[i]->target->id;
+    locked_ids_index++;
+    locked_buffers[locked_ids_index] = slstack[i]->target;
+    // If the buffer already exists, flag it with rv.  We'll release any locks we acquired before we leave.
     if(slstack[i]->target->id == buf->id) {
       rv = E_BUFFER_ALREADY_EXISTS;
       break;
@@ -246,8 +264,8 @@ int list__add(List *list, Buffer *buf) {
     } else {
       buf->next = nearest_neighbor->next;
       nearest_neighbor->next = buf;
-      list->current_size += BUFFER_SIZE;
-      list->count++;
+      __sync_fetch_and_add(&list->current_size, BUFFER_SIZE);
+      __sync_fetch_and_add(&list->count, 1);
     }
   }
 
@@ -265,8 +283,11 @@ int list__add(List *list, Buffer *buf) {
       slstack[i]->right->down = slstack[i-1]->right;
   }
 
-  /* Let go of the write lock we acquired. */
-  list__release_write_lock(list);
+  // Unlock any buffers we locked along the way.  Then remove our reference pin from the list.
+  for(int i = locked_ids_index; i >= 0; i--)
+    buffer__unlock(locked_buffers[i]);
+  list__update_ref(list, -1);
+
   return rv;
 }
 
@@ -465,21 +486,26 @@ int list__update_ref(List *list, int delta) {
  * Note:  We attempt to free a percentage of ->current_size, NOT ->max_size!  There are pros/cons to both; in normal usage the
  * current size should always be high enough to avoid errors because sweeping shouldn't be called until we're low on memory.
  */
-uint32_t list__sweep(List *list) {
+uint32_t list__sweep(List *list, uint8_t sweep_goal) {
   // Acquire a list lock just to ensure we're operating safely.
   list__acquire_write_lock(list);
 
   // Set up some temporary stuff to calculate our needs and store victims.
+  int rv = E_OK;
   struct timespec start, end;
   clock_gettime(CLOCK_MONOTONIC, &start);
-  list->sweeps++;
   uint32_t bytes_freed = 0;
-  const uint32_t BYTES_NEEDED = list->current_size * list->sweep_goal / 100;
+  const uint32_t BYTES_NEEDED = list->current_size * sweep_goal / 100;
+  if (BYTES_NEEDED < (list->max_size - list->current_size)) {
+    // Someone already did a sweep and freed up plenty of room.  Don't re-sweep in a race.
+    list__release_write_lock(list);
+    return rv;
+  }
+  list->sweeps++;
   Buffer *buf = NULL;
   List *temp_list = list__initialize();
   temp_list->max_size = BYTES_NEEDED * 2;
   temp_list->offload_to = temp_list;
-  int rv = E_OK;
 
   // Sanity Check.  Then start looping to free up memory.
   if (list->offload_to == NULL)
@@ -709,12 +735,12 @@ int list__balance(List *list, uint32_t ratio) {
 
   // Try to sweep() the raw list if it shrunk.  Attempt to do this with a single call, if even necessary.
   if(list->current_size > list->max_size) {
-    const uint8_t ORIGINAL_SWEEP_GOAL = list->sweep_goal;
-    list->sweep_goal = (100 * list->max_size / list->current_size) + 1;
-    if (list->sweep_goal > 99)
+    /* Determine the minimum sweep goal we need, then use the larger of the two. */
+    const uint8_t MINIMUM_SWEEP_GOAL = (100 * list->current_size / list->current_size) - 99;
+    if (MINIMUM_SWEEP_GOAL > 99)
       show_error(E_GENERIC, "When trying to balance the lists, sweep goal was incremented to 100+ which would eliminate the entire list.  This is, I believe, a condition that should never happen.");
-    list__sweep(list);
-    list->sweep_goal = ORIGINAL_SWEEP_GOAL;
+    /* Sweeping uses the write lock and checks the predicate again.  So we're safe to call it unlocked. */
+    list__sweep(list, MINIMUM_SWEEP_GOAL > list->sweep_goal ? MINIMUM_SWEEP_GOAL : list->sweep_goal);
   }
 
   // All done.  Release our lock and go home.

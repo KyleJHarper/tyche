@@ -79,7 +79,7 @@ int list__update_ref(List *list, int delta);
 int list__search(List *list, Buffer **buf, bufferid_t id);
 int list__acquire_write_lock(List *list);
 int list__release_write_lock(List *list);
-uint32_t list__sweep(List *list);
+uint32_t list__sweep(List *list, uint8_t sweep_goal);
 int list__push(List *list, Buffer *buf);
 int list__pop(List *list, uint64_t bytes_needed);
 int list__restore(List *list, Buffer **buf);

@@ -14,7 +14,6 @@
      d) Why no linked list?  Because I wanted searching without maintaining a skip list.  (Is it even better?)
      e) Why C?  To *hopefully* avoid bias in higher level langages; though they might have optimizations.
      f) Why lz4?  Partly it's compression speed+efficiency, but mostly it's decompression speed.
-     g) Locker?  In theory, it reduces memory use by using shared locks among a small number of buffers.  Configurable.
 3. Optimizations & Profiling
      f) Rerun performance tests for comparison.
      h) Profile with valgrind to find memory leaks.
