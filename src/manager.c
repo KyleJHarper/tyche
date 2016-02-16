@@ -123,6 +123,7 @@ int manager__start(Manager *mgr) {
   printf("Hit Ratio           : %4.2f%%\n", 100.0 * mgr->hits / total_acquisitions);
   printf("Fixed Memory Ratio  : %"PRIi8"%% (%"PRIu64" bytes raw, %"PRIu64" bytes compressed)\n", opts.fixed_ratio, mgr->raw_list->max_size, mgr->comp_list->max_size);
   printf("Manager run time    : %.1f sec\n", 1.0 * mgr->run_duration / 1000);
+  printf("Time sweeping       : %u sweeps, %'"PRIu64"\n", mgr->raw_list->sweeps, mgr->raw_list->sweep_cost);
   return E_OK;
 }
 

@@ -36,6 +36,9 @@
 #include "list.h"
 #include "options.h"
 
+#include <locale.h> /* Remove me */
+
+
 /* We need to know what one billion is for clock timing. */
 #define BILLION 1000000000L
 #define MILLION    1000000L
@@ -189,7 +192,6 @@ int list__release_write_lock(List *list) {
  */
 int list__add(List *list, Buffer *buf) {
   int rv = E_OK;
-
   /* Make sure we have room to add a new buffer before we proceed. */
   const uint32_t BUFFER_SIZE = BUFFER_OVERHEAD + (buf->comp_length == 0 ? buf->data_length : buf->comp_length);
   if (list->max_size < list->current_size + BUFFER_SIZE) {
@@ -226,23 +228,19 @@ int list__add(List *list, Buffer *buf) {
       // Scan forward until we are as close as we can get.
       while(slstack[i]->right != NULL && slstack[i]->right->target->id <= buf->id)
         slstack[i] = slstack[i]->right;
-      // Lock the buffer pointed to by this SkiplistNode to effectively lock this SkiplistNode so we can test it.
-      buffer__lock(slstack[i]->target);
+      // Lock the buffer pointed to (if we haven't already) to effectively lock this SkiplistNode so we can test it.
+      if(slstack[i]->target->id != last_lock_id)
+        buffer__lock(slstack[i]->target);
       // If right is NULL or the ->right member is still bigger, we're as far over as we can go and should have a lock.
-      if(slstack[i]->right == NULL || slstack[i]->right->target->id > buf->id)
+      if(slstack[i]->right == NULL || slstack[i]->right->target->id > buf->id) {
+        last_lock_id = slstack[i]->target->id;
+        locked_ids_index++;
+        locked_buffers[locked_ids_index] = slstack[i]->target;
         break;
+      }
       // Otherwise, someone inserted while we acquired this lock.  Release and try moving forward again.
       buffer__unlock(slstack[i]->target);
     }
-    // If this node's ->target is the lists's head, we never left the index's head.  Continue to the next level, never lock head.
-    if(slstack[i]->target == list->head)
-      continue;
-    if(last_lock_id == slstack[i]->target->id)
-      continue;
-    // Store the buffer pointer in our lock stack so we can unlock safely later.
-    last_lock_id = slstack[i]->target->id;
-    locked_ids_index++;
-    locked_buffers[locked_ids_index] = slstack[i]->target;
     // If the buffer already exists, flag it with rv.  We'll release any locks we acquired before we leave.
     if(slstack[i]->target->id == buf->id) {
       rv = E_BUFFER_ALREADY_EXISTS;
@@ -496,7 +494,7 @@ uint32_t list__sweep(List *list, uint8_t sweep_goal) {
   clock_gettime(CLOCK_MONOTONIC, &start);
   uint32_t bytes_freed = 0;
   const uint32_t BYTES_NEEDED = list->current_size * sweep_goal / 100;
-  if (BYTES_NEEDED < (list->max_size - list->current_size)) {
+  if ((list->current_size < list->max_size) && BYTES_NEEDED < (list->max_size - list->current_size)) {
     // Someone already did a sweep and freed up plenty of room.  Don't re-sweep in a race.
     list__release_write_lock(list);
     return rv;
