@@ -11,6 +11,7 @@
 /* Includes */
 #include <stdint.h>
 #include <inttypes.h>
+#include <stdbool.h>
 #include <pthread.h>
 #include "buffer.h"
 
@@ -67,6 +68,15 @@ struct list {
   Buffer *clock_hand;                   /* The current Buffer to be checked when sweeping is invoked. */
   SkiplistNode *indexes[SKIPLIST_MAX];  /* List of the heads of the bottom-most (least-granular) Skiplists. */
   uint8_t levels;                       /* The current height of the skip list thus far. */
+
+  /* Debug - Remove after testing */
+  uint64_t popularity;
+  uint64_t copy;
+  uint64_t move;
+  uint64_t pop;
+  uint64_t comp_popularity;
+  uint64_t push;
+
 };
 
 
@@ -74,7 +84,7 @@ struct list {
 List* list__initialize();
 SkiplistNode* list__initialize_skiplistnode(Buffer *buf);
 int list__add(List *list, Buffer *buf);
-int list__remove(List *list, bufferid_t id);
+int list__remove(List *list, bufferid_t id, bool destroy);
 int list__update_ref(List *list, int delta);
 int list__search(List *list, Buffer **buf, bufferid_t id);
 int list__acquire_write_lock(List *list);

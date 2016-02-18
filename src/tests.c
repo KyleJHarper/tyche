@@ -249,7 +249,7 @@ void tests__chaos(ReadWriteOpts *rwopts) {
     buffer__lock(temp);
     buffer__update_ref(temp, -1);
     buffer__unlock(temp);
-    rv = list__remove(rwopts->raw_list, id_to_remove);
+    rv = list__remove(rwopts->raw_list, id_to_remove, true);
     usleep(rwopts->sleep_delay);
   }
   pthread_exit(0);
@@ -306,7 +306,7 @@ void tests__elements(List *raw_list) {
   // Remove the buffers.
   printf("\nStep 4.  Removing all the dummy buffers.\n");
   while(raw_list->head->next != raw_list->head)
-    list__remove(raw_list, raw_list->head->next->id);
+    list__remove(raw_list, raw_list->head->next->id, true);
 
   // Display the statistics of the list again.
   printf("\nStep 5.  Showing list statistics.\n");
@@ -471,9 +471,9 @@ void tests__move_buffers(List *raw_list, char **pages) {
     show_error(E_GENERIC, "Calculated a total size of %d, and raw_list->current_size is %"PRIu64"\n", total_bytes, raw_list->current_size);
   printf("Total bytes measured in buffers matches the list size, success!\n");
   while(raw_list->head->next != raw_list->head)
-    list__remove(raw_list, raw_list->head->next->id);
+    list__remove(raw_list, raw_list->head->next->id, true);
   while(raw_list->offload_to->head->next != raw_list->offload_to->head)
-    list__remove(raw_list->offload_to, raw_list->offload_to->head->next->id);
+    list__remove(raw_list->offload_to, raw_list->offload_to->head->next->id, true);
   printf("Test 1 Passed:  Does the list size match the known size of data read from disk?\n\n");
 
   // -- TEST 2:  Can we offload from raw to a compressed list?
@@ -487,9 +487,9 @@ void tests__move_buffers(List *raw_list, char **pages) {
   }
   printf("All done.  Raw list has %d buffers using %"PRIu64" bytes.  Comp list has %d buffers using %"PRIu64" bytes.\n", raw_list->count, raw_list->current_size, raw_list->offload_to->count, raw_list->offload_to->current_size);
   while(raw_list->head->next != raw_list->head)
-    list__remove(raw_list, raw_list->head->next->id);
+    list__remove(raw_list, raw_list->head->next->id, true);
   while(raw_list->offload_to->head->next != raw_list->offload_to->head)
-    list__remove(raw_list->offload_to, raw_list->offload_to->head->next->id);
+    list__remove(raw_list->offload_to, raw_list->offload_to->head->next->id, true);
   printf("Test 2 Passed:  Will items overflow from the raw list to the compressed one as needed?\n\n");
 
   // -- TEST 3:  Will offloading properly pop the compressed buffer?
@@ -503,9 +503,9 @@ void tests__move_buffers(List *raw_list, char **pages) {
   }
   printf("All done.  Raw list has %d buffers using %"PRIu64" bytes.  Comp list has %d buffers using %"PRIu64" bytes.\n", raw_list->count, raw_list->current_size, raw_list->offload_to->count, raw_list->offload_to->current_size);
   while(raw_list->head->next != raw_list->head)
-    list__remove(raw_list, raw_list->head->next->id);
+    list__remove(raw_list, raw_list->head->next->id, true);
   while(raw_list->offload_to->head->next != raw_list->offload_to->head)
-    list__remove(raw_list->offload_to, raw_list->offload_to->head->next->id);
+    list__remove(raw_list->offload_to, raw_list->offload_to->head->next->id, true);
   printf("Test 3 Passed:  Will the compressed list pop buffers when out of room?\n\n");
 
   // -- TEST 4:  Can we move items back to the raw list after they've been compressed?

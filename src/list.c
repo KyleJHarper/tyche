@@ -29,6 +29,7 @@
 #include <string.h>
 #include <assert.h>
 #include <inttypes.h>
+#include <stdbool.h>
 #include <time.h>      /* for clock_gettime() */
 #include "buffer.h"
 #include "error.h"
@@ -115,6 +116,14 @@ List* list__initialize() {
     list->indexes[i] = slnode;
   }
 
+  /* Debug - Remove after sweep testing */
+  list->popularity = 0;
+  list->copy = 0;
+  list->move = 0;
+  list->pop = 0;
+  list->comp_popularity = 0;
+  list->push = 0;
+
   return list;
 }
 
@@ -191,11 +200,15 @@ int list__release_write_lock(List *list) {
  * to be sort-ordered.  We will also fail safely if the buffer already exists because we don't want duplicates.
  */
 int list__add(List *list, Buffer *buf) {
+  /* Get a write lock. */
+  list__acquire_write_lock(list);
   int rv = E_OK;
+
   /* Make sure we have room to add a new buffer before we proceed. */
   const uint32_t BUFFER_SIZE = BUFFER_OVERHEAD + (buf->comp_length == 0 ? buf->data_length : buf->comp_length);
   if (list->max_size < list->current_size + BUFFER_SIZE) {
-    /* Determine the minimum sweep goal we need, then use the larger of the two. */
+//printf("Going to sweep\n");
+      /* Determine the minimum sweep goal we need, then use the larger of the two. */
     const uint8_t MINIMUM_SWEEP_GOAL = (100 * (list->current_size + BUFFER_SIZE) / list->current_size) - 99;
     if (MINIMUM_SWEEP_GOAL > 99)
       show_error(E_GENERIC, "When trying to add a buffer, sweep goal was incremented to 100+ which would eliminate the entire list.  This is, I believe, a condition that should never happen.");
@@ -208,40 +221,21 @@ int list__add(List *list, Buffer *buf) {
   while((levels < SKIPLIST_MAX) && (levels < list->levels) && (rand() % 2 == 0))
     levels++;
   if(levels == list->levels)
-    __sync_fetch_and_add(&list->levels, 1);
+    list->levels++;
 
-  // Get a reference pin so we can be sure to finish our operation before any removal (write) operations are released.
-  list__update_ref(list, 1);
-
-  // Build a local stack based on the main list->indexes[] to build breadcrumbs.  Lock each buffer as we descend the skiplist tree.
-  // until we have the whole chain.  Since scanning always down-and-forward we're safe.
+  // Build a local stack based on the main list->indexes[] to build breadcrumbs.
   SkiplistNode *slstack[SKIPLIST_MAX];
-  Buffer *locked_buffers[SKIPLIST_MAX];
-  bufferid_t last_lock_id = BUFFER_ID_MAX;
-  int locked_ids_index = -1;
   for(int i = 0; i < SKIPLIST_MAX; i++)
     slstack[i] = list->indexes[i];
-
   // Traverse the list to find the ideal location at each level.  Since we're searching, use list->levels as the start height.
   for(int i = list->levels-1; i >= 0; i--) {
-    for(;;) {
-      // Scan forward until we are as close as we can get.
-      while(slstack[i]->right != NULL && slstack[i]->right->target->id <= buf->id)
-        slstack[i] = slstack[i]->right;
-      // Lock the buffer pointed to (if we haven't already) to effectively lock this SkiplistNode so we can test it.
-      if(slstack[i]->target->id != last_lock_id)
-        buffer__lock(slstack[i]->target);
-      // If right is NULL or the ->right member is still bigger, we're as far over as we can go and should have a lock.
-      if(slstack[i]->right == NULL || slstack[i]->right->target->id > buf->id) {
-        last_lock_id = slstack[i]->target->id;
-        locked_ids_index++;
-        locked_buffers[locked_ids_index] = slstack[i]->target;
-        break;
-      }
-      // Otherwise, someone inserted while we acquired this lock.  Release and try moving forward again.
-      buffer__unlock(slstack[i]->target);
-    }
-    // If the buffer already exists, flag it with rv.  We'll release any locks we acquired before we leave.
+    // Try shifting right until the ->right member is NULL or its value is too high.
+    while(slstack[i]->right != NULL && slstack[i]->right->target->id <= buf->id)
+      slstack[i] = slstack[i]->right;
+    // If this node's ->target is the lists's head, we never left the index's head.  Just continue to the next level.
+    if(slstack[i]->target == list->head)
+      continue;
+    // If the buffer already exists, flag it with rv and leave.
     if(slstack[i]->target->id == buf->id) {
       rv = E_BUFFER_ALREADY_EXISTS;
       break;
@@ -262,8 +256,8 @@ int list__add(List *list, Buffer *buf) {
     } else {
       buf->next = nearest_neighbor->next;
       nearest_neighbor->next = buf;
-      __sync_fetch_and_add(&list->current_size, BUFFER_SIZE);
-      __sync_fetch_and_add(&list->count, 1);
+      list->current_size += BUFFER_SIZE;
+      list->count++;
     }
   }
 
@@ -281,11 +275,8 @@ int list__add(List *list, Buffer *buf) {
       slstack[i]->right->down = slstack[i-1]->right;
   }
 
-  // Unlock any buffers we locked along the way.  Then remove our reference pin from the list.
-  for(int i = locked_ids_index; i >= 0; i--)
-    buffer__unlock(locked_buffers[i]);
-  list__update_ref(list, -1);
-
+  /* Let go of the write lock we acquired. */
+  list__release_write_lock(list);
   return rv;
 }
 
@@ -295,7 +286,7 @@ int list__add(List *list, Buffer *buf) {
  * unlocking its reference to the buffer; this way we can rely on finding the ID even if the buffer is removed by another thread.
  * Note: this function is not responsible for managing list sizes or HCRS logic.  It just removes buffers.
  */
-int list__remove(List *list, bufferid_t id) {
+int list__remove(List *list, bufferid_t id, bool destroy) {
   /* Get a write lock, which guarantees flushing all readers first. */
   list__acquire_write_lock(list);
   int rv = E_BUFFER_NOT_FOUND;
@@ -338,7 +329,10 @@ int list__remove(List *list, bufferid_t id) {
     list->current_size -= BUFFER_SIZE;
     // Now change our ->next pointer for nearest_neighbor to drop this from the list, then destroy buf.
     nearest_neighbor->next = buf->next;
-    buffer__destroy(buf);
+    if(destroy)
+      buffer__destroy(buf);
+    else
+      buffer__unlock(buf);
   }
 
   /* Remove the Skiplist Nodes that were found at various levels. */
@@ -366,6 +360,7 @@ int list__remove(List *list, bufferid_t id) {
 int list__search(List *list, Buffer **buf, bufferid_t id) {
   /* Update the ref count so we can begin searching. */
   list__update_ref(list, 1);
+//printf("got a ref update %u\n", list->ref_count);
 
   /* Begin searching the list at the highest level's index head. */
   int rv = E_BUFFER_NOT_FOUND;
@@ -376,7 +371,9 @@ int list__search(List *list, Buffer **buf, bufferid_t id) {
       slnode = slnode->right;
     // If the node matches, we're done!  Try to update the ref and assign everything appropriately.
     if(slnode->target->id == id) {
+//printf("Need to lock a buffer from slnode %u\n", slnode->target->id);
       rv = buffer__lock(slnode->target);
+//printf("Done getting lock from slnode\n");
       if(rv == E_OK) {
         *buf = slnode->target;
         buffer__update_ref(*buf, 1);
@@ -398,7 +395,9 @@ int list__search(List *list, Buffer **buf, bufferid_t id) {
       nearest_neighbor = nearest_neighbor->next;
     // If we got a match, score.  Our nearest_neighbor is now the match.  Update ref and assign things.
     if(nearest_neighbor->id == id) {
+//printf("Need to lock from nearest neighbor %u\n", nearest_neighbor->id);
       rv = buffer__lock(nearest_neighbor);
+//printf("Done locking from nearest_neighbor\n");
       if(rv == E_OK) {
         *buf = nearest_neighbor;
         buffer__update_ref(*buf, 1);
@@ -414,9 +413,11 @@ int list__search(List *list, Buffer **buf, bufferid_t id) {
 
   /* If we were unable to find the buffer, see if an offload_to list exists for us to search. */
   if (rv == E_BUFFER_NOT_FOUND && list->offload_to != NULL) {
+//printf("searching deeper\n");
     rv = list__search(list->offload_to, buf, id);
     if (rv == E_OK) {
       // Found it!  To avoid a race, release our pin, acquire the write lock, and then search again under its protection.
+//printf("Trying a recovery\n");
       buffer__lock(*buf);
       buffer__update_ref(*buf, -1);
       buffer__unlock(*buf);
@@ -438,6 +439,8 @@ int list__search(List *list, Buffer **buf, bufferid_t id) {
       }
     }
   }
+
+//printf("done searching\n");
 
   return rv;
 }
@@ -490,7 +493,9 @@ uint32_t list__sweep(List *list, uint8_t sweep_goal) {
 
   // Set up some temporary stuff to calculate our needs and store victims.
   int rv = E_OK;
+  Buffer *victim = NULL;
   struct timespec start, end;
+struct timespec s_popularity, e_popularity, s_copy, e_copy, s_move, e_move, s_pop, e_pop, s_comp_popularity, e_comp_popularity, s_push, e_push;
   clock_gettime(CLOCK_MONOTONIC, &start);
   uint32_t bytes_freed = 0;
   const uint32_t BYTES_NEEDED = list->current_size * sweep_goal / 100;
@@ -500,66 +505,93 @@ uint32_t list__sweep(List *list, uint8_t sweep_goal) {
     return rv;
   }
   list->sweeps++;
-  Buffer *buf = NULL;
   List *temp_list = list__initialize();
   temp_list->max_size = BYTES_NEEDED * 2;
   temp_list->offload_to = temp_list;
 
   // Sanity Check.  Then start looping to free up memory.
+//printf("Sweep start is %"PRIu64" and %"PRIu64"\n", list->current_size, list->offload_to->current_size);
   if (list->offload_to == NULL)
     show_error(E_GENERIC, "The list__sweep() function was given a list that doesn't have an offload_to target.  This is definitely a problem.");
   while (BYTES_NEEDED > bytes_freed) {
     // Scan until we find a buffer to remove.  Popularity is halved until a victim is found.  Skip head matches.
+clock_gettime(CLOCK_MONOTONIC, &s_popularity);
     for(;;) {
-      if (list->clock_hand->popularity == 0 && list->clock_hand != list->head)
-        break;
-      list->clock_hand->popularity >>= 1;
       list->clock_hand = list->clock_hand->next;
+      if (list->clock_hand->popularity == 0 && list->clock_hand != list->head) {
+        victim = list->clock_hand;
+        break;
+      }
+      list->clock_hand->popularity >>= 1;
     }
+clock_gettime(CLOCK_MONOTONIC, &e_popularity);
+list->popularity += BILLION * (e_popularity.tv_sec - s_popularity.tv_sec) + e_popularity.tv_nsec - s_popularity.tv_nsec;
+//printf("Popularity Done: %u\n", victim->id);
 
-    // We only reach this when an unpopular victim id is found.  Let's get to work copying the buffer and compressing it.
-    buf = buffer__initialize(0, NULL);
-    buffer__copy(list->clock_hand, buf);
-    rv = buffer__compress(buf);
+    // We only reach this when an unpopular victim id is found.  Compress it and reset some counters.
+clock_gettime(CLOCK_MONOTONIC, &s_copy);
+    rv = buffer__compress(victim);
     if (rv != E_OK)
       show_error(rv, "Failed to compress a buffer when performing list__sweep().  This shouldn't happen.  Return code was %d.", rv);
-    // Reset reference and victimization elements on the copy since it's now a separate entity from it's doppelganger.
-    buf->ref_count = 0;
-    buf->victimized = 0;
-    buf->popularity = 0;
+    victim->ref_count = 0;
+    victim->victimized = 0;
+    victim->popularity = 0;
+clock_gettime(CLOCK_MONOTONIC, &e_copy);
+list->copy += BILLION * (e_copy.tv_sec - s_copy.tv_sec) + e_copy.tv_nsec - s_copy.tv_nsec;
+//printf("  Copy done: %u\n", victim->id);
 
-    // Assign the new buffer to the temp_list, track the size difference, and remove the original buffer.
-    rv = list__add(temp_list, buf);
-    if (rv != E_OK)
-      show_error(rv, "Failed to send buf to the temp_list while sweeping.  Not sure how.  Return code is %d.", rv);
-    rv = list__remove(list, list->clock_hand->id);
+    // Assign the buffer to the temp_list, track the size difference, and remove the original buffer.
+clock_gettime(CLOCK_MONOTONIC, &s_move);
+    bytes_freed += victim->data_length - victim->comp_length;
+//printf("Calling remove\n");
+    rv = list__remove(list, victim->id, false);
     if (rv != E_OK)
       show_error(rv, "Failed to remove the selected victim while sweeping.  Not sure how.  Return code is %d", rv);
-    bytes_freed += buf->data_length - buf->comp_length;
+//printf("Calling add\n");
+    rv = list__add(temp_list, victim);
+    if (rv != E_OK)
+      show_error(rv, "Failed to send buf to the temp_list while sweeping.  Not sure how.  Return code is %d.", rv);
+clock_gettime(CLOCK_MONOTONIC, &e_move);
+list->move += BILLION * (e_move.tv_sec - s_move.tv_sec) + e_move.tv_nsec - s_move.tv_nsec;
+//printf("    Move done: %u\n", victim->id);
   }
+//printf("DONE LOOPING\n");
 
   // Now that we've freed up memory, move stuff from the temp_list to the offload (compressed) list.
+clock_gettime(CLOCK_MONOTONIC, &s_pop);
   if (temp_list->current_size + list->offload_to->current_size > list->offload_to->max_size)
     list__pop(list->offload_to, temp_list->current_size);
+clock_gettime(CLOCK_MONOTONIC, &e_pop);
+list->pop += BILLION * (e_pop.tv_sec - s_pop.tv_sec) + e_pop.tv_nsec - s_pop.tv_nsec;
+//printf("      Pop done.\n");
   // Decrement popularity, creating "generations" for list__pop()-ing later.
-  Buffer *current = list->offload_to->head;
-  while(current->next != list->offload_to->head) {
-    current = current->next;
+  Buffer *current = list->offload_to->head->next;
+clock_gettime(CLOCK_MONOTONIC, &s_comp_popularity);
+  while(current != list->offload_to->head) {
     current->popularity--;
+    current = current->next;
   }
+clock_gettime(CLOCK_MONOTONIC, &e_comp_popularity);
+list->comp_popularity += BILLION * (e_comp_popularity.tv_sec - s_comp_popularity.tv_sec) + e_comp_popularity.tv_nsec - s_comp_popularity.tv_nsec;
+//printf("        Comp Pop done.\n");
   current = temp_list->head;
   Buffer *next = current->next;
+clock_gettime(CLOCK_MONOTONIC, &s_push);
   while(next != temp_list->head) {
     current = next;
     next = next->next;
     list__push(list->offload_to, current);
     list->offloads++;
   }
+clock_gettime(CLOCK_MONOTONIC, &e_push);
+list->push += BILLION * (e_push.tv_sec - s_push.tv_sec) + e_push.tv_nsec - s_push.tv_nsec;
+//printf("          Push done.  Raw %"PRIu64", comp %"PRIu64"\n", list->current_size, list->offload_to->current_size);
 
   // Wrap up and leave.
   clock_gettime(CLOCK_MONOTONIC, &end);
   list->sweep_cost += BILLION * (end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec;
   free(temp_list);
+//printf("            Sweep done.  Lock count is %u.\n", list->lock_depth);
   list__release_write_lock(list);
   return bytes_freed;
 }
@@ -639,7 +671,7 @@ int list__pop(List *list, uint64_t bytes_needed) {
     slnode = popularity_slstack[lowest_popularity];
     while(slnode->right != NULL) {
       slnode = slnode->right;
-      list__remove(list, slnode->target->id);
+      list__remove(list, slnode->target->id, true);
       list->offloads++;
       slnode->target = NULL;
     }
@@ -684,7 +716,6 @@ int list__restore(List *list, Buffer **buf) {
 
   // Lock both lists, for safety.
   list__acquire_write_lock(list);
-  list__acquire_write_lock(list->offload_to);
 
   // Copy the buffer so we can begin restoring it.  Bump comp_hits since it's most logical here.
   Buffer *new_buf = buffer__initialize(0, NULL);
@@ -700,13 +731,12 @@ int list__restore(List *list, Buffer **buf) {
 
   // Add the decompressed copy to the list source list and remove the compressed buffer from the offload list.
   list__add(list, new_buf);
-  list__remove(list->offload_to, (*buf)->id);
+  list__remove(list->offload_to, (*buf)->id, true);
 
   // Assign the source pointer to our local copy's address, release write locks, and leave.
   *buf = new_buf;
   list->restorations++;
   list__release_write_lock(list);
-  list__release_write_lock(list->offload_to);
   return E_OK;
 }
 
@@ -752,8 +782,8 @@ int list__balance(List *list, uint32_t ratio) {
  */
 int list__destroy(List *list) {
   while(list->head->next != list->head)
-    list__remove(list, list->head->next->id);
-  list__remove(list, list->head->id);
+    list__remove(list, list->head->next->id, true);
+  list__remove(list, list->head->id, true);
   free(list);
   return E_OK;
 }
