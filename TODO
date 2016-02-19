@@ -18,13 +18,12 @@
      f) Rerun performance tests for comparison.
      h) Profile with valgrind to find memory leaks.
      i) Profile with instrumentation (gprof, valgrind --tool=callgrind) and optimize weak points.
-     k) See if list__add can use localized (buffer) locking.
-     l) Research localized locking for list__remove(), though I doubt it's reasonable.
      m) See if independent locks for comp list can allow comp list to do work independent of raw list.
         Specifically, can list__remove() the buffers found during a sweep and then immediately free the raw list
         so the list__search() workers can continue?  Maybe with a dont_free flag or something?
-     n) Fix a segmentation fault.
-     o) Parallelize the list__push() function so that compression is faster.
-     p) Determine if we can malloc larger chunks and/or reuse them with free lists (might require buffers to be equal sizes).
+     q) Switch back to localized locking but respect levels for node to insert.  See if performance improves.
+     s) Parallelize buffer compression during list__sweep().
+     t) See if list__restore() and others can stop using the write lock so much, particulary for list__add() calls.
+     u) Make write locks more granular if possible.
 4. Niceness
      a) Update all the documentation in the source files.

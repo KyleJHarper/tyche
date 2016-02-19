@@ -14,7 +14,7 @@
 #include <stdint.h>  /* Used for the uint_ types */
 
 /* Defines used by this header. */
-#define MAX_POPULARITY (UINT8_MAX >> 1)
+#define MAX_POPULARITY UINT8_MAX
 #define BUFFER_ID_MAX UINT32_MAX
 
 /* Build the typedef and structure for a Buffer */

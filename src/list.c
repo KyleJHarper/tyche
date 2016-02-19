@@ -99,6 +99,8 @@ List* list__initialize() {
   list->head->next = list->head;
   list->clock_hand = list->head;
   list->levels = 1;
+  list->youngest_generation = 0;
+  list->oldest_generation = 0;
   SkiplistNode *slnode = NULL;
   for(int i=0; i<SKIPLIST_MAX; i++) {
     slnode = (SkiplistNode *)malloc(sizeof(SkiplistNode));
@@ -115,14 +117,6 @@ List* list__initialize() {
     // Assign it to the correct index.
     list->indexes[i] = slnode;
   }
-
-  /* Debug - Remove after sweep testing */
-  list->popularity = 0;
-  list->copy = 0;
-  list->move = 0;
-  list->pop = 0;
-  list->comp_popularity = 0;
-  list->push = 0;
 
   return list;
 }
@@ -207,8 +201,7 @@ int list__add(List *list, Buffer *buf) {
   /* Make sure we have room to add a new buffer before we proceed. */
   const uint32_t BUFFER_SIZE = BUFFER_OVERHEAD + (buf->comp_length == 0 ? buf->data_length : buf->comp_length);
   if (list->max_size < list->current_size + BUFFER_SIZE) {
-//printf("Going to sweep\n");
-      /* Determine the minimum sweep goal we need, then use the larger of the two. */
+    /* Determine the minimum sweep goal we need, then use the larger of the two. */
     const uint8_t MINIMUM_SWEEP_GOAL = (100 * (list->current_size + BUFFER_SIZE) / list->current_size) - 99;
     if (MINIMUM_SWEEP_GOAL > 99)
       show_error(E_GENERIC, "When trying to add a buffer, sweep goal was incremented to 100+ which would eliminate the entire list.  This is, I believe, a condition that should never happen.");
@@ -331,8 +324,10 @@ int list__remove(List *list, bufferid_t id, bool destroy) {
     nearest_neighbor->next = buf->next;
     if(destroy)
       buffer__destroy(buf);
-    else
+    else {
+      buf->victimized = 0;
       buffer__unlock(buf);
+    }
   }
 
   /* Remove the Skiplist Nodes that were found at various levels. */
@@ -360,7 +355,6 @@ int list__remove(List *list, bufferid_t id, bool destroy) {
 int list__search(List *list, Buffer **buf, bufferid_t id) {
   /* Update the ref count so we can begin searching. */
   list__update_ref(list, 1);
-//printf("got a ref update %u\n", list->ref_count);
 
   /* Begin searching the list at the highest level's index head. */
   int rv = E_BUFFER_NOT_FOUND;
@@ -371,9 +365,7 @@ int list__search(List *list, Buffer **buf, bufferid_t id) {
       slnode = slnode->right;
     // If the node matches, we're done!  Try to update the ref and assign everything appropriately.
     if(slnode->target->id == id) {
-//printf("Need to lock a buffer from slnode %u\n", slnode->target->id);
       rv = buffer__lock(slnode->target);
-//printf("Done getting lock from slnode\n");
       if(rv == E_OK) {
         *buf = slnode->target;
         buffer__update_ref(*buf, 1);
@@ -395,9 +387,7 @@ int list__search(List *list, Buffer **buf, bufferid_t id) {
       nearest_neighbor = nearest_neighbor->next;
     // If we got a match, score.  Our nearest_neighbor is now the match.  Update ref and assign things.
     if(nearest_neighbor->id == id) {
-//printf("Need to lock from nearest neighbor %u\n", nearest_neighbor->id);
       rv = buffer__lock(nearest_neighbor);
-//printf("Done locking from nearest_neighbor\n");
       if(rv == E_OK) {
         *buf = nearest_neighbor;
         buffer__update_ref(*buf, 1);
@@ -413,11 +403,9 @@ int list__search(List *list, Buffer **buf, bufferid_t id) {
 
   /* If we were unable to find the buffer, see if an offload_to list exists for us to search. */
   if (rv == E_BUFFER_NOT_FOUND && list->offload_to != NULL) {
-//printf("searching deeper\n");
     rv = list__search(list->offload_to, buf, id);
     if (rv == E_OK) {
       // Found it!  To avoid a race, release our pin, acquire the write lock, and then search again under its protection.
-//printf("Trying a recovery\n");
       buffer__lock(*buf);
       buffer__update_ref(*buf, -1);
       buffer__unlock(*buf);
@@ -439,8 +427,6 @@ int list__search(List *list, Buffer **buf, bufferid_t id) {
       }
     }
   }
-
-//printf("done searching\n");
 
   return rv;
 }
@@ -495,7 +481,6 @@ uint32_t list__sweep(List *list, uint8_t sweep_goal) {
   int rv = E_OK;
   Buffer *victim = NULL;
   struct timespec start, end;
-struct timespec s_popularity, e_popularity, s_copy, e_copy, s_move, e_move, s_pop, e_pop, s_comp_popularity, e_comp_popularity, s_push, e_push;
   clock_gettime(CLOCK_MONOTONIC, &start);
   uint32_t bytes_freed = 0;
   const uint32_t BYTES_NEEDED = list->current_size * sweep_goal / 100;
@@ -505,17 +490,12 @@ struct timespec s_popularity, e_popularity, s_copy, e_copy, s_move, e_move, s_po
     return rv;
   }
   list->sweeps++;
-  List *temp_list = list__initialize();
-  temp_list->max_size = BYTES_NEEDED * 2;
-  temp_list->offload_to = temp_list;
 
   // Sanity Check.  Then start looping to free up memory.
-//printf("Sweep start is %"PRIu64" and %"PRIu64"\n", list->current_size, list->offload_to->current_size);
   if (list->offload_to == NULL)
     show_error(E_GENERIC, "The list__sweep() function was given a list that doesn't have an offload_to target.  This is definitely a problem.");
   while (BYTES_NEEDED > bytes_freed) {
     // Scan until we find a buffer to remove.  Popularity is halved until a victim is found.  Skip head matches.
-clock_gettime(CLOCK_MONOTONIC, &s_popularity);
     for(;;) {
       list->clock_hand = list->clock_hand->next;
       if (list->clock_hand->popularity == 0 && list->clock_hand != list->head) {
@@ -524,177 +504,63 @@ clock_gettime(CLOCK_MONOTONIC, &s_popularity);
       }
       list->clock_hand->popularity >>= 1;
     }
-clock_gettime(CLOCK_MONOTONIC, &e_popularity);
-list->popularity += BILLION * (e_popularity.tv_sec - s_popularity.tv_sec) + e_popularity.tv_nsec - s_popularity.tv_nsec;
-//printf("Popularity Done: %u\n", victim->id);
 
-    // We only reach this when an unpopular victim id is found.  Compress it and reset some counters.
-clock_gettime(CLOCK_MONOTONIC, &s_copy);
-    rv = buffer__compress(victim);
-    if (rv != E_OK)
-      show_error(rv, "Failed to compress a buffer when performing list__sweep().  This shouldn't happen.  Return code was %d.", rv);
-    victim->ref_count = 0;
-    victim->victimized = 0;
-    victim->popularity = 0;
-clock_gettime(CLOCK_MONOTONIC, &e_copy);
-list->copy += BILLION * (e_copy.tv_sec - s_copy.tv_sec) + e_copy.tv_nsec - s_copy.tv_nsec;
-//printf("  Copy done: %u\n", victim->id);
-
-    // Assign the buffer to the temp_list, track the size difference, and remove the original buffer.
-clock_gettime(CLOCK_MONOTONIC, &s_move);
-    bytes_freed += victim->data_length - victim->comp_length;
-//printf("Calling remove\n");
+    // We only reach this when an unpopular victim id is found.  Remove it from the raw list, then compress it for relocation.
     rv = list__remove(list, victim->id, false);
     if (rv != E_OK)
       show_error(rv, "Failed to remove the selected victim while sweeping.  Not sure how.  Return code is %d", rv);
-//printf("Calling add\n");
-    rv = list__add(temp_list, victim);
+    rv = buffer__compress(victim);
     if (rv != E_OK)
-      show_error(rv, "Failed to send buf to the temp_list while sweeping.  Not sure how.  Return code is %d.", rv);
-clock_gettime(CLOCK_MONOTONIC, &e_move);
-list->move += BILLION * (e_move.tv_sec - s_move.tv_sec) + e_move.tv_nsec - s_move.tv_nsec;
-//printf("    Move done: %u\n", victim->id);
-  }
-//printf("DONE LOOPING\n");
+      show_error(rv, "Failed to compress a buffer when performing list__sweep().  This shouldn't happen.  Return code was %d.", rv);
 
-  // Now that we've freed up memory, move stuff from the temp_list to the offload (compressed) list.
-clock_gettime(CLOCK_MONOTONIC, &s_pop);
-  if (temp_list->current_size + list->offload_to->current_size > list->offload_to->max_size)
-    list__pop(list->offload_to, temp_list->current_size);
-clock_gettime(CLOCK_MONOTONIC, &e_pop);
-list->pop += BILLION * (e_pop.tv_sec - s_pop.tv_sec) + e_pop.tv_nsec - s_pop.tv_nsec;
-//printf("      Pop done.\n");
-  // Decrement popularity, creating "generations" for list__pop()-ing later.
-  Buffer *current = list->offload_to->head->next;
-clock_gettime(CLOCK_MONOTONIC, &s_comp_popularity);
-  while(current != list->offload_to->head) {
-    current->popularity--;
-    current = current->next;
-  }
-clock_gettime(CLOCK_MONOTONIC, &e_comp_popularity);
-list->comp_popularity += BILLION * (e_comp_popularity.tv_sec - s_comp_popularity.tv_sec) + e_comp_popularity.tv_nsec - s_comp_popularity.tv_nsec;
-//printf("        Comp Pop done.\n");
-  current = temp_list->head;
-  Buffer *next = current->next;
-clock_gettime(CLOCK_MONOTONIC, &s_push);
-  while(next != temp_list->head) {
-    current = next;
-    next = next->next;
-    list__push(list->offload_to, current);
+    // Determine if we need to pop some free space.  Then add it to the compressed list.
+    if ((list->offload_to->current_size + victim->data_length + BUFFER_OVERHEAD) > list->offload_to->max_size)
+      list__pop(list->offload_to, list->offload_to->current_size * list->offload_to->sweep_goal / 100);
+    // Assign this generation's value to the victim.
+    victim->popularity = list->offload_to->youngest_generation;
+    rv = list__add(list->offload_to, victim);
+    if (rv != E_OK)
+      show_error(rv, "Failed to send buf to the offload_list while sweeping.  Not sure how.  Return code is %d.", rv);
+    bytes_freed += victim->data_length;
     list->offloads++;
   }
-clock_gettime(CLOCK_MONOTONIC, &e_push);
-list->push += BILLION * (e_push.tv_sec - s_push.tv_sec) + e_push.tv_nsec - s_push.tv_nsec;
-//printf("          Push done.  Raw %"PRIu64", comp %"PRIu64"\n", list->current_size, list->offload_to->current_size);
 
   // Wrap up and leave.
   clock_gettime(CLOCK_MONOTONIC, &end);
   list->sweep_cost += BILLION * (end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec;
-  free(temp_list);
-//printf("            Sweep done.  Lock count is %u.\n", list->lock_depth);
+  list->offload_to->youngest_generation = list->offload_to->youngest_generation == MAX_POPULARITY ? 0 : list->offload_to->youngest_generation + 1;
   list__release_write_lock(list);
   return bytes_freed;
 }
 
 
-/* list__push
- * A wrapper that will prepare a compressed buffer for "pushing" to the specified list.  For searching purposes we actually
- * maintain sorted lists; so we need to ensure that certain things are done to the buffer's members before list__add()-ing it.
- * See: list__pop() for this function's counterpart.
- */
-int list__push(List *list, Buffer *buf) {
-  // Quick error checking.
-  if (list == NULL || buf == NULL)
-    show_error(E_GENERIC, "The list__push function was given a null List or Buffer.  This is fatal.");
-
-  // The caller will usually lock the list, but we'll do it just to be safe.
-  list__acquire_write_lock(list);
-
-  // Buffers being recently pushed are popular with regard to other items in a compressed list.  This helps emulate FIFO.
-  buf->popularity = MAX_POPULARITY;
-
-  // Reset the buf's victimized so that list__search will work as intended on a compressed list.
-  buf->victimized = 0;
-
-  // That's really all for now.  The list__add() function will handle list size tracking and so forth.
-  list__add(list, buf);
-  list__release_write_lock(list);
-
-  return E_OK;
-}
-
-
 /* list__pop
  * A wrapper to scan for the least popular buffer(s) in a compressed list and have it/them removed until bytes_needed is satisfied.
- * See:  list__push() for this function's counterpart.
  */
 int list__pop(List *list, uint64_t bytes_needed) {
-  // Quick error checking.
+  // Quick error checking.  Then grab a lock.
   if (list == NULL)
     show_error(E_GENERIC, "The list__pop function was given a null list.  This is fatal.");
-
-  // The caller will usually lock the list, but we'll do it just to be safe.
   list__acquire_write_lock(list);
 
   // Set up some tracking items.
-  uint8_t lowest_popularity = MAX_POPULARITY;
-  Buffer *current = NULL;
-  int to_be_freed[MAX_POPULARITY+1];
-  SkiplistNode *popularity_slstack[MAX_POPULARITY+1];
-  SkiplistNode *slstack_forward_nodes[MAX_POPULARITY+1];
-  SkiplistNode *slnode = NULL;
-  for(int i = 0; i <= MAX_POPULARITY; i++) {
-    popularity_slstack[i] = list__initialize_skiplistnode(NULL);
-    slstack_forward_nodes[i] = popularity_slstack[i];
-    to_be_freed[i] = 0;
-  }
-
-  // Loop until we find enough memory to free up.
-  current = list->head;
-  while (bytes_needed > (list->max_size - list->current_size)) {
-    while(current->next != list->head) {
-      current = current->next;
-      // Rapidly decline to the lowest popularity item and track all occurrences of the generation.
-      if(current->popularity > lowest_popularity)
+  while(bytes_needed > (list->max_size - list->current_size)) {
+    // Loop through and remove an entire generation at a time.
+    while(list->clock_hand->next != list->head) {
+      // If the next buffer's popularit matches, remove it and continue because current->next will changes with list__remove().
+      if(list->clock_hand->next->popularity == list->oldest_generation) {
+        list__remove(list, list->clock_hand->next->id, true);
+        list->offloads++;
         continue;
-      to_be_freed[current->popularity] += BUFFER_OVERHEAD + (current->comp_length == 0 ? current->data_length : current->comp_length);
-      // Set lowest and add a new node to this stack's list.  The ->right is always NULL, so just change the forward pointer.
-      lowest_popularity = current->popularity;
-      slnode = list__initialize_skiplistnode(current);
-      slstack_forward_nodes[lowest_popularity]->right = slnode;
-      slstack_forward_nodes[lowest_popularity] = slnode;
-      // If a long enough list exists to free all required memory, leave.
-      if(to_be_freed[lowest_popularity] >= bytes_needed)
-        break;
-    }
-    // Free up the memory at the lowest priority.  We'll kill slnodes later below.
-    slnode = popularity_slstack[lowest_popularity];
-    while(slnode->right != NULL) {
-      slnode = slnode->right;
-      list__remove(list, slnode->target->id, true);
-      list->offloads++;
-      slnode->target = NULL;
-    }
-    // Set current to the most-forward position of the next lowest popularity found in case we need to scan for more memory.
-    for(int new_low = lowest_popularity+1; new_low <= MAX_POPULARITY; new_low++) {
-      if(popularity_slstack[new_low]->right != NULL) {
-        current = slstack_forward_nodes[new_low]->target;
-        lowest_popularity = new_low;
-        break;
       }
+      list->clock_hand = list->clock_hand->next;
     }
+    // We looped back around to ->head, all buffers matching this generation are gone.  Increment oldest generation.
+    list->oldest_generation = list->oldest_generation == MAX_POPULARITY ? 0 : list->oldest_generation + 1;
+    list->clock_hand = list->clock_hand->next;
   }
 
-  // Clean up the memory we used to build the slstacks.
-  for(int i = 0; i <= MAX_POPULARITY; i++) {
-    while(popularity_slstack[i]->right != NULL) {
-      slnode = popularity_slstack[i]->right;
-      popularity_slstack[i]->right = slnode->right;
-      free(slnode);
-    }
-    free(popularity_slstack[i]);
-  }
-
+  // Release lock and leave.
   list__release_write_lock(list);
   return E_OK;
 }

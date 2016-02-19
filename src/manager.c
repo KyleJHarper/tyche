@@ -81,11 +81,6 @@ Manager* manager__initialize(managerid_t id, char **pages) {
   raw_list->offload_to = comp_list;
   comp_list->restore_to = raw_list;
 
-  /* Synchronize mutexes and conditions to avoid t1 getting the 'raw' lock and t2 getting the 'compressed' lock and deadlocking. */
-  comp_list->lock = raw_list->lock;
-  comp_list->reader_condition = raw_list->reader_condition;
-  comp_list->writer_condition = raw_list->writer_condition;
-
   /* Set the memory sizes for both lists. */
   list__balance(raw_list, opts.fixed_ratio > 0 ? opts.fixed_ratio : INITIAL_RAW_RATIO);
 
@@ -124,12 +119,6 @@ int manager__start(Manager *mgr) {
   printf("Fixed Memory Ratio  : %"PRIi8"%% (%"PRIu64" bytes raw, %"PRIu64" bytes compressed)\n", opts.fixed_ratio, mgr->raw_list->max_size, mgr->comp_list->max_size);
   printf("Manager run time    : %.1f sec\n", 1.0 * mgr->run_duration / 1000);
   printf("Time sweeping       : %u sweeps, %'"PRIu64"\n", mgr->raw_list->sweeps, mgr->raw_list->sweep_cost);
-  printf("         popularity : %'"PRIu64"\n", mgr->raw_list->popularity);
-  printf("               copy : %'"PRIu64"\n", mgr->raw_list->copy);
-  printf("               move : %'"PRIu64"\n", mgr->raw_list->move);
-  printf("                pop : %'"PRIu64"\n", mgr->raw_list->pop);
-  printf("    comp popularity : %'"PRIu64"\n", mgr->raw_list->comp_popularity);
-  printf("               push : %'"PRIu64"\n", mgr->raw_list->push);
   return E_OK;
 }
 
@@ -194,9 +183,7 @@ void manager__spawn_worker(Manager *mgr) {
   while(mgr->runnable != 0) {
     /* Go find buffers to play with!  If the one we need doesn't exist, get it and add it. */
     id_to_get = rand() % opts.page_count;
-//printf("Searching for %d\n", id_to_get);
     rv = list__search(mgr->raw_list, &buf, id_to_get);
-//printf("Return code was %d\n", rv);
     if(rv == E_OK)
       mgr->workers[id].hits++;
     if(rv == E_BUFFER_NOT_FOUND) {
