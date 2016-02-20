@@ -36,13 +36,18 @@
 #include "options.h"
 #include "list.h"
 #include "options.h"
+#include "thpool.h"
 
-#include <locale.h> /* Remove me */
+#include <locale.h> /* Remove me after debugging... probably */
+#include <unistd.h> //Also remove after debug.
 
 
 /* We need to know what one billion is for clock timing. */
 #define BILLION 1000000000L
 #define MILLION    1000000L
+
+/* Async pools often benefit from batching.  Set here for visibility. */
+#define POOL_BATCH_SIZE 1000
 
 /* Extern the error codes we'll use. */
 extern const int E_OK;
@@ -101,6 +106,7 @@ List* list__initialize() {
   list->levels = 1;
   list->youngest_generation = 0;
   list->oldest_generation = 0;
+  list->compressor_pool = thpool_init(opts.cpu_count);
   SkiplistNode *slnode = NULL;
   for(int i=0; i<SKIPLIST_MAX; i++) {
     slnode = (SkiplistNode *)malloc(sizeof(SkiplistNode));
@@ -476,13 +482,18 @@ int list__update_ref(List *list, int delta) {
 uint32_t list__sweep(List *list, uint8_t sweep_goal) {
   // Acquire a list lock just to ensure we're operating safely.
   list__acquire_write_lock(list);
+  if (list->offload_to == NULL)
+    show_error(E_GENERIC, "The list__sweep() function was given a list that doesn't have an offload_to target.  This is definitely a problem.");
 
-  // Set up some temporary stuff to calculate our needs and store victims.
+  // Variables and tracking data.
   int rv = E_OK;
   Buffer *victim = NULL;
+  Buffer *victims[POOL_BATCH_SIZE];
+  int victims_index = -1;
   struct timespec start, end;
   clock_gettime(CLOCK_MONOTONIC, &start);
   uint32_t bytes_freed = 0;
+  uint32_t bytes_to_add = 0;
   const uint32_t BYTES_NEEDED = list->current_size * sweep_goal / 100;
   if ((list->current_size < list->max_size) && BYTES_NEEDED < (list->max_size - list->current_size)) {
     // Someone already did a sweep and freed up plenty of room.  Don't re-sweep in a race.
@@ -491,12 +502,10 @@ uint32_t list__sweep(List *list, uint8_t sweep_goal) {
   }
   list->sweeps++;
 
-  // Sanity Check.  Then start looping to free up memory.
-  if (list->offload_to == NULL)
-    show_error(E_GENERIC, "The list__sweep() function was given a list that doesn't have an offload_to target.  This is definitely a problem.");
-  while (BYTES_NEEDED > bytes_freed) {
+  // Loop forever to free up memory.  Memory checks happen near the end of the loop.
+  while(true) {
     // Scan until we find a buffer to remove.  Popularity is halved until a victim is found.  Skip head matches.
-    for(;;) {
+    while(true) {
       list->clock_hand = list->clock_hand->next;
       if (list->clock_hand->popularity == 0 && list->clock_hand != list->head) {
         victim = list->clock_hand;
@@ -504,25 +513,39 @@ uint32_t list__sweep(List *list, uint8_t sweep_goal) {
       }
       list->clock_hand->popularity >>= 1;
     }
-
-    // We only reach this when an unpopular victim id is found.  Remove it from the raw list, then compress it for relocation.
+    // We only reach this when an unpopular victim id is found.  Update space we'll free, offload count, and victim generation.
+    bytes_freed += victim->data_length + BUFFER_OVERHEAD;
+    list->offloads++;
+    victim->popularity = list->offload_to->youngest_generation;
+    // Track the pointer so we can batch compress later, then remove it from the raw list.
+    victims_index++;
+    victims[victims_index] = victim;
     rv = list__remove(list, victim->id, false);
     if (rv != E_OK)
       show_error(rv, "Failed to remove the selected victim while sweeping.  Not sure how.  Return code is %d", rv);
-    rv = buffer__compress(victim);
-    if (rv != E_OK)
-      show_error(rv, "Failed to compress a buffer when performing list__sweep().  This shouldn't happen.  Return code was %d.", rv);
+    // Add the buffer_compress job to the compressor_pool so it can compress the orphaned Buffer in the background.
+    thpool_add_work(list->compressor_pool, (void*)buffer__compress, (void*)victim);
 
-    // Determine if we need to pop some free space.  Then add it to the compressed list.
-    if ((list->offload_to->current_size + victim->data_length + BUFFER_OVERHEAD) > list->offload_to->max_size)
-      list__pop(list->offload_to, list->offload_to->current_size * list->offload_to->sweep_goal / 100);
-    // Assign this generation's value to the victim.
-    victim->popularity = list->offload_to->youngest_generation;
-    rv = list__add(list->offload_to, victim);
-    if (rv != E_OK)
-      show_error(rv, "Failed to send buf to the offload_list while sweeping.  Not sure how.  Return code is %d.", rv);
-    bytes_freed += victim->data_length;
-    list->offloads++;
+    // If the compressor_pool is full or we've found enough memory to free, flush everything and reset counters.
+    if(victims_index + 1 == POOL_BATCH_SIZE || BYTES_NEEDED <= bytes_freed) {
+      thpool_wait(list->compressor_pool);
+      for(int i=0; i<=victims_index; i++)
+        bytes_to_add += victims[i]->comp_length + BUFFER_OVERHEAD;
+      // Technically, bytes_to_add is extremely pessimistic because it's assuming no compression.  But we'll live with it for now.
+      while((list->offload_to->current_size + bytes_to_add) > list->offload_to->max_size) {
+        list__pop(list->offload_to, bytes_to_add);
+      }
+      for(int i=0; i<=victims_index; i++) {
+        rv = list__add(list->offload_to, victims[i]);
+        if (rv != E_OK)
+          show_error(rv, "Failed to send buf to the offload_list while sweeping.  Not sure how.  Return code is %d.", rv);
+      }
+      victims_index = -1;
+      bytes_to_add = 0;
+      // Check once again to see if we're done scanning.  This prevents double checking via while() with every loop iteration.
+      if(BYTES_NEEDED <= bytes_freed)
+        break;
+    }
   }
 
   // Wrap up and leave.
@@ -647,6 +670,8 @@ int list__balance(List *list, uint32_t ratio) {
  * Frees the data held by a list.
  */
 int list__destroy(List *list) {
+  thpool_wait(list->compressor_pool);
+  thpool_destroy(list->compressor_pool);
   while(list->head->next != list->head)
     list__remove(list, list->head->next->id, true);
   list__remove(list, list->head->id, true);

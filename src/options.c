@@ -57,6 +57,7 @@ void options__process(int argc, char **argv) {
   opts.max_memory = 10 * 1024 * 1024;
   opts.fixed_ratio = -1;
   opts.workers = sysconf(_SC_NPROCESSORS_ONLN) > 0 ? (uint16_t)sysconf(_SC_NPROCESSORS_ONLN) : 1;
+  opts.cpu_count = sysconf(_SC_NPROCESSORS_ONLN) > 0 ? (uint16_t)sysconf(_SC_NPROCESSORS_ONLN) : 1;
   /* Tyche Management */
   opts.duration = 5;
   opts.hit_ratio = -1;

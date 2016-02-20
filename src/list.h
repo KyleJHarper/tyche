@@ -14,6 +14,7 @@
 #include <stdbool.h>
 #include <pthread.h>
 #include "buffer.h"
+#include "thpool.h"
 
 /* A list is simply the collection of buffers, metadata to describe the list for management, and control attributes to protect it.
  * List functions come in reader and writer flavors.
@@ -70,6 +71,7 @@ struct list {
   uint8_t levels;                       /* The current height of the skip list thus far. */
   uint8_t youngest_generation;          /* The tag to assign to the youngest generation for compressed buffer generation management. */
   uint8_t oldest_generation;            /* The oldest-known generation for list__pop()-ing.  Always "chasing" youngest_generation. */
+  threadpool compressor_pool;           /* A pool of workers for buffer compression when sweeping. */
 };
 
 
