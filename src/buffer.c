@@ -23,6 +23,7 @@ const Buffer BUFFER_INITIALIZER = {
   .id = 0,
   .ref_count = 0,
   .popularity = 0,
+  .generation = 0,
   .victimized = 0,
   .lock = PTHREAD_MUTEX_INITIALIZER,
   .condition = PTHREAD_COND_INITIALIZER,

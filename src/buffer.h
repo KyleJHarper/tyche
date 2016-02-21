@@ -25,6 +25,7 @@ struct buffer {
   bufferid_t id;                  /* Identifier of the page. Should come from the system providing the data itself (e.g.: inode). */
   uint16_t ref_count;             /* Number of references currently holding this buffer. */
   uint8_t popularity;             /* Rapidly decaying counter used for victim selection with clock sweep.  Ceiling of MAX_POPULARITY. */
+  uint8_t generation;             /* The generation a buffer exists in when it's been swept. */
   uint8_t victimized;             /* If the buffer has been victimized this is set non-zero.  Prevents incrementing of ref_count. */
   pthread_mutex_t lock;           /* The primary locking element for individual buffer protection. */
   pthread_cond_t condition;       /* The conditional variable for use with the lock when we're blocked and need signaling. */

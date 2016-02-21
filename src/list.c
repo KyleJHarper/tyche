@@ -106,6 +106,14 @@ List* list__initialize() {
   list->levels = 1;
   list->youngest_generation = 0;
   list->oldest_generation = 0;
+  list->generations_index_ceiling = 100;
+  list->generations = malloc((MAX_POPULARITY+1) * sizeof(Buffer *));
+  if(list->generations == NULL)
+    show_error(E_GENERIC, "Failed to allocate memory for the generations double pointer.");
+  for(int i=0; i<=MAX_POPULARITY; i++) {
+    list->generations_index[i] = 0;
+    list->generations[i] = calloc(list->generations_index_ceiling, sizeof(Buffer *));
+  }
   list->compressor_pool = thpool_init(opts.cpu_count);
   SkiplistNode *slnode = NULL;
   for(int i=0; i<SKIPLIST_MAX; i++) {
@@ -123,6 +131,10 @@ List* list__initialize() {
     // Assign it to the correct index.
     list->indexes[i] = slnode;
   }
+
+  /* Debug */
+  list->popping = 0;
+  list->pop_remove = 0;
 
   return list;
 }
@@ -491,7 +503,9 @@ uint32_t list__sweep(List *list, uint8_t sweep_goal) {
   Buffer *victims[POOL_BATCH_SIZE];
   int victims_index = -1;
   struct timespec start, end;
+  struct timespec s_pop, e_pop;
   clock_gettime(CLOCK_MONOTONIC, &start);
+  uint8_t current_generation = list->offload_to->youngest_generation;
   uint32_t bytes_freed = 0;
   uint32_t bytes_to_add = 0;
   const uint32_t BYTES_NEEDED = list->current_size * sweep_goal / 100;
@@ -513,10 +527,20 @@ uint32_t list__sweep(List *list, uint8_t sweep_goal) {
       }
       list->clock_hand->popularity >>= 1;
     }
-    // We only reach this when an unpopular victim id is found.  Update space we'll free, offload count, and victim generation.
+    // We only reach this when an unpopular victim id is found.  Update space we'll free and offload count.
     bytes_freed += victim->data_length + BUFFER_OVERHEAD;
     list->offloads++;
-    victim->popularity = list->offload_to->youngest_generation;
+    // Assign the current generation and push on the generations_index stack.
+    victim->generation = current_generation;
+    if(list->offload_to->generations_index[current_generation] == list->offload_to->generations_index_ceiling) {
+      for(int i=0; i<=MAX_POPULARITY; i++) {
+        list->offload_to->generations[i] = realloc(list->offload_to->generations[i], list->offload_to->generations_index_ceiling * 2 * sizeof(Buffer *));
+        show_error(E_GENERIC, "Failed to recalloc memory to expand the generation index %"PRIu32" from %"PRIu32" to %"PRIu32".", i, list->offload_to->generations_index[i], list->offload_to->generations_index[i] * 2);
+      }
+      list->offload_to->generations_index_ceiling *= 2;
+    }
+    *(list->offload_to->generations[current_generation] + list->offload_to->generations_index[current_generation]) = victim;
+    list->offload_to->generations_index[current_generation]++;
     // Track the pointer so we can batch compress later, then remove it from the raw list.
     victims_index++;
     victims[victims_index] = victim;
@@ -532,9 +556,11 @@ uint32_t list__sweep(List *list, uint8_t sweep_goal) {
       for(int i=0; i<=victims_index; i++)
         bytes_to_add += victims[i]->comp_length + BUFFER_OVERHEAD;
       // Technically, bytes_to_add is extremely pessimistic because it's assuming no compression.  But we'll live with it for now.
-      while((list->offload_to->current_size + bytes_to_add) > list->offload_to->max_size) {
+      clock_gettime(CLOCK_MONOTONIC, &s_pop);
+      while((list->offload_to->current_size + bytes_to_add) > list->offload_to->max_size)
         list__pop(list->offload_to, bytes_to_add);
-      }
+      clock_gettime(CLOCK_MONOTONIC, &e_pop);
+      list->popping += BILLION * (e_pop.tv_sec - s_pop.tv_sec) + e_pop.tv_nsec - s_pop.tv_nsec;
       for(int i=0; i<=victims_index; i++) {
         rv = list__add(list->offload_to, victims[i]);
         if (rv != E_OK)
@@ -566,21 +592,20 @@ int list__pop(List *list, uint64_t bytes_needed) {
     show_error(E_GENERIC, "The list__pop function was given a null list.  This is fatal.");
   list__acquire_write_lock(list);
 
-  // Set up some tracking items.
-  while(bytes_needed > (list->max_size - list->current_size)) {
-    // Loop through and remove an entire generation at a time.
-    while(list->clock_hand->next != list->head) {
-      // If the next buffer's popularit matches, remove it and continue because current->next will changes with list__remove().
-      if(list->clock_hand->next->popularity == list->oldest_generation) {
-        list__remove(list, list->clock_hand->next->id, true);
-        list->offloads++;
-        continue;
-      }
-      list->clock_hand = list->clock_hand->next;
+  // Loop until we've freed up enough memory.
+  while(true) {
+    // Loop through and remove buffers until we've freed up enough space or this generation is all gone.
+    while(list->generations_index[list->oldest_generation] > 0 && bytes_needed > (list->max_size - list->current_size)) {
+      list->generations_index[list->oldest_generation]--;
+      list__remove(list, (list->generations[list->oldest_generation] + list->generations_index[list->oldest_generation])->id, true);
     }
-    // We looped back around to ->head, all buffers matching this generation are gone.  Increment oldest generation.
-    list->oldest_generation = list->oldest_generation == MAX_POPULARITY ? 0 : list->oldest_generation + 1;
-    list->clock_hand = list->clock_hand->next;
+    // If this generation is depleted, increment oldest_generation and continue scanning from the top.
+    if(list->generations_index[list->oldest_generation] == 0) {
+      list->oldest_generation = list->oldest_generation == MAX_POPULARITY ? 0 : list->oldest_generation + 1;
+      continue;
+    }
+    // If we reached this point we freed enough memory; otherwise we'd have jumped back to the top by now.
+    break;
   }
 
   // Release lock and leave.
@@ -605,14 +630,27 @@ int list__restore(List *list, Buffer *buf) {
   // Lock the raw list.  Offload list doesn't need it.
   list__acquire_write_lock(list);
 
-  // Remove the buffer from the offload_list without actually destroying it.
+  // Remove the buffer from the offload list without actually destroying it.
   list__remove(list->offload_to, buf->id, false);
+
+  // Pop it from the generations array.
+  uint8_t my_generation = buf->generation;
+  for(int i=0; i<list->offload_to->generations_index[my_generation]; i--) {
+    if((list->offload_to->generations[my_generation] + i) == buf) {
+      // Found it.  Swap the last position with it, decrement index, and leave.
+      (list->offload_to->generations[my_generation] + i) = (list->offload_to->generations[my_generation] + list->offload_to->generations_index[my_generation]);
+      list->offload_to->generations_index[my_generation]--;
+      break;
+    }
+    show_error(E_GENERIC, "Trying to restore buffer %u but couldn't find it in the generations list.  This should never happen.", buf->id);
+  }
 
   // Now decompress the orphaned buffer, update its metrics, and add it to the list.
   if (buffer__decompress(buf) != E_OK)
     show_error(E_GENERIC, "The list__restore function was unable to decompress the new buffer.");
   buf->comp_hits++;
   buf->victimized = 0;
+  buf->popularity = 1;
   buf->ref_count = 1;
   list__add(list, buf);
 
@@ -624,7 +662,7 @@ int list__restore(List *list, Buffer *buf) {
 
 
 /* list__balance
- * Redistributes memory between a list and it's offload target.  The list__sweep() and list__push/pop() functions will handle the
+ * Redistributes memory between a list and it's offload target.  The list__sweep() and list__pop() functions will handle the
  * buffer migration while respecting the new boundaries.
  */
 int list__balance(List *list, uint32_t ratio) {
