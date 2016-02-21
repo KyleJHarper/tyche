@@ -71,7 +71,7 @@ struct list {
   uint8_t levels;                                /* The current height of the skip list thus far. */
   uint8_t youngest_generation;                   /* The tag to assign to the youngest generation for compressed buffer generation management. */
   uint8_t oldest_generation;                     /* The oldest-known generation for list__pop()-ing.  Always "chasing" youngest_generation. */
-  Buffer **generations;                          /* An array of the available generations to pop. */
+  Buffer ***generations;                         /* An array of the available generations to pop. */
   uint32_t generations_index[MAX_POPULARITY+1];  /* The highest assignable index.  This index minus 1 is always latest in-use. */
   uint32_t generations_index_ceiling;            /* The current ceiling for generation indexes. */
   threadpool compressor_pool;                    /* A pool of workers for buffer compression when sweeping. */

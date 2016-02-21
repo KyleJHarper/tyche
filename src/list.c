@@ -106,7 +106,7 @@ List* list__initialize() {
   list->levels = 1;
   list->youngest_generation = 0;
   list->oldest_generation = 0;
-  list->generations_index_ceiling = 100;
+  list->generations_index_ceiling = 10000;
   list->generations = malloc((MAX_POPULARITY+1) * sizeof(Buffer *));
   if(list->generations == NULL)
     show_error(E_GENERIC, "Failed to allocate memory for the generations double pointer.");
@@ -534,12 +534,14 @@ uint32_t list__sweep(List *list, uint8_t sweep_goal) {
     victim->generation = current_generation;
     if(list->offload_to->generations_index[current_generation] == list->offload_to->generations_index_ceiling) {
       for(int i=0; i<=MAX_POPULARITY; i++) {
-        list->offload_to->generations[i] = realloc(list->offload_to->generations[i], list->offload_to->generations_index_ceiling * 2 * sizeof(Buffer *));
+        *(list->offload_to->generations + i) = realloc(*(list->offload_to->generations + i), list->offload_to->generations_index_ceiling * 2 * sizeof(Buffer *));
         show_error(E_GENERIC, "Failed to recalloc memory to expand the generation index %"PRIu32" from %"PRIu32" to %"PRIu32".", i, list->offload_to->generations_index[i], list->offload_to->generations_index[i] * 2);
       }
       list->offload_to->generations_index_ceiling *= 2;
     }
-    *(list->offload_to->generations[current_generation] + list->offload_to->generations_index[current_generation]) = victim;
+//printf("Setting victim to generation index %u\n", list->offload_to->generations_index[current_generation]);
+    list->offload_to->generations[current_generation][list->offload_to->generations_index[current_generation]] = victim;
+//printf("Victim was just assigned to index %u.  Reading it gives id: %u\n", list->offload_to->generations_index[current_generation], list->offload_to->generations[current_generation][list->offload_to->generations_index[current_generation]]->id);
     list->offload_to->generations_index[current_generation]++;
     // Track the pointer so we can batch compress later, then remove it from the raw list.
     victims_index++;
@@ -597,7 +599,8 @@ int list__pop(List *list, uint64_t bytes_needed) {
     // Loop through and remove buffers until we've freed up enough space or this generation is all gone.
     while(list->generations_index[list->oldest_generation] > 0 && bytes_needed > (list->max_size - list->current_size)) {
       list->generations_index[list->oldest_generation]--;
-      list__remove(list, (list->generations[list->oldest_generation] + list->generations_index[list->oldest_generation])->id, true);
+      list__remove(list, list->generations[list->oldest_generation][list->generations_index[list->oldest_generation]]->id, true);
+      list->offloads++;
     }
     // If this generation is depleted, increment oldest_generation and continue scanning from the top.
     if(list->generations_index[list->oldest_generation] == 0) {
@@ -635,14 +638,16 @@ int list__restore(List *list, Buffer *buf) {
 
   // Pop it from the generations array.
   uint8_t my_generation = buf->generation;
-  for(int i=0; i<list->offload_to->generations_index[my_generation]; i--) {
-    if((list->offload_to->generations[my_generation] + i) == buf) {
+  for(int i=0; i<list->offload_to->generations_index[my_generation]; i++) {
+    if(list->offload_to->generations[my_generation][i] == buf) {
       // Found it.  Swap the last position with it, decrement index, and leave.
-      (list->offload_to->generations[my_generation] + i) = (list->offload_to->generations[my_generation] + list->offload_to->generations_index[my_generation]);
+      list->offload_to->generations[my_generation][i] = list->offload_to->generations[my_generation][list->offload_to->generations_index[my_generation]-1];
       list->offload_to->generations_index[my_generation]--;
       break;
     }
-    show_error(E_GENERIC, "Trying to restore buffer %u but couldn't find it in the generations list.  This should never happen.", buf->id);
+    // If we hit the end and didn't break out, we screwed up.
+    if(i == list->offload_to->generations_index[my_generation] - 1)
+      show_error(E_GENERIC, "Trying to restore buffer %u with generation %u but couldn't find it in the generations list.  This should never happen.", buf->id, buf->generation);
   }
 
   // Now decompress the orphaned buffer, update its metrics, and add it to the list.

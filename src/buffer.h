@@ -15,6 +15,7 @@
 
 /* Defines used by this header. */
 #define MAX_POPULARITY UINT8_MAX
+#define MAX_GENERATION UINT8_MAX
 #define BUFFER_ID_MAX UINT32_MAX
 
 /* Build the typedef and structure for a Buffer */
@@ -26,6 +27,7 @@ struct buffer {
   uint16_t ref_count;             /* Number of references currently holding this buffer. */
   uint8_t popularity;             /* Rapidly decaying counter used for victim selection with clock sweep.  Ceiling of MAX_POPULARITY. */
   uint8_t generation;             /* The generation a buffer exists in when it's been swept. */
+  uint8_t generation_index;       /* Tracks the offset (index) of the generation this buffer is listed in.  Prevents scanning later. */
   uint8_t victimized;             /* If the buffer has been victimized this is set non-zero.  Prevents incrementing of ref_count. */
   pthread_mutex_t lock;           /* The primary locking element for individual buffer protection. */
   pthread_cond_t condition;       /* The conditional variable for use with the lock when we're blocked and need signaling. */
