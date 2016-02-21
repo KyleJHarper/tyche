@@ -86,7 +86,7 @@ int list__acquire_write_lock(List *list);
 int list__release_write_lock(List *list);
 uint32_t list__sweep(List *list, uint8_t sweep_goal);
 int list__pop(List *list, uint64_t bytes_needed);
-int list__restore(List *list, Buffer **buf);
+int list__restore(List *list, Buffer *buf);
 int list__balance(List *list, uint32_t ratio);
 int list__destroy(List *list);
 

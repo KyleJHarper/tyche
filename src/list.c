@@ -46,8 +46,8 @@
 #define BILLION 1000000000L
 #define MILLION    1000000L
 
-/* Async pools often benefit from batching.  Set here for visibility. */
-#define POOL_BATCH_SIZE 1000
+/* Used when jobs are offloaded to an async threadpool and we're tracking pointers in a local array for synchronization later. */
+#define POOL_BATCH_SIZE 500
 
 /* Extern the error codes we'll use. */
 extern const int E_OK;
@@ -422,7 +422,7 @@ int list__search(List *list, Buffer **buf, bufferid_t id) {
         buffer__lock(*buf);
         buffer__update_ref(*buf, -1);
         buffer__unlock(*buf);
-        if (list__restore(list, buf) != E_OK)
+        if (list__restore(list, *buf) != E_OK)
           show_error(E_GENERIC, "Failed to list__restore a buffer.  This should never happen.");
         list__release_write_lock(list);
       } else {
@@ -592,9 +592,8 @@ int list__pop(List *list, uint64_t bytes_needed) {
 /* list__restore
  * Takes the buffer specified and adds it back to the list specified after decompressing the data member and updating all of the
  * tracking data.
- * Caller MUST acquire the list's write lock; this prevents another reader from pinning the buffer we're about to remove.
  */
-int list__restore(List *list, Buffer **buf) {
+int list__restore(List *list, Buffer *buf) {
   // Make sure we have a list, an offload_to, and a valid buffer.
   if (list == NULL)
     show_error(E_GENERIC, "The list__restore function was given a NULL list.  This should never happen.");
@@ -603,27 +602,21 @@ int list__restore(List *list, Buffer **buf) {
   if (buf == NULL)
     show_error(E_GENERIC, "The list__restore function was given an invalid buffer.  This should never happen.");
 
-  // Lock both lists, for safety.
+  // Lock the raw list.  Offload list doesn't need it.
   list__acquire_write_lock(list);
 
-  // Copy the buffer so we can begin restoring it.  Bump comp_hits since it's most logical here.
-  Buffer *new_buf = buffer__initialize(0, NULL);
-  buffer__copy(*buf, new_buf);
-  new_buf->comp_hits++;
+  // Remove the buffer from the offload_list without actually destroying it.
+  list__remove(list->offload_to, buf->id, false);
 
-  // Decompress the new_buf Buffer
-  if (buffer__decompress(new_buf) != E_OK)
+  // Now decompress the orphaned buffer, update its metrics, and add it to the list.
+  if (buffer__decompress(buf) != E_OK)
     show_error(E_GENERIC, "The list__restore function was unable to decompress the new buffer.");
-  // Reset the victimization now that it's a valid buffer.  Set ref_count to 1 manually to avoid a little overhead.
-  new_buf->victimized = 0;
-  new_buf->ref_count = 1;
+  buf->comp_hits++;
+  buf->victimized = 0;
+  buf->ref_count = 1;
+  list__add(list, buf);
 
-  // Add the decompressed copy to the list source list and remove the compressed buffer from the offload list.
-  list__add(list, new_buf);
-  list__remove(list->offload_to, (*buf)->id, true);
-
-  // Assign the source pointer to our local copy's address, release write locks, and leave.
-  *buf = new_buf;
+  // Update restorations and release the write lock.
   list->restorations++;
   list__release_write_lock(list);
   return E_OK;

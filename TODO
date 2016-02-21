@@ -25,5 +25,6 @@
      s) Parallelize buffer compression during list__sweep().
      t) See if list__restore() and others can stop using the write lock so much, particulary for list__add() calls.
      u) Make write locks more granular if possible.
+     v) Switch list__restore() to use the same buffer instead of buffer__copy.
 4. Niceness
      a) Update all the documentation in the source files.
