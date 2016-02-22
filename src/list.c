@@ -36,7 +36,6 @@
 #include "options.h"
 #include "list.h"
 #include "options.h"
-#include "thpool.h"
 
 #include <locale.h> /* Remove me after debugging... probably */
 #include <unistd.h> //Also remove after debug.
@@ -47,7 +46,9 @@
 #define MILLION    1000000L
 
 /* Used when jobs are offloaded to an async threadpool and we're tracking pointers in a local array for synchronization later. */
-#define POOL_BATCH_SIZE 500
+const int POOL_BATCH_SIZE = 500;
+const int MAX_BUFFERS_PER_GENERATION = 32;
+
 
 /* Extern the error codes we'll use. */
 extern const int E_OK;
@@ -56,7 +57,7 @@ extern const int E_BUFFER_NOT_FOUND;
 extern const int E_BUFFER_IS_VICTIMIZED;
 extern const int E_BUFFER_ALREADY_EXISTS;
 
-/* We need some information from the buffer header */
+/* We need some information from the buffer */
 extern const int BUFFER_OVERHEAD;
 
 /* Extern the global options. */
@@ -110,11 +111,10 @@ List* list__initialize() {
   list->generations = malloc((MAX_POPULARITY+1) * sizeof(Buffer *));
   if(list->generations == NULL)
     show_error(E_GENERIC, "Failed to allocate memory for the generations double pointer.");
-  for(int i=0; i<=MAX_POPULARITY; i++) {
+  for(int i=0; i<=MAX_GENERATION; i++) {
     list->generations_index[i] = 0;
     list->generations[i] = calloc(list->generations_index_ceiling, sizeof(Buffer *));
   }
-  list->compressor_pool = thpool_init(opts.cpu_count);
   SkiplistNode *slnode = NULL;
   for(int i=0; i<SKIPLIST_MAX; i++) {
     slnode = (SkiplistNode *)malloc(sizeof(SkiplistNode));
@@ -132,9 +132,30 @@ List* list__initialize() {
     list->indexes[i] = slnode;
   }
 
+  /* Compressor Pool Management */
+  list->compressor_jobs = calloc(1, sizeof(CompressorJob));
+  list->compressor_jobs->next = list->compressor_jobs;
+  list->compressor_jobs->target = buffer__initialize(BUFFER_ID_MAX, NULL);
+  pthread_mutex_init(&list->jobs_lock, NULL);
+  pthread_cond_init(&list->jobs_cond, NULL);
+  list->compressor_pool = calloc(opts.cpu_count, sizeof(Compressor));
+  if(list->compressor_pool == NULL)
+    show_error(E_GENERIC, "Failed to allocate memory for the compressor_pool");
+  for(int i=0; i<opts.cpu_count; i++) {
+    list->compressor_pool[i].jobs_cond = &list->jobs_cond;
+    list->compressor_pool[i].jobs_lock = &list->jobs_lock;
+    list->compressor_pool[i].runnable = 0;
+    list->compressor_pool[i].jobs = list->compressor_jobs;
+  }
+
+
   /* Debug */
   list->popping = 0;
   list->pop_remove = 0;
+  list->find_victim = 0;
+  list->add = 0;
+  list->remove = 0;
+  list->compression = 0;
 
   return list;
 }
@@ -498,17 +519,19 @@ uint32_t list__sweep(List *list, uint8_t sweep_goal) {
     show_error(E_GENERIC, "The list__sweep() function was given a list that doesn't have an offload_to target.  This is definitely a problem.");
 
   // Variables and tracking data.
+  struct timespec start, end;
+  struct timespec s_pop, e_pop, s_find_victim, e_find_victim, s_add, e_add, s_remove, e_remove, s_compression, e_compression;
+  clock_gettime(CLOCK_MONOTONIC, &start);
   int rv = E_OK;
   Buffer *victim = NULL;
   Buffer *victims[POOL_BATCH_SIZE];
   int victims_index = -1;
-  struct timespec start, end;
-  struct timespec s_pop, e_pop;
-  clock_gettime(CLOCK_MONOTONIC, &start);
-  uint8_t current_generation = list->offload_to->youngest_generation;
+  generation_t current_generation = list->offload_to->youngest_generation;
   uint32_t bytes_freed = 0;
   uint32_t bytes_to_add = 0;
   const uint32_t BYTES_NEEDED = list->current_size * sweep_goal / 100;
+
+  // Check for a race condition.
   if ((list->current_size < list->max_size) && BYTES_NEEDED < (list->max_size - list->current_size)) {
     // Someone already did a sweep and freed up plenty of room.  Don't re-sweep in a race.
     list__release_write_lock(list);
@@ -519,6 +542,7 @@ uint32_t list__sweep(List *list, uint8_t sweep_goal) {
   // Loop forever to free up memory.  Memory checks happen near the end of the loop.
   while(true) {
     // Scan until we find a buffer to remove.  Popularity is halved until a victim is found.  Skip head matches.
+clock_gettime(CLOCK_MONOTONIC, &s_find_victim);
     while(true) {
       list->clock_hand = list->clock_hand->next;
       if (list->clock_hand->popularity == 0 && list->clock_hand != list->head) {
@@ -527,47 +551,64 @@ uint32_t list__sweep(List *list, uint8_t sweep_goal) {
       }
       list->clock_hand->popularity >>= 1;
     }
+clock_gettime(CLOCK_MONOTONIC, &e_find_victim);
+list->find_victim += BILLION * (e_find_victim.tv_sec - s_find_victim.tv_sec) + e_find_victim.tv_nsec - s_find_victim.tv_nsec;
     // We only reach this when an unpopular victim id is found.  Update space we'll free and offload count.
     bytes_freed += victim->data_length + BUFFER_OVERHEAD;
     list->offloads++;
     // Assign the current generation and push on the generations_index stack.
     victim->generation = current_generation;
     if(list->offload_to->generations_index[current_generation] == list->offload_to->generations_index_ceiling) {
-      for(int i=0; i<=MAX_POPULARITY; i++) {
+      for(int i=0; i<=MAX_GENERATION; i++) {
         *(list->offload_to->generations + i) = realloc(*(list->offload_to->generations + i), list->offload_to->generations_index_ceiling * 2 * sizeof(Buffer *));
         show_error(E_GENERIC, "Failed to recalloc memory to expand the generation index %"PRIu32" from %"PRIu32" to %"PRIu32".", i, list->offload_to->generations_index[i], list->offload_to->generations_index[i] * 2);
       }
       list->offload_to->generations_index_ceiling *= 2;
     }
-//printf("Setting victim to generation index %u\n", list->offload_to->generations_index[current_generation]);
     list->offload_to->generations[current_generation][list->offload_to->generations_index[current_generation]] = victim;
-//printf("Victim was just assigned to index %u.  Reading it gives id: %u\n", list->offload_to->generations_index[current_generation], list->offload_to->generations[current_generation][list->offload_to->generations_index[current_generation]]->id);
     list->offload_to->generations_index[current_generation]++;
     // Track the pointer so we can batch compress later, then remove it from the raw list.
     victims_index++;
     victims[victims_index] = victim;
+clock_gettime(CLOCK_MONOTONIC, &s_remove);
     rv = list__remove(list, victim->id, false);
+clock_gettime(CLOCK_MONOTONIC, &e_remove);
+list->remove += BILLION * (e_remove.tv_sec - s_remove.tv_sec) + e_remove.tv_nsec - s_remove.tv_nsec;
     if (rv != E_OK)
       show_error(rv, "Failed to remove the selected victim while sweeping.  Not sure how.  Return code is %d", rv);
     // Add the buffer_compress job to the compressor_pool so it can compress the orphaned Buffer in the background.
-    thpool_add_work(list->compressor_pool, (void*)buffer__compress, (void*)victim);
 
-    // If the compressor_pool is full or we've found enough memory to free, flush everything and reset counters.
+clock_gettime(CLOCK_MONOTONIC, &s_compression);
+    list__compressor_add_job(list, victim);
+    //buffer__compress(victim);
+clock_gettime(CLOCK_MONOTONIC, &e_compression);
+list->compression += BILLION * (e_compression.tv_sec - s_compression.tv_sec) + e_compression.tv_nsec - s_compression.tv_nsec;
+
+    // If the victim pool is full or we've found enough memory to free, flush everything and reset counters.
     if(victims_index + 1 == POOL_BATCH_SIZE || BYTES_NEEDED <= bytes_freed) {
-      thpool_wait(list->compressor_pool);
+      // Grab the jobs lock and rely on our condition to tell us when compressor_jobs is empty.
+printf("Grabbing lock to wait on it\n");
+      pthread_mutex_lock(&list->jobs_lock);
+printf("Got lock, going to wait now.  %u and %u\n", list->compressor_jobs->target->id, list->compressor_jobs->next->target->id);
+      while(list->compressor_jobs->next != list->compressor_jobs)
+        pthread_cond_wait(&list->jobs_cond, &list->jobs_lock);
+printf("Releasing job lock\n");
+      pthread_mutex_unlock(&list->jobs_lock);
       for(int i=0; i<=victims_index; i++)
         bytes_to_add += victims[i]->comp_length + BUFFER_OVERHEAD;
-      // Technically, bytes_to_add is extremely pessimistic because it's assuming no compression.  But we'll live with it for now.
-      clock_gettime(CLOCK_MONOTONIC, &s_pop);
+clock_gettime(CLOCK_MONOTONIC, &s_pop);
       while((list->offload_to->current_size + bytes_to_add) > list->offload_to->max_size)
         list__pop(list->offload_to, bytes_to_add);
-      clock_gettime(CLOCK_MONOTONIC, &e_pop);
-      list->popping += BILLION * (e_pop.tv_sec - s_pop.tv_sec) + e_pop.tv_nsec - s_pop.tv_nsec;
+clock_gettime(CLOCK_MONOTONIC, &e_pop);
+list->popping += BILLION * (e_pop.tv_sec - s_pop.tv_sec) + e_pop.tv_nsec - s_pop.tv_nsec;
+clock_gettime(CLOCK_MONOTONIC, &s_add);
       for(int i=0; i<=victims_index; i++) {
         rv = list__add(list->offload_to, victims[i]);
         if (rv != E_OK)
           show_error(rv, "Failed to send buf to the offload_list while sweeping.  Not sure how.  Return code is %d.", rv);
       }
+clock_gettime(CLOCK_MONOTONIC, &e_add);
+list->add += BILLION * (e_add.tv_sec - s_add.tv_sec) + e_add.tv_nsec - s_add.tv_nsec;
       victims_index = -1;
       bytes_to_add = 0;
       // Check once again to see if we're done scanning.  This prevents double checking via while() with every loop iteration.
@@ -579,7 +620,7 @@ uint32_t list__sweep(List *list, uint8_t sweep_goal) {
   // Wrap up and leave.
   clock_gettime(CLOCK_MONOTONIC, &end);
   list->sweep_cost += BILLION * (end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec;
-  list->offload_to->youngest_generation = list->offload_to->youngest_generation == MAX_POPULARITY ? 0 : list->offload_to->youngest_generation + 1;
+  list->offload_to->youngest_generation = list->offload_to->youngest_generation == MAX_GENERATION ? 0 : list->offload_to->youngest_generation + 1;
   list__release_write_lock(list);
   return bytes_freed;
 }
@@ -604,7 +645,7 @@ int list__pop(List *list, uint64_t bytes_needed) {
     }
     // If this generation is depleted, increment oldest_generation and continue scanning from the top.
     if(list->generations_index[list->oldest_generation] == 0) {
-      list->oldest_generation = list->oldest_generation == MAX_POPULARITY ? 0 : list->oldest_generation + 1;
+      list->oldest_generation = list->oldest_generation == MAX_GENERATION ? 0 : list->oldest_generation + 1;
       continue;
     }
     // If we reached this point we freed enough memory; otherwise we'd have jumped back to the top by now.
@@ -637,7 +678,7 @@ int list__restore(List *list, Buffer *buf) {
   list__remove(list->offload_to, buf->id, false);
 
   // Pop it from the generations array.
-  uint8_t my_generation = buf->generation;
+  generation_t my_generation = buf->generation;
   for(int i=0; i<list->offload_to->generations_index[my_generation]; i++) {
     if(list->offload_to->generations[my_generation][i] == buf) {
       // Found it.  Swap the last position with it, decrement index, and leave.
@@ -706,11 +747,60 @@ int list__balance(List *list, uint32_t ratio) {
  * Frees the data held by a list.
  */
 int list__destroy(List *list) {
-  thpool_wait(list->compressor_pool);
-  thpool_destroy(list->compressor_pool);
   while(list->head->next != list->head)
     list__remove(list, list->head->next->id, true);
   list__remove(list, list->head->id, true);
   free(list);
   return E_OK;
+}
+
+
+/* list__compressor_start
+ * The is the initialization point for a compressor via pthread_create().
+ */
+void list__compressor_start(Compressor *comp) {
+  // Try to do work forever.
+  Buffer *work_me = NULL;
+  int rv = E_OK;
+  while(true) {
+    // Grab a lock and wait for a broadcast to do some work.
+    pthread_mutex_lock(comp->jobs_lock);
+    while(comp->jobs->next == comp->jobs && comp->runnable == 0)
+      pthread_cond_wait(comp->jobs_cond, comp->jobs_lock);
+    // We now have a lock and our predicate indicates there's a job to do.  Try to grab it and start working, if we're allowed.
+    if(comp->runnable != 0) {
+      pthread_cond_broadcast(comp->jobs_cond);
+      pthread_mutex_unlock(comp->jobs_lock);
+      break;
+    }
+    // Yep, we have work to do.  Steal an item from the list, wake up others, and release the lock so they can do some work.
+    rv = E_OK;
+    work_me = comp->jobs->next->target;
+    comp->jobs->next = comp->jobs->next->next;
+    pthread_cond_broadcast(comp->jobs_cond);
+    pthread_mutex_unlock(comp->jobs_lock);
+    // Work the job, clear our pointer, and loop back around for more torture.
+    rv = buffer__compress(work_me);
+    if(rv != E_OK)
+      show_error(rv, "Compressor job failed to compress a buffer.  RV was %d.", rv);
+    work_me = NULL;
+  }
+  return;
+}
+
+
+/* list__compressor_add_job
+ * Adds a buffer to the jobs list for a compressor to work on.
+ */
+void list__compressor_add_job(List *list, Buffer *buf) {
+  // Grab the lock that all compressors share.  Add the buffer, then broadcast and unlock.
+  pthread_mutex_lock(&list->jobs_lock);
+  CompressorJob *new_job = malloc(sizeof(CompressorJob));
+  new_job->target = buf;
+  new_job->next = list->compressor_jobs->next;
+  list->compressor_jobs->next = new_job;
+  pthread_cond_broadcast(&list->jobs_cond);
+  pthread_mutex_unlock(&list->jobs_lock);
+
+  return;
 }

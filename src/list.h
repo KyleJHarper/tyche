@@ -14,7 +14,6 @@
 #include <stdbool.h>
 #include <pthread.h>
 #include "buffer.h"
-#include "thpool.h"
 
 /* A list is simply the collection of buffers, metadata to describe the list for management, and control attributes to protect it.
  * List functions come in reader and writer flavors.
@@ -34,6 +33,22 @@ struct skiplistnode {
 
   /* Buffer Reference to the List Item Itself */
   Buffer *target;       /* The buffer this node points to.  Always NULL when *up exists. */
+};
+
+
+/* Build the Compressor and CompressorJob Structures */
+typedef struct compressor Compressor;
+typedef struct compressorjob CompressorJob;
+struct compressorjob {
+  Buffer *target;              /* The target that we'll work on. */
+  CompressorJob *next;         /* The next available job to work on. */
+};
+struct compressor {
+  pthread_t worker;            /* The thread to actually do work. */
+  pthread_mutex_t *jobs_lock;  /* Pointer to the shared jobs lock. */
+  pthread_cond_t *jobs_cond;   /* Pointer to the shared condition variable to wake up when there's work to do. */
+  uint8_t runnable;            /* Flag determining if we are still allowed to be running.  If not, pthread_exit(). */
+  CompressorJob *jobs;         /* Link to the head of the jobs to work on. */
 };
 
 
@@ -69,15 +84,24 @@ struct list {
   Buffer *clock_hand;                            /* The current Buffer to be checked when sweeping is invoked. */
   SkiplistNode *indexes[SKIPLIST_MAX];           /* List of the heads of the bottom-most (least-granular) Skiplists. */
   uint8_t levels;                                /* The current height of the skip list thus far. */
-  uint8_t youngest_generation;                   /* The tag to assign to the youngest generation for compressed buffer generation management. */
-  uint8_t oldest_generation;                     /* The oldest-known generation for list__pop()-ing.  Always "chasing" youngest_generation. */
+  generation_t youngest_generation;              /* The tag to assign to the youngest generation for compressed buffer generation management. */
+  generation_t oldest_generation;                /* The oldest-known generation for list__pop()-ing.  Always "chasing" youngest_generation. */
   Buffer ***generations;                         /* An array of the available generations to pop. */
-  uint32_t generations_index[MAX_POPULARITY+1];  /* The highest assignable index.  This index minus 1 is always latest in-use. */
+  uint32_t generations_index[MAX_GENERATION+1];  /* The highest assignable index.  This index minus 1 is always latest in-use. */
   uint32_t generations_index_ceiling;            /* The current ceiling for generation indexes. */
-  threadpool compressor_pool;                    /* A pool of workers for buffer compression when sweeping. */
+
+  /* Compressor Pool Management */
+  Compressor *compressor_pool;                   /* A pool of workers for buffer compression when sweeping. */
+  CompressorJob *compressor_jobs;                /* The head of a list of jobs that compressors can work. */
+  pthread_mutex_t jobs_lock;                     /* The mutex that all jobs need to respect. */
+  pthread_cond_t jobs_cond;                      /* The shared condition variable for compressors to respect. */
 
   /* Debug */
   uint64_t popping;
+  uint64_t find_victim;
+  uint64_t add;
+  uint64_t remove;
+  uint64_t compression;
   uint64_t pop_remove;
 };
 
@@ -96,6 +120,7 @@ int list__pop(List *list, uint64_t bytes_needed);
 int list__restore(List *list, Buffer *buf);
 int list__balance(List *list, uint32_t ratio);
 int list__destroy(List *list);
-
+void list__compressor_start(Compressor *comp);
+void list__compressor_add_job(List *list, Buffer *buf);
 
 #endif /* SRC_LIST_H_ */

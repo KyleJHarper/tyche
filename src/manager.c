@@ -121,6 +121,10 @@ int manager__start(Manager *mgr) {
   printf("Time sweeping       : %u sweeps, %'"PRIu64"\n", mgr->raw_list->sweeps, mgr->raw_list->sweep_cost);
   printf("             Popping: %'"PRIu64"\n", mgr->raw_list->popping);
   printf("      Popping remove: %'"PRIu64"\n", mgr->raw_list->pop_remove);
+  printf("         Find Victim: %'"PRIu64"\n", mgr->raw_list->find_victim);
+  printf("              Adding: %'"PRIu64"\n", mgr->raw_list->add);
+  printf("              Remove: %'"PRIu64"\n", mgr->raw_list->remove);
+  printf("         Compression: %'"PRIu64"\n", mgr->raw_list->compression);
   return E_OK;
 }
 
