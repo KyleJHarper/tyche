@@ -47,6 +47,7 @@
 
 /* Used when jobs are offloaded to an async threadpool and we're tracking pointers in a local array for synchronization later. */
 const int POOL_BATCH_SIZE = 500;
+const int COMPRESSOR_BATCH_SIZE = 20;
 const int MAX_BUFFERS_PER_GENERATION = 32;
 
 
@@ -136,16 +137,24 @@ List* list__initialize() {
   list->compressor_jobs = calloc(1, sizeof(CompressorJob));
   list->compressor_jobs->next = list->compressor_jobs;
   list->compressor_jobs->target = buffer__initialize(BUFFER_ID_MAX, NULL);
+  list->active_compressors = 0;
   pthread_mutex_init(&list->jobs_lock, NULL);
   pthread_cond_init(&list->jobs_cond, NULL);
+  pthread_cond_init(&list->jobs_parent_cond, NULL);
+  list->compressor_threads = calloc(opts.cpu_count, sizeof(pthread_t));
+  if(list->compressor_threads == NULL)
+    show_error(E_GENERIC, "Failed to allocate memory for the compressor_threads");
   list->compressor_pool = calloc(opts.cpu_count, sizeof(Compressor));
   if(list->compressor_pool == NULL)
     show_error(E_GENERIC, "Failed to allocate memory for the compressor_pool");
   for(int i=0; i<opts.cpu_count; i++) {
     list->compressor_pool[i].jobs_cond = &list->jobs_cond;
     list->compressor_pool[i].jobs_lock = &list->jobs_lock;
+    list->compressor_pool[i].jobs_parent_cond = &list->jobs_parent_cond;
+    list->compressor_pool[i].active_compressors = &list->active_compressors;
     list->compressor_pool[i].runnable = 0;
     list->compressor_pool[i].jobs = list->compressor_jobs;
+    pthread_create(&list->compressor_threads[i], NULL, (void*) &list__compressor_start, &list->compressor_pool[i]);
   }
 
 
@@ -587,13 +596,15 @@ list->compression += BILLION * (e_compression.tv_sec - s_compression.tv_sec) + e
     // If the victim pool is full or we've found enough memory to free, flush everything and reset counters.
     if(victims_index + 1 == POOL_BATCH_SIZE || BYTES_NEEDED <= bytes_freed) {
       // Grab the jobs lock and rely on our condition to tell us when compressor_jobs is empty.
-printf("Grabbing lock to wait on it\n");
+clock_gettime(CLOCK_MONOTONIC, &s_compression);
       pthread_mutex_lock(&list->jobs_lock);
-printf("Got lock, going to wait now.  %u and %u\n", list->compressor_jobs->target->id, list->compressor_jobs->next->target->id);
-      while(list->compressor_jobs->next != list->compressor_jobs)
-        pthread_cond_wait(&list->jobs_cond, &list->jobs_lock);
-printf("Releasing job lock\n");
+      while(list->active_compressors != 0 || list->compressor_jobs->next != list->compressor_jobs) {
+        pthread_cond_broadcast(&list->jobs_cond);
+        pthread_cond_wait(&list->jobs_parent_cond, &list->jobs_lock);
+      }
       pthread_mutex_unlock(&list->jobs_lock);
+clock_gettime(CLOCK_MONOTONIC, &e_compression);
+list->compression += BILLION * (e_compression.tv_sec - s_compression.tv_sec) + e_compression.tv_nsec - s_compression.tv_nsec;
       for(int i=0; i<=victims_index; i++)
         bytes_to_add += victims[i]->comp_length + BUFFER_OVERHEAD;
 clock_gettime(CLOCK_MONOTONIC, &s_pop);
@@ -759,31 +770,51 @@ int list__destroy(List *list) {
  * The is the initialization point for a compressor via pthread_create().
  */
 void list__compressor_start(Compressor *comp) {
-  // Try to do work forever.
-  Buffer *work_me = NULL;
+  // Try to do work forever.  We need to start off assuming we're an active worker.  It self-regulates within the loop.
+  CompressorJob *work_me[COMPRESSOR_BATCH_SIZE];
+  int work_me_count = 0;
   int rv = E_OK;
+  (*comp->active_compressors)++;
+
   while(true) {
-    // Grab a lock and wait for a broadcast to do some work.
+    // Secure the lock to test the predicate.  If there's no work to do, do some signaling and wait.
     pthread_mutex_lock(comp->jobs_lock);
-    while(comp->jobs->next == comp->jobs && comp->runnable == 0)
-      pthread_cond_wait(comp->jobs_cond, comp->jobs_lock);
-    // We now have a lock and our predicate indicates there's a job to do.  Try to grab it and start working, if we're allowed.
+    if(comp->jobs->next == comp->jobs) {
+      // There's no work to do.  Remove our active pin, notify the parent if pin count is 0, and then wait to be woken up again.
+      (*comp->active_compressors)--;
+      if(*comp->active_compressors == 0)
+        pthread_cond_broadcast(comp->jobs_parent_cond);
+      while(comp->jobs->next == comp->jobs && comp->runnable == 0)
+        pthread_cond_wait(comp->jobs_cond, comp->jobs_lock);
+      // Someone woke us up and we have work to do.  Increment active counter.
+      (*comp->active_compressors)++;
+    }
+
+    // We have a lock and our predicate indicates there's a job to do.  Try to grab it and start working, if we're allowed.
     if(comp->runnable != 0) {
+      (*comp->active_compressors)--;
       pthread_cond_broadcast(comp->jobs_cond);
       pthread_mutex_unlock(comp->jobs_lock);
       break;
     }
-    // Yep, we have work to do.  Steal an item from the list, wake up others, and release the lock so they can do some work.
-    rv = E_OK;
-    work_me = comp->jobs->next->target;
-    comp->jobs->next = comp->jobs->next->next;
-    pthread_cond_broadcast(comp->jobs_cond);
+
+    // Yep, we have work to do!  Grab some items and release the lock so others can have it.
+    work_me_count = 0;
+    while(work_me_count < COMPRESSOR_BATCH_SIZE && comp->jobs->next != comp->jobs) {
+      work_me[work_me_count] = comp->jobs->next;
+      comp->jobs->next = comp->jobs->next->next;
+      work_me_count++;
+    }
     pthread_mutex_unlock(comp->jobs_lock);
-    // Work the job, clear our pointer, and loop back around for more torture.
-    rv = buffer__compress(work_me);
-    if(rv != E_OK)
-      show_error(rv, "Compressor job failed to compress a buffer.  RV was %d.", rv);
-    work_me = NULL;
+    pthread_cond_broadcast(comp->jobs_cond);
+    for(int i = 0; i < work_me_count; i++) {
+      rv = E_OK;
+      rv = buffer__compress(work_me[i]->target);
+      if(rv != E_OK)
+        show_error(rv, "Compressor job failed to compress a buffer.  RV was %d.  Buffer id was %u", rv, work_me[i]->target->id);
+      free(work_me[i]);
+      work_me[i] = NULL;
+    }
   }
   return;
 }
@@ -794,13 +825,13 @@ void list__compressor_start(Compressor *comp) {
  */
 void list__compressor_add_job(List *list, Buffer *buf) {
   // Grab the lock that all compressors share.  Add the buffer, then broadcast and unlock.
-  pthread_mutex_lock(&list->jobs_lock);
+//  pthread_mutex_lock(&list->jobs_lock);
   CompressorJob *new_job = malloc(sizeof(CompressorJob));
   new_job->target = buf;
   new_job->next = list->compressor_jobs->next;
   list->compressor_jobs->next = new_job;
-  pthread_cond_broadcast(&list->jobs_cond);
-  pthread_mutex_unlock(&list->jobs_lock);
+//  pthread_cond_broadcast(&list->jobs_cond);
+//  pthread_mutex_unlock(&list->jobs_lock);
 
   return;
 }

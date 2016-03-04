@@ -44,11 +44,13 @@ struct compressorjob {
   CompressorJob *next;         /* The next available job to work on. */
 };
 struct compressor {
-  pthread_t worker;            /* The thread to actually do work. */
-  pthread_mutex_t *jobs_lock;  /* Pointer to the shared jobs lock. */
-  pthread_cond_t *jobs_cond;   /* Pointer to the shared condition variable to wake up when there's work to do. */
-  uint8_t runnable;            /* Flag determining if we are still allowed to be running.  If not, pthread_exit(). */
-  CompressorJob *jobs;         /* Link to the head of the jobs to work on. */
+  pthread_t worker;                  /* The thread to actually do work. */
+  pthread_mutex_t *jobs_lock;        /* Pointer to the shared jobs lock. */
+  pthread_cond_t *jobs_cond;         /* Pointer to the shared condition variable to wake up when there's work to do. */
+  pthread_cond_t *jobs_parent_cond;  /* Pointer to the parent condition to trigger when job queue is empty and active is 0. */
+  uint16_t *active_compressors;      /* Pointer to shared counter of active compressors. */
+  uint8_t runnable;                  /* Flag determining if we are still allowed to be running.  If not, pthread_exit(). */
+  CompressorJob *jobs;               /* Link to the head of the jobs to work on. */
 };
 
 
@@ -91,10 +93,13 @@ struct list {
   uint32_t generations_index_ceiling;            /* The current ceiling for generation indexes. */
 
   /* Compressor Pool Management */
+  pthread_t *compressor_threads;                 /* A pool of threads for each compressor to run within. */
   Compressor *compressor_pool;                   /* A pool of workers for buffer compression when sweeping. */
   CompressorJob *compressor_jobs;                /* The head of a list of jobs that compressors can work. */
   pthread_mutex_t jobs_lock;                     /* The mutex that all jobs need to respect. */
   pthread_cond_t jobs_cond;                      /* The shared condition variable for compressors to respect. */
+  pthread_cond_t jobs_parent_cond;               /* The parent condition to signal when the job queue is empty and active compressors is 0. */
+  uint16_t active_compressors;                   /* The number of compressors currently doing work. */
 
   /* Debug */
   uint64_t popping;
