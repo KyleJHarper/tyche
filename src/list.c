@@ -754,6 +754,21 @@ int list__destroy(List *list) {
   while(list->head->next != list->head)
     list__remove(list, list->head->next->id, true);
   list__remove(list, list->head->id, true);
+  for(int i=0; i<MAX_GENERATION; i++)
+    free(list->generations[i]);
+  free(list->generations);
+  for(int i=0; i<SKIPLIST_MAX; i++)
+    free(list->indexes[i]);
+  for(int i=0; i<opts.cpu_count; i++)
+    list->compressor_pool[i].runnable = 1;
+  for(int i=0; i<opts.cpu_count; i++) {
+    pthread_mutex_lock(&list->jobs_lock);
+    pthread_cond_broadcast(&list->jobs_cond);
+    pthread_mutex_unlock(&list->jobs_lock);
+  }
+  for(int i=0; i<opts.cpu_count; i++)
+    pthread_join(list->compressor_threads[i], NULL);
+  free(list->compressor_pool);
   free(list);
   return E_OK;
 }

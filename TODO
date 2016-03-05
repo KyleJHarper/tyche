@@ -15,16 +15,7 @@
      e) Why C?  To *hopefully* avoid bias in higher level langages; though they might have optimizations.
      f) Why lz4?  Partly it's compression speed+efficiency, but mostly it's decompression speed.
 3. Optimizations & Profiling
-     f) Rerun performance tests for comparison.
-     h) Profile with valgrind to find memory leaks.
-     i) Profile with instrumentation (gprof, valgrind --tool=callgrind) and optimize weak points.
-     m) See if independent locks for comp list can allow comp list to do work independent of raw list.
-        Specifically, can list__remove() the buffers found during a sweep and then immediately free the raw list
-        so the list__search() workers can continue?  Maybe with a dont_free flag or something?
      q) Switch back to localized locking but respect levels for node to insert.  See if performance improves.
-     s) Parallelize buffer compression during list__sweep().
-     t) See if list__restore() and others can stop using the write lock so much, particulary for list__add() calls.
      u) Make write locks more granular if possible.
-     v) Switch list__restore() to use the same buffer instead of buffer__copy.
 4. Niceness
      a) Update all the documentation in the source files.
