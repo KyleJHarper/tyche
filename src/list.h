@@ -36,26 +36,25 @@ struct skiplistnode {
 };
 
 
-/* Build the Compressor and CompressorJob Structures */
+/* Build the Compressor Structures */
 typedef struct compressor Compressor;
-typedef struct compressorjob CompressorJob;
-struct compressorjob {
-  Buffer *target;              /* The target that we'll work on. */
-  CompressorJob *next;         /* The next available job to work on. */
-};
 struct compressor {
-  pthread_t worker;                  /* The thread to actually do work. */
-  pthread_mutex_t *jobs_lock;        /* Pointer to the shared jobs lock. */
-  pthread_cond_t *jobs_cond;         /* Pointer to the shared condition variable to wake up when there's work to do. */
-  pthread_cond_t *jobs_parent_cond;  /* Pointer to the parent condition to trigger when job queue is empty and active is 0. */
-  uint16_t *active_compressors;      /* Pointer to shared counter of active compressors. */
-  uint8_t runnable;                  /* Flag determining if we are still allowed to be running.  If not, pthread_exit(). */
-  CompressorJob *jobs;               /* Link to the head of the jobs to work on. */
+  pthread_t worker;                    /* The thread to actually do work. */
+  pthread_mutex_t *jobs_lock;          /* Pointer to the shared jobs lock. */
+  pthread_cond_t *jobs_cond;           /* Pointer to the shared condition variable to wake up when there's work to do. */
+  pthread_cond_t *jobs_parent_cond;    /* Pointer to the parent condition to trigger when job queue is empty and active is 0. */
+  uint16_t *active_compressors;        /* Pointer to shared counter of active compressors. */
+  uint8_t runnable;                    /* Flag determining if we are still allowed to be running.  If not, pthread_exit(). */
+  Buffer **victims;                    /* Link to the array of victims. */
+  uint16_t *victims_index;             /* Link to the victims index to track the next-available position. */
+  uint16_t *victims_compressor_index;  /* Link to the next-available Buffer to check for compressing in *victims[]. */
 };
 
 
 /* Build the typedef and structure for a List */
 #define SKIPLIST_MAX 32
+#define VICTIM_BATCH_SIZE 1000
+#define COMPRESSOR_BATCH_SIZE 25
 typedef struct list List;
 struct list {
   /* Size and Counter Members */
@@ -93,13 +92,15 @@ struct list {
   uint32_t generations_index_ceiling;            /* The current ceiling for generation indexes. */
 
   /* Compressor Pool Management */
-  pthread_t *compressor_threads;                 /* A pool of threads for each compressor to run within. */
-  Compressor *compressor_pool;                   /* A pool of workers for buffer compression when sweeping. */
-  CompressorJob *compressor_jobs;                /* The head of a list of jobs that compressors can work. */
   pthread_mutex_t jobs_lock;                     /* The mutex that all jobs need to respect. */
   pthread_cond_t jobs_cond;                      /* The shared condition variable for compressors to respect. */
   pthread_cond_t jobs_parent_cond;               /* The parent condition to signal when the job queue is empty and active compressors is 0. */
+  Buffer *victims[VICTIM_BATCH_SIZE];            /* Items which are victimized and ready for compression. */
+  uint16_t victims_index;                        /* The tracking index for the next-available victims[] insertion point. */
+  uint16_t victims_compressor_index;             /* The index for the next-available buffer to be compressed by a compressor. */
   uint16_t active_compressors;                   /* The number of compressors currently doing work. */
+  pthread_t *compressor_threads;                 /* A pool of threads for each compressor to run within. */
+  Compressor *compressor_pool;                   /* A pool of workers for buffer compression when sweeping. */
 
   /* Debug */
   uint64_t popping;
@@ -126,6 +127,5 @@ int list__restore(List *list, Buffer *buf);
 int list__balance(List *list, uint32_t ratio);
 int list__destroy(List *list);
 void list__compressor_start(Compressor *comp);
-void list__compressor_add_job(List *list, Buffer *buf);
 
 #endif /* SRC_LIST_H_ */

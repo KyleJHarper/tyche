@@ -45,9 +45,7 @@
 #define BILLION 1000000000L
 #define MILLION    1000000L
 
-/* Used when jobs are offloaded to an async threadpool and we're tracking pointers in a local array for synchronization later. */
-const int POOL_BATCH_SIZE = 500;
-const int COMPRESSOR_BATCH_SIZE = 20;
+/* Limit generation size to help partition it and speed up victim selection. */
 const int MAX_BUFFERS_PER_GENERATION = 32;
 
 
@@ -134,16 +132,17 @@ List* list__initialize() {
   }
 
   /* Compressor Pool Management */
-  list->compressor_jobs = calloc(1, sizeof(CompressorJob));
-  list->compressor_jobs->next = list->compressor_jobs;
-  list->compressor_jobs->target = buffer__initialize(BUFFER_ID_MAX, NULL);
-  list->active_compressors = 0;
   pthread_mutex_init(&list->jobs_lock, NULL);
   pthread_cond_init(&list->jobs_cond, NULL);
   pthread_cond_init(&list->jobs_parent_cond, NULL);
   list->compressor_threads = calloc(opts.cpu_count, sizeof(pthread_t));
   if(list->compressor_threads == NULL)
     show_error(E_GENERIC, "Failed to allocate memory for the compressor_threads");
+  for(int i=0; i<VICTIM_BATCH_SIZE; i++)
+    list->victims[i] = NULL;
+  list->victims_index = 0;
+  list->victims_compressor_index = 0;
+  list->active_compressors = 0;
   list->compressor_pool = calloc(opts.cpu_count, sizeof(Compressor));
   if(list->compressor_pool == NULL)
     show_error(E_GENERIC, "Failed to allocate memory for the compressor_pool");
@@ -153,10 +152,11 @@ List* list__initialize() {
     list->compressor_pool[i].jobs_parent_cond = &list->jobs_parent_cond;
     list->compressor_pool[i].active_compressors = &list->active_compressors;
     list->compressor_pool[i].runnable = 0;
-    list->compressor_pool[i].jobs = list->compressor_jobs;
+    list->compressor_pool[i].victims = list->victims;
+    list->compressor_pool[i].victims_index = &list->victims_index;
+    list->compressor_pool[i].victims_compressor_index = &list->victims_compressor_index;
     pthread_create(&list->compressor_threads[i], NULL, (void*) &list__compressor_start, &list->compressor_pool[i]);
   }
-
 
   /* Debug */
   list->popping = 0;
@@ -533,8 +533,6 @@ uint32_t list__sweep(List *list, uint8_t sweep_goal) {
   clock_gettime(CLOCK_MONOTONIC, &start);
   int rv = E_OK;
   Buffer *victim = NULL;
-  Buffer *victims[POOL_BATCH_SIZE];
-  int victims_index = -1;
   generation_t current_generation = list->offload_to->youngest_generation;
   uint32_t bytes_freed = 0;
   uint32_t bytes_to_add = 0;
@@ -577,50 +575,45 @@ list->find_victim += BILLION * (e_find_victim.tv_sec - s_find_victim.tv_sec) + e
     list->offload_to->generations[current_generation][list->offload_to->generations_index[current_generation]] = victim;
     list->offload_to->generations_index[current_generation]++;
     // Track the pointer so we can batch compress later, then remove it from the raw list.
-    victims_index++;
-    victims[victims_index] = victim;
+    list->victims[list->victims_index] = victim;
+    list->victims_index++;
 clock_gettime(CLOCK_MONOTONIC, &s_remove);
     rv = list__remove(list, victim->id, false);
 clock_gettime(CLOCK_MONOTONIC, &e_remove);
 list->remove += BILLION * (e_remove.tv_sec - s_remove.tv_sec) + e_remove.tv_nsec - s_remove.tv_nsec;
     if (rv != E_OK)
       show_error(rv, "Failed to remove the selected victim while sweeping.  Not sure how.  Return code is %d", rv);
-    // Add the buffer_compress job to the compressor_pool so it can compress the orphaned Buffer in the background.
-
-clock_gettime(CLOCK_MONOTONIC, &s_compression);
-    list__compressor_add_job(list, victim);
-    //buffer__compress(victim);
-clock_gettime(CLOCK_MONOTONIC, &e_compression);
-list->compression += BILLION * (e_compression.tv_sec - s_compression.tv_sec) + e_compression.tv_nsec - s_compression.tv_nsec;
 
     // If the victim pool is full or we've found enough memory to free, flush everything and reset counters.
-    if(victims_index + 1 == POOL_BATCH_SIZE || BYTES_NEEDED <= bytes_freed) {
+    if(list->victims_index == VICTIM_BATCH_SIZE || BYTES_NEEDED <= bytes_freed) {
       // Grab the jobs lock and rely on our condition to tell us when compressor_jobs is empty.
 clock_gettime(CLOCK_MONOTONIC, &s_compression);
       pthread_mutex_lock(&list->jobs_lock);
-      while(list->active_compressors != 0 || list->compressor_jobs->next != list->compressor_jobs) {
+      while(list->active_compressors > 0 || list->victims_index > list->victims_compressor_index) {
         pthread_cond_broadcast(&list->jobs_cond);
         pthread_cond_wait(&list->jobs_parent_cond, &list->jobs_lock);
       }
       pthread_mutex_unlock(&list->jobs_lock);
 clock_gettime(CLOCK_MONOTONIC, &e_compression);
 list->compression += BILLION * (e_compression.tv_sec - s_compression.tv_sec) + e_compression.tv_nsec - s_compression.tv_nsec;
-      for(int i=0; i<=victims_index; i++)
-        bytes_to_add += victims[i]->comp_length + BUFFER_OVERHEAD;
+      for(int i=0; i<list->victims_index; i++)
+        bytes_to_add += list->victims[i]->comp_length + BUFFER_OVERHEAD;
 clock_gettime(CLOCK_MONOTONIC, &s_pop);
       while((list->offload_to->current_size + bytes_to_add) > list->offload_to->max_size)
         list__pop(list->offload_to, bytes_to_add);
 clock_gettime(CLOCK_MONOTONIC, &e_pop);
 list->popping += BILLION * (e_pop.tv_sec - s_pop.tv_sec) + e_pop.tv_nsec - s_pop.tv_nsec;
 clock_gettime(CLOCK_MONOTONIC, &s_add);
-      for(int i=0; i<=victims_index; i++) {
-        rv = list__add(list->offload_to, victims[i]);
+      for(int i=0; i<list->victims_index; i++) {
+        rv = list__add(list->offload_to, list->victims[i]);
         if (rv != E_OK)
           show_error(rv, "Failed to send buf to the offload_list while sweeping.  Not sure how.  Return code is %d.", rv);
+        list->victims[i] = NULL;
       }
 clock_gettime(CLOCK_MONOTONIC, &e_add);
 list->add += BILLION * (e_add.tv_sec - s_add.tv_sec) + e_add.tv_nsec - s_add.tv_nsec;
-      victims_index = -1;
+      list->victims_index = 0;
+      list->victims_compressor_index = 0;
       bytes_to_add = 0;
       // Check once again to see if we're done scanning.  This prevents double checking via while() with every loop iteration.
       if(BYTES_NEEDED <= bytes_freed)
@@ -771,7 +764,7 @@ int list__destroy(List *list) {
  */
 void list__compressor_start(Compressor *comp) {
   // Try to do work forever.  We need to start off assuming we're an active worker.  It self-regulates within the loop.
-  CompressorJob *work_me[COMPRESSOR_BATCH_SIZE];
+  Buffer *work_me[COMPRESSOR_BATCH_SIZE];
   int work_me_count = 0;
   int rv = E_OK;
   (*comp->active_compressors)++;
@@ -779,12 +772,12 @@ void list__compressor_start(Compressor *comp) {
   while(true) {
     // Secure the lock to test the predicate.  If there's no work to do, do some signaling and wait.
     pthread_mutex_lock(comp->jobs_lock);
-    if(comp->jobs->next == comp->jobs) {
+    if((*comp->victims_index) == (*comp->victims_compressor_index)) {
       // There's no work to do.  Remove our active pin, notify the parent if pin count is 0, and then wait to be woken up again.
       (*comp->active_compressors)--;
       if(*comp->active_compressors == 0)
         pthread_cond_broadcast(comp->jobs_parent_cond);
-      while(comp->jobs->next == comp->jobs && comp->runnable == 0)
+      while((*comp->victims_index) == (*comp->victims_compressor_index) && comp->runnable == 0)
         pthread_cond_wait(comp->jobs_cond, comp->jobs_lock);
       // Someone woke us up and we have work to do.  Increment active counter.
       (*comp->active_compressors)++;
@@ -800,38 +793,20 @@ void list__compressor_start(Compressor *comp) {
 
     // Yep, we have work to do!  Grab some items and release the lock so others can have it.
     work_me_count = 0;
-    while(work_me_count < COMPRESSOR_BATCH_SIZE && comp->jobs->next != comp->jobs) {
-      work_me[work_me_count] = comp->jobs->next;
-      comp->jobs->next = comp->jobs->next->next;
+    while(work_me_count < COMPRESSOR_BATCH_SIZE && (*comp->victims_index) > (*comp->victims_compressor_index)) {
+      work_me[work_me_count] = comp->victims[(*comp->victims_compressor_index)];
       work_me_count++;
+      (*comp->victims_compressor_index)++;
     }
     pthread_mutex_unlock(comp->jobs_lock);
     pthread_cond_broadcast(comp->jobs_cond);
     for(int i = 0; i < work_me_count; i++) {
       rv = E_OK;
-      rv = buffer__compress(work_me[i]->target);
+      rv = buffer__compress(work_me[i]);
       if(rv != E_OK)
-        show_error(rv, "Compressor job failed to compress a buffer.  RV was %d.  Buffer id was %u", rv, work_me[i]->target->id);
-      free(work_me[i]);
+        show_error(rv, "Compressor job failed to compress a buffer.  RV was %d.  Buffer id was %u", rv, work_me[i]->id);
       work_me[i] = NULL;
     }
   }
-  return;
-}
-
-
-/* list__compressor_add_job
- * Adds a buffer to the jobs list for a compressor to work on.
- */
-void list__compressor_add_job(List *list, Buffer *buf) {
-  // Grab the lock that all compressors share.  Add the buffer, then broadcast and unlock.
-//  pthread_mutex_lock(&list->jobs_lock);
-  CompressorJob *new_job = malloc(sizeof(CompressorJob));
-  new_job->target = buf;
-  new_job->next = list->compressor_jobs->next;
-  list->compressor_jobs->next = new_job;
-//  pthread_cond_broadcast(&list->jobs_cond);
-//  pthread_mutex_unlock(&list->jobs_lock);
-
   return;
 }
