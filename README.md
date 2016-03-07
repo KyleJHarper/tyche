@@ -15,7 +15,7 @@ Latest Changelog Entries
 
 *Second, I did the first round of profiling with valgrind and gprof.  There were several leaks in the io scanning which didn't surprise me.  Those and others were fixed.  Call analysis helped fixed list__sweep() and others.  SkiplistNodes aren't leaked, but they aren't tracked in BUFFER_OVERHEAD either... still torn on whether to append it.*
 
-*Finally, compression was so fast that parallizing it was tough.  The mere management of a list for a queue to process was adding significant overhead compared to the actual LZ4 compress operations.  Batching with an array and indexes solved this.  A more intense compressor would have actually made this easier and aided in the apparent parallelization (using more CPUs at once).*
+*Finally, compression was so fast that parallelizing it was tough.  The mere management of a list for a queue to process was adding significant overhead compared to the actual LZ4 compress operations.  Batching with an array and indexes solved this.  A more intense compressor would have actually made this easier and aided in the apparent parallelization (using more CPUs at once).*
 
 *Several tests were also updated to make them accurate and functional again.*
 
