@@ -8,6 +8,19 @@ This will be open-source (as will the ACCRS theory) and free but I am still goin
 ====
 Latest Changelog Entries
 
+**[2016-03-06]**
+*After significant effort there were 3 major accomplishments: list management improvements (mostly in sweeping), baseline profiling (valgrind, gprof, etc), and compression parallelization.*
+
+*First, I managed to get list management improvements made without adding excessive complexity.  The majority of the optimization was found in list__sweep() and list__restore().  Buffers are no longer copied; they are federated, processed, and reassigned.  Furthermore, operating in batches allowed for increased performance due to (I'm guessing here) better cache-locality in the CPU.  In a 5 minute test with a fixed ratio of 1% (virtually everything in the offload list) we went from 4,700 acquisitions/sec to 56,200 per sec.*
+
+*Second, I did the first round of profiling with valgrind and gprof.  There were several leaks in the io scanning which didn't surprise me.  Those and others were fixed.  Call analysis helped fixed list__sweep() and others.  SkiplistNodes aren't leaked, but they aren't tracked in BUFFER_OVERHEAD either... still torn on whether to append it.*
+
+*Finally, compression was so fast that parallizing it was tough.  The mere management of a list for a queue to process was adding significant overhead compared to the actual LZ4 compress operations.  Batching with an array and indexes solved this.  A more intense compressor would have actually made this easier and aided in the apparent parallelization (using more CPUs at once).*
+
+*Several tests were also updated to make them accurate and functional again.*
+
+*This marks version 0.0.8*
+
 **[2015-12-11]**
 *Tyche now does the job I originally wanted it to do... read buffers and use a compressed offload-list.  Hooray.*
 
@@ -60,29 +73,5 @@ Latest Changelog Entries
 <sub>Note: Transfer time is from platter to sector buffer and doesn't account for interface transfer time (e.g.: SATA speed/latency).  This can become more significant as storage fabrics come into play; e.g.: iSCSI, Fiber Channel, and so forth.</sub>
 
 *The above table is far from a perfect analysis, but that's what tyche is all about: real world testing when it's done.  So far, our total compression/decompression time is competitive with the fastest SSD on a local bus.  When we compare decompression time for respone time we're drastically faster than even the fastest SSD.  For now, I'm satisfied that the theory is still plausible.*
-
-**[2015-10-01]**
-*The buffer initialization now accepts a char pointer to use as the file-spec for reading from the disk.  IO cost is stored in the buffer as a result of this.  (Passing NULL allows you to skip this, and as a result IO time is still 0, obviously.)*
-
-
-**[2015-08-25]**
-*The new lock subsystem is in effect.  Concurrent read/write is working and our MPMC tests are good.  Performance is non-linear (scales with CPU) by means of reference counters protected by locks rather than blocking readers with the locks alone. The following table demonstrates this to an extent; but the short-lived nature of the readers in this test prevented better scaling (in other words, the time 'using' the buffer was so short we were spending a large percentage of time handling buffer locks and the list lock anyway.)*
-
-| CPUs |      Reads | Avg Time | Reads/sec | Reads/sec/CPU | Contention |
-| ---: | ---------: | -------: | --------: | ------------: | ---------- |
-|    1 | 25,000,000 |    43.73 |   571,648 |       571,648 | High(1)    |
-|    2 | 25,000,000 |    33.41 |   748,196 |       374,098 | High       |
-|    4 | 25,000,000 |    28.36 |   881,461 |       220,365 | High       |
-|   ^8 | 25,000,000 |    42.39 |   589,709 |        73,713 | High       |
-|    1 | 25,000,000 |    42.92 |   582,368 |       582,368 | Minimal(2) |
-|    2 | 25,000,000 |    24.89 | 1,004,238 |       502,118 | Minimal    |
-|    4 | 25,000,000 |    21.25 | 1,176,664 |       294,166 | Minimal    |
-|   ^8 | 25,000,000 |    30.41 |   822,052 |       102,756 | Minimal    |
-
-<sub>^ The test platform was a VM.  8 vCPU started running into pCPU scheduling overhead and did more harm than good.  Even 4 vCPU was starting to show signs of inefficiency.</sub>
-
-<sub>(1) High contention means I purposely created a high worker-to-buffer pool size.  In other words I made thousands of worker threads and they could only select from 100 buffers.  Draining the list this low also resulted in huge (99%+) cache "misses".  This helped demonstrate ref count improvements over global locking.</sub>
-
-<sub>(2) Minimal contention does the opposite of high.  Lots of buffers to choose from compared to workers, and hit rates closer to 95%+ successful.</sub>
 
 *(Additional logs found in changelog)*

@@ -4,6 +4,21 @@ Changelog for Tyche:  Reverse Chronological Order (obviously)
 (Reminder: There are lots of notes in the git commits.  `git log --pretty`)
 
 +--------------------------------------+
+| 2016-03-06                           |
++--------------------------------------+
+*After significant effort there were 3 major accomplishments: list management improvements (mostly in sweeping), baseline profiling (valgrind, gprof, etc), and compression parallelization.*
+
+*First, I managed to get list management improvements made without adding excessive complexity.  The majority of the optimization was found in list__sweep() and list__restore().  Buffers are no longer copied; they are federated, processed, and reassigned.  Furthermore, operating in batches allowed for increased performance due to (I'm guessing here) better cache-locality in the CPU.  In a 5 minute test with a fixed ratio of 1% (virtually everything in the offload list) we went from 4,700 acquisitions/sec to 56,200 per sec.*
+
+*Second, I did the first round of profiling with valgrind and gprof.  There were several leaks in the io scanning which didn't surprise me.  Those and others were fixed.  Call analysis helped fixed list__sweep() and others.  SkiplistNodes aren't leaked, but they aren't tracked in BUFFER_OVERHEAD either... still torn on whether to append it.*
+
+*Finally, compression was so fast that parallizing it was tough.  The mere management of a list for a queue to process was adding significant overhead compared to the actual LZ4 compress operations.  Batching with an array and indexes solved this.  A more intense compressor would have actually made this easier and aided in the apparent parallelization (using more CPUs at once).*
+
+*Several tests were also updated to make them accurate and functional again.*
+
+*This marks version 0.0.8*
+
++--------------------------------------+
 | 2015-12-08                           |
 +--------------------------------------+
 *Tyche now does the job I originally wanted it to do... read buffers and use a compressed offload-list.  Hooray.*

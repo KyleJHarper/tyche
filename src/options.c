@@ -56,6 +56,7 @@ void options__process(int argc, char **argv) {
   /* Resource Control */
   opts.max_memory = 10 * 1024 * 1024;
   opts.fixed_ratio = -1;
+  opts.disable_compression = 0;
   opts.workers = sysconf(_SC_NPROCESSORS_ONLN) > 0 ? (uint16_t)sysconf(_SC_NPROCESSORS_ONLN) : 1;
   opts.cpu_count = sysconf(_SC_NPROCESSORS_ONLN) > 0 ? (uint16_t)sysconf(_SC_NPROCESSORS_ONLN) : 1;
   /* Tyche Management */
@@ -70,10 +71,13 @@ void options__process(int argc, char **argv) {
   /* Process everything passed from CLI now. */
   int c = 0;
   opterr = 0;
-  while ((c = getopt(argc, argv, "b:d:f:hm:n:p:qr:t:w:X:")) != -1) {
+  while ((c = getopt(argc, argv, "b:Cd:f:hm:n:p:qr:t:w:X:")) != -1) {
     switch (c) {
       case 'b':
         opts.dataset_max = (uint64_t)atoll(optarg);
+        break;
+      case 'C':
+        opts.disable_compression = 1;
         break;
       case 'd':
         opts.duration = (uint16_t)atoi(optarg);
@@ -179,6 +183,9 @@ void options__process(int argc, char **argv) {
   // -- Page limit cannot be 0.
   if (opts.page_limit == 0)
     show_error(E_BAD_CLI, "The page limit (-n) is 0.  You either sent invalid input (atoi() failed), or you misunderstood the option; it limits the number of pages the scan functions will find before moving on with the test.");
+  // -- When compression is disabled, warn the user!
+  if (opts.disable_compression != 0)
+    fprintf(stderr, "WARNING!!  Compression is DISABLED (you sent -C).\n");
 
   return;
 }
@@ -197,6 +204,7 @@ void options__show_help() {
   fprintf(stderr, "\n");
   fprintf(stderr, "  Options:\n");
   fprintf(stderr, "    %2s   %-10s   %s", "-b", "<number>",  "Maximum number of bytes to use from the data pages.  Default: unlimited.\n");
+  fprintf(stderr, "    %2s   %-10s   %s", "-C", "",          "Disable compression steps (for testing list management speeds).\n");
   fprintf(stderr, "    %2s   %-10s   %s", "-d", "<number>",  "Duration to run tyche, in seconds (+/- 1 sec).  Default: 5 sec\n");
   fprintf(stderr, "    %2s   %-10s   %s", "-f", "1 - 100",   "Fixed ratio.  Percentage RAM guaranteed for the raw buffer list.  Default: disabled (-1)\n");
   fprintf(stderr, "    %2s   %-10s   %s", "-h", "",          "Show this help.\n");
@@ -208,6 +216,7 @@ void options__show_help() {
   fprintf(stderr, "    %2s   %-10s   %s", "-t", "test_name", "Run an internal test.  Specify 'help' to see available tests.  (For debugging).\n");
   fprintf(stderr, "    %2s   %-10s   %s", "-w", "<number>",  "Number of workers (threads) to use while testing.  Defaults to CPU count.\n");
   fprintf(stderr, "    %2s   %-10s   %s", "-X", "opt1,opt2", "Extended options for tests that require it.  Specify -X 'help' for information.\n");
+  fprintf(stderr, "(Note, capital options are usually for advanced testing use only.\n");
   fprintf(stderr, "\n");
 
   return;
