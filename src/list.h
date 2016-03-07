@@ -101,14 +101,6 @@ struct list {
   uint16_t active_compressors;                   /* The number of compressors currently doing work. */
   pthread_t *compressor_threads;                 /* A pool of threads for each compressor to run within. */
   Compressor *compressor_pool;                   /* A pool of workers for buffer compression when sweeping. */
-
-  /* Debug */
-  uint64_t popping;
-  uint64_t find_victim;
-  uint64_t add;
-  uint64_t remove;
-  uint64_t compression;
-  uint64_t pop_remove;
 };
 
 

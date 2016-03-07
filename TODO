@@ -14,8 +14,5 @@
      d) Why no linked list?  Because I wanted searching without maintaining a skip list.  (Is it even better?)
      e) Why C?  To *hopefully* avoid bias in higher level langages; though they might have optimizations.
      f) Why lz4?  Partly it's compression speed+efficiency, but mostly it's decompression speed.
-3. Optimizations & Profiling
-     q) Switch back to localized locking but respect levels for node to insert.  See if performance improves.
-     u) Make write locks more granular if possible.
-4. Niceness
+3. Niceness
      a) Update all the documentation in the source files.

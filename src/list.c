@@ -26,7 +26,6 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <pthread.h>
-#include <string.h>
 #include <assert.h>
 #include <inttypes.h>
 #include <stdbool.h>
@@ -157,14 +156,6 @@ List* list__initialize() {
     list->compressor_pool[i].victims_compressor_index = &list->victims_compressor_index;
     pthread_create(&list->compressor_threads[i], NULL, (void*) &list__compressor_start, &list->compressor_pool[i]);
   }
-
-  /* Debug */
-  list->popping = 0;
-  list->pop_remove = 0;
-  list->find_victim = 0;
-  list->add = 0;
-  list->remove = 0;
-  list->compression = 0;
 
   return list;
 }
@@ -529,7 +520,6 @@ uint32_t list__sweep(List *list, uint8_t sweep_goal) {
 
   // Variables and tracking data.
   struct timespec start, end;
-  struct timespec s_pop, e_pop, s_find_victim, e_find_victim, s_add, e_add, s_remove, e_remove, s_compression, e_compression;
   clock_gettime(CLOCK_MONOTONIC, &start);
   int rv = E_OK;
   Buffer *victim = NULL;
@@ -549,7 +539,6 @@ uint32_t list__sweep(List *list, uint8_t sweep_goal) {
   // Loop forever to free up memory.  Memory checks happen near the end of the loop.
   while(true) {
     // Scan until we find a buffer to remove.  Popularity is halved until a victim is found.  Skip head matches.
-clock_gettime(CLOCK_MONOTONIC, &s_find_victim);
     while(true) {
       list->clock_hand = list->clock_hand->next;
       if (list->clock_hand->popularity == 0 && list->clock_hand != list->head) {
@@ -558,8 +547,6 @@ clock_gettime(CLOCK_MONOTONIC, &s_find_victim);
       }
       list->clock_hand->popularity >>= 1;
     }
-clock_gettime(CLOCK_MONOTONIC, &e_find_victim);
-list->find_victim += BILLION * (e_find_victim.tv_sec - s_find_victim.tv_sec) + e_find_victim.tv_nsec - s_find_victim.tv_nsec;
     // We only reach this when an unpopular victim id is found.  Update space we'll free and offload count.
     bytes_freed += victim->data_length + BUFFER_OVERHEAD;
     list->offloads++;
@@ -577,41 +564,29 @@ list->find_victim += BILLION * (e_find_victim.tv_sec - s_find_victim.tv_sec) + e
     // Track the pointer so we can batch compress later, then remove it from the raw list.
     list->victims[list->victims_index] = victim;
     list->victims_index++;
-clock_gettime(CLOCK_MONOTONIC, &s_remove);
     rv = list__remove(list, victim->id, false);
-clock_gettime(CLOCK_MONOTONIC, &e_remove);
-list->remove += BILLION * (e_remove.tv_sec - s_remove.tv_sec) + e_remove.tv_nsec - s_remove.tv_nsec;
     if (rv != E_OK)
       show_error(rv, "Failed to remove the selected victim while sweeping.  Not sure how.  Return code is %d", rv);
 
     // If the victim pool is full or we've found enough memory to free, flush everything and reset counters.
     if(list->victims_index == VICTIM_BATCH_SIZE || BYTES_NEEDED <= bytes_freed) {
       // Grab the jobs lock and rely on our condition to tell us when compressor_jobs is empty.
-clock_gettime(CLOCK_MONOTONIC, &s_compression);
       pthread_mutex_lock(&list->jobs_lock);
       while(list->active_compressors > 0 || list->victims_index > list->victims_compressor_index) {
         pthread_cond_broadcast(&list->jobs_cond);
         pthread_cond_wait(&list->jobs_parent_cond, &list->jobs_lock);
       }
       pthread_mutex_unlock(&list->jobs_lock);
-clock_gettime(CLOCK_MONOTONIC, &e_compression);
-list->compression += BILLION * (e_compression.tv_sec - s_compression.tv_sec) + e_compression.tv_nsec - s_compression.tv_nsec;
       for(int i=0; i<list->victims_index; i++)
         bytes_to_add += list->victims[i]->comp_length + BUFFER_OVERHEAD;
-clock_gettime(CLOCK_MONOTONIC, &s_pop);
       while((list->offload_to->current_size + bytes_to_add) > list->offload_to->max_size)
         list__pop(list->offload_to, bytes_to_add);
-clock_gettime(CLOCK_MONOTONIC, &e_pop);
-list->popping += BILLION * (e_pop.tv_sec - s_pop.tv_sec) + e_pop.tv_nsec - s_pop.tv_nsec;
-clock_gettime(CLOCK_MONOTONIC, &s_add);
       for(int i=0; i<list->victims_index; i++) {
         rv = list__add(list->offload_to, list->victims[i]);
         if (rv != E_OK)
           show_error(rv, "Failed to send buf to the offload_list while sweeping.  Not sure how.  Return code is %d.", rv);
         list->victims[i] = NULL;
       }
-clock_gettime(CLOCK_MONOTONIC, &e_add);
-list->add += BILLION * (e_add.tv_sec - s_add.tv_sec) + e_add.tv_nsec - s_add.tv_nsec;
       list->victims_index = 0;
       list->victims_compressor_index = 0;
       bytes_to_add = 0;

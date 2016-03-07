@@ -119,12 +119,6 @@ int manager__start(Manager *mgr) {
   printf("Fixed Memory Ratio  : %"PRIi8"%% (%"PRIu64" bytes raw, %"PRIu64" bytes compressed)\n", opts.fixed_ratio, mgr->raw_list->max_size, mgr->comp_list->max_size);
   printf("Manager run time    : %.1f sec\n", 1.0 * mgr->run_duration / 1000);
   printf("Time sweeping       : %u sweeps, %'"PRIu64"\n", mgr->raw_list->sweeps, mgr->raw_list->sweep_cost);
-  printf("             Popping: %'"PRIu64"\n", mgr->raw_list->popping);
-  printf("      Popping remove: %'"PRIu64"\n", mgr->raw_list->pop_remove);
-  printf("         Find Victim: %'"PRIu64"\n", mgr->raw_list->find_victim);
-  printf("              Adding: %'"PRIu64"\n", mgr->raw_list->add);
-  printf("              Remove: %'"PRIu64"\n", mgr->raw_list->remove);
-  printf("         Compression: %'"PRIu64"\n", mgr->raw_list->compression);
   return E_OK;
 }
 
