@@ -14,5 +14,7 @@
      d) Why no linked list?  Because I wanted searching without maintaining a skip list.  (Is it even better?)
      e) Why C?  To *hopefully* avoid bias in higher level langages; though they might have optimizations.
      f) Why lz4?  Partly it's compression speed+efficiency, but mostly it's decompression speed.
-3. Niceness
+3. Niceness & Bug Fixes
      a) Update all the documentation in the source files.
+     b) When there isn't enough space in comp max_size for a single sweep, it hangs (100% cpu, not deadlock).
+     c) Very first sweep of a run can deadlock... why?
