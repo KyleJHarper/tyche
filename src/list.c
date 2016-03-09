@@ -484,7 +484,7 @@ int list__update_ref(List *list, int delta) {
   /* Lock the list and check pending writers.  If non-zero and we're incrementing, wait on the reader condition. */
   int i_had_to_wait = 0;
   pthread_mutex_lock(&list->lock);
-  if (delta > 0) {
+  if (delta > 0 && opts.workers > list->pending_writers) {
     while(list->pending_writers > 0) {
       i_had_to_wait = 1;
       pthread_cond_wait(&list->reader_condition, &list->lock);

@@ -20,9 +20,10 @@
      a) Why no size_t?  (Because I want to ensure minium sizes in almost all cases)
      b) Why so much uint/uintX_t?  Because I usually need to accommodate the given size and negative numbers don't exist.
      c) Why no <bla> optimization?  Probably because I'm new to C and didn't know about it.
-     d) Why no linked list?  Because I wanted searching without maintaining a skip list.  (Is it even better?)
      e) Why C?  To *hopefully* avoid bias in higher level langages; though they might have optimizations.
      f) Why lz4?  Partly it's compression speed+efficiency, but mostly it's decompression speed.
+     g) Your page replacement is sub-optimal compared to <some_other_strategy>!
+        Might be.  But it's fast enough to not be a bottleneck and prove the point I'm trying to make with compression.
 3. Niceness & Bug Fixes
      a) Update all the documentation in the source files.
      b) When there isn't enough space in comp max_size for a single sweep, it hangs (100% cpu, not deadlock).
