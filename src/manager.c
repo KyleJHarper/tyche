@@ -202,6 +202,8 @@ void manager__spawn_worker(Manager *mgr) {
     buffer__lock(buf);
     buffer__update_ref(buf, -1);
     buffer__unlock(buf);
+    if(buf->is_ephemeral)
+      buffer__destroy(buf);
     buf = NULL;
   }
 

@@ -8,6 +8,9 @@ This will be open-source (as will the ACCRS theory) and free but I am still goin
 ====
 Latest Changelog Entries
 
+**[2016-03-08]**
+*Released version 0.0.9 which added a threshold before list restoration is allowed for a victimized (compressed) buffer.  Lowers contention dramatically and helps provide a balance.  See VERSIONS.history for more.*
+
 **[2016-03-06]**
 *After significant effort there were 3 major accomplishments: list management improvements (mostly in sweeping), baseline profiling (valgrind, gprof, etc), and compression parallelization.*
 
