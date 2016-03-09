@@ -1,5 +1,12 @@
 Contains a simple note for each tagged release.  We will try to follow SEMVER.  Be aware, all 0.x.y releases are developmental and are NOT guaranteed compatible according to SEMVER.  Major version 0 should go away after major release 1... as will this notice probably.
 
+0.0.9 (2016-03-08)
+- Short release to address a theory I had about the fairness of restoration.  See points below.
+- Changed list__search to only call list__restore when a RESTORATION_THRESHOLD (32) is met.  This is a magic number just like popularity is, so it may need tuning later.  If the threshold isn't met, we simply make a copy of the buffer and set its is_ephemeral flag to true.
+- Changed list__restore to leave popularity alone.  Upon promotion to the raw list, it should come in with an accurate representation of the popularity it received while victimized (compressed).
+- Updated all tests to support is_ephemeral checks where necessary.
+- Re-ran valgrind to ensure no new leaks.  Still <1MB regardless of test duration.
+
 0.0.8 (2016-03-06)
 - Removed the locker_pool and all lock__* functions (the whole .h and .c files actually).  I like the idea for memory saving when buffers are smaller (1k or less) but the truth is, with regard to time-memory trade-offs, I can't justify the additional complexity.
 - Removed the -l option now that the lock subsystem is permanently 1:1.
