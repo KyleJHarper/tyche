@@ -47,6 +47,9 @@
 /* Limit generation size to help partition it and speed up victim selection. */
 const int MAX_BUFFERS_PER_GENERATION = 32;
 
+/* Set a threshold for when a compressed buffer is a reasonable candidate for restoration. */
+const int RESTORATION_THRESHOLD = 32;
+
 
 /* Extern the error codes we'll use. */
 extern const int E_OK;
@@ -444,25 +447,35 @@ int list__search(List *list, Buffer **buf, bufferid_t id) {
   if (rv == E_BUFFER_NOT_FOUND && list->offload_to != NULL) {
     rv = list__search(list->offload_to, buf, id);
     if (rv == E_OK) {
-      // Found it!  To avoid a race, release our pin, acquire the write lock, and then search again under its protection.
+      // Found it!  If it's popularity is high enough restore it, otherwise send back a copy.  Remove our buffer pin (we're safe via our list ref pin).
       buffer__lock(*buf);
       buffer__update_ref(*buf, -1);
       buffer__unlock(*buf);
-      list__acquire_write_lock(list);
-      rv = list__search(list->offload_to, buf, id);
-      if (rv == E_OK) {
-        // We won any race to restore the given buffer.  Release our pin (again), restore it, and release the write lock protecting us.
-        buffer__lock(*buf);
-        buffer__update_ref(*buf, -1);
-        buffer__unlock(*buf);
-        if (list__restore(list, *buf) != E_OK)
-          show_error(E_GENERIC, "Failed to list__restore a buffer.  This should never happen.");
-        list__release_write_lock(list);
+      if ((*buf)->popularity < RESTORATION_THRESHOLD) {
+        //Buffer *copy = (Buffer *)malloc(sizeof(Buffer));
+        Buffer *copy = buffer__initialize(0, NULL);
+        buffer__copy((*buf), copy);
+        copy->is_ephemeral = 1;
+        buffer__decompress(copy);
+        *buf = copy;
       } else {
-        // We lost a race to restore the buffer.  It should exist in the raw list now.  Release the write lock and start all over.
-        list__release_write_lock(list);
-        // Currently list should equate to ->offload_to->restore_to; but this behavior may change later, so be pedantic, even if circular.
-        rv = list__search(list->offload_to->restore_to, buf, id);
+        // This buffer warrants restoration.  To avoid a race, acquire the write lock and then search again under its protection.
+        list__acquire_write_lock(list);
+        rv = list__search(list->offload_to, buf, id);
+        if (rv == E_OK) {
+          // We won any race to restore the given buffer.  Release our pin (again), restore it, and release the write lock protecting us.
+          buffer__lock(*buf);
+          buffer__update_ref(*buf, -1);
+          buffer__unlock(*buf);
+          if (list__restore(list, *buf) != E_OK)
+            show_error(E_GENERIC, "Failed to list__restore a buffer.  This should never happen.");
+          list__release_write_lock(list);
+        } else {
+          // We lost a race to restore the buffer.  It should exist in the raw list now.  Release the write lock and start all over.
+          list__release_write_lock(list);
+          // Currently list should equate to ->offload_to->restore_to; but this behavior may change later, so be pedantic, even if circular.
+          rv = list__search(list->offload_to->restore_to, buf, id);
+        }
       }
     }
   }
@@ -675,7 +688,6 @@ int list__restore(List *list, Buffer *buf) {
     show_error(E_GENERIC, "The list__restore function was unable to decompress the new buffer.");
   buf->comp_hits++;
   buf->victimized = 0;
-  buf->popularity = 1;
   buf->ref_count = 1;
   list__add(list, buf);
 

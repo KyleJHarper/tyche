@@ -31,6 +31,7 @@ struct buffer {
   popularity_t popularity;        /* Rapidly decaying counter used for victim selection with clock sweep.  Ceiling of MAX_POPULARITY. */
   generation_t generation;        /* The generation a buffer exists in when it's been swept. */
   uint8_t victimized;             /* If the buffer has been victimized this is set non-zero.  Prevents incrementing of ref_count. */
+  uint8_t is_ephemeral;           /* Is this buffer part of a list, or an ephemeral copy the caller needs to remove? */
   pthread_mutex_t lock;           /* The primary locking element for individual buffer protection. */
   pthread_cond_t condition;       /* The conditional variable for use with the lock when we're blocked and need signaling. */
 

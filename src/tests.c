@@ -231,6 +231,8 @@ void tests__read(ReadWriteOpts *rwopts) {
       buffer__update_ref(selected, -1);
       buffer__unlock(selected);
     }
+    if (selected->is_ephemeral)
+      buffer__destroy(selected);
   }
   pthread_exit(0);
 }
@@ -528,6 +530,8 @@ void tests__move_buffers(List *raw_list, char **pages) {
   buffer__lock(test4_buf);
   buffer__update_ref(test4_buf, -1);
   buffer__unlock(test4_buf);
+  if(test4_buf->is_ephemeral)
+    buffer__destroy(test4_buf);
   int found_in_raw = 0;
   test4_current = raw_list->head;
   while(test4_current->next != raw_list->head) {

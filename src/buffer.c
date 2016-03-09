@@ -29,6 +29,7 @@ const Buffer BUFFER_INITIALIZER = {
   .popularity = 0,
   .generation = 0,
   .victimized = 0,
+  .is_ephemeral = 0,
   .lock = PTHREAD_MUTEX_INITIALIZER,
   .condition = PTHREAD_COND_INITIALIZER,
   /* Cost values for each buffer when pulled from disk or compressed/decompressed. */
@@ -106,7 +107,7 @@ Buffer* buffer__initialize(bufferid_t id, char *page_filespec) {
 int buffer__destroy(Buffer *buf) {
   if (buf == NULL)
     return E_OK;
-  if (buf->victimized == 0)
+  if (buf->victimized == 0 && buf->is_ephemeral == 0)
     show_error(E_GENERIC, "The buffer__destroy() function was called with a non-victimized buffer.  This isn't allowed.");
 
   /* Free the members which are pointers to other data locations. */
@@ -310,10 +311,12 @@ int buffer__copy(Buffer *src, Buffer *dst) {
     show_error(E_GENERIC, "The buffer__copy function was given a dst buffer pointer that was NULL.  This shouldn't happen.  Ever.");
 
   /* Attributes for typical buffer organization and management. */
-  dst->id         = src->id;
-  dst->ref_count  = src->ref_count;
-  dst->popularity = src->popularity;
-  dst->victimized = src->victimized;
+  dst->id           = src->id;
+  dst->ref_count    = src->ref_count;
+  dst->popularity   = src->popularity;
+  dst->generation   = src->generation;
+  dst->is_ephemeral = src->is_ephemeral;
+  dst->victimized   = src->victimized;
   // The lock and condition do not need to be linked.
 
   /* Cost values for each buffer when pulled from disk or compressed/decompressed. */
