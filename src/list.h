@@ -59,8 +59,10 @@ typedef struct list List;
 struct list {
   /* Size and Counter Members */
   uint32_t count;                                /* Number of buffers in the list. */
-  uint64_t current_size;                         /* Number of bytes currently allocated to the buffers in this list. */
-  uint64_t max_size;                             /* Maximum number of bytes this buffer is allowed to hold, ever. */
+  uint64_t current_raw_size;                     /* Number of bytes currently allocated to the raw buffers in this list. */
+  uint64_t max_raw_size;                         /* Maximum number of bytes the raw list is allowed to hold, ever. */
+  uint64_t current_comp_size;                    /* Number of bytes currently allocated to the comp buffers in this list. */
+  uint64_t max_comp_size;                        /* Maximum number of bytes the comp list is allowed to hold, ever. */
 
   /* Locking, Reference Counters, and Similar Members */
   pthread_mutex_t lock;                          /* For operations requiring exclusive locking of the list (writing to it). */
@@ -68,16 +70,14 @@ struct list {
   uint8_t lock_depth;                            /* The depth of functions which have locked us, to ensure deeper calls don't release locks. */
   pthread_cond_t writer_condition;               /* The condition variable for writers to wait for when attempting to drain a list of refs. */
   pthread_cond_t reader_condition;               /* The condition variable for readers to wait for when attempting to increment ref count. */
+  pthread_cond_t sweeper_condition;              /* The conditino variable for sweeping signals. */
   uint32_t ref_count;                            /* Number of threads pinning this list (searching it) */
   uint8_t pending_writers;                       /* Value to indicate how many writers are waiting to edit the list. */
 
   /* Management and Administration Members */
-  List *offload_to;                              /* The target list to offload buffers to.  Currently raw -> comp and comp -> free() */
-  List *restore_to;                              /* The target list to restore buffers to.  Currently, comp -> raw. */
   uint8_t sweep_goal;                            /* Minimum percentage of memory we want to free up whenever we sweep, relative to current_size. */
   uint32_t sweeps;                               /* Number of times the list has been swept. */
   uint64_t sweep_cost;                           /* Time in ns spent sweeping lists. */
-  uint32_t offloads;                             /* Number of buffers removed from the list (offloaded from raw, popped from compressed). */
   uint32_t restorations;                         /* Number of buffers restored to the raw list (compressed list doesn't use this). */
 
   /* Management of Nodes for Skiplist and Buffers */
@@ -85,16 +85,13 @@ struct list {
   Buffer *clock_hand;                            /* The current Buffer to be checked when sweeping is invoked. */
   SkiplistNode *indexes[SKIPLIST_MAX];           /* List of the heads of the bottom-most (least-granular) Skiplists. */
   uint8_t levels;                                /* The current height of the skip list thus far. */
-  generation_t youngest_generation;              /* The tag to assign to the youngest generation for compressed buffer generation management. */
-  generation_t oldest_generation;                /* The oldest-known generation for list__pop()-ing.  Always "chasing" youngest_generation. */
-  Buffer ***generations;                         /* An array of the available generations to pop. */
-  uint32_t generations_index[MAX_GENERATION+1];  /* The highest assignable index.  This index minus 1 is always latest in-use. */
-  uint32_t generations_index_ceiling;            /* The current ceiling for generation indexes. */
 
   /* Compressor Pool Management */
   pthread_mutex_t jobs_lock;                     /* The mutex that all jobs need to respect. */
   pthread_cond_t jobs_cond;                      /* The shared condition variable for compressors to respect. */
   pthread_cond_t jobs_parent_cond;               /* The parent condition to signal when the job queue is empty and active compressors is 0. */
+  Buffer *comp_victims[VICTIM_BATCH_SIZE];       /* An array of available compressed buffers to remove if comp_size is too high after a sweep. */
+  uint8_t comp_victims_index;                    /* The index for the next-available comp buffer to be stored in comp_victims[]. */
   Buffer *victims[VICTIM_BATCH_SIZE];            /* Items which are victimized and ready for compression. */
   uint16_t victims_index;                        /* The tracking index for the next-available victims[] insertion point. */
   uint16_t victims_compressor_index;             /* The index for the next-available buffer to be compressed by a compressor. */
@@ -114,8 +111,6 @@ int list__search(List *list, Buffer **buf, bufferid_t id);
 int list__acquire_write_lock(List *list);
 int list__release_write_lock(List *list);
 uint32_t list__sweep(List *list, uint8_t sweep_goal);
-int list__pop(List *list, uint64_t bytes_needed);
-int list__restore(List *list, Buffer *buf);
 int list__balance(List *list, uint32_t ratio);
 int list__destroy(List *list);
 void list__compressor_start(Compressor *comp);

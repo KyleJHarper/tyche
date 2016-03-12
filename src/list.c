@@ -44,9 +44,6 @@
 #define BILLION 1000000000L
 #define MILLION    1000000L
 
-/* Limit generation size to help partition it and speed up victim selection. */
-const int MAX_BUFFERS_PER_GENERATION = 32;
-
 /* Set a threshold for when a compressed buffer is a reasonable candidate for restoration. */
 const int RESTORATION_THRESHOLD = 32;
 
@@ -77,8 +74,10 @@ List* list__initialize() {
 
   /* Size and Counter Members */
   list->count = 0;
-  list->current_size = 0;
-  list->max_size = 0;
+  list->current_raw_size = 0;
+  list->max_raw_size = 0;
+  list->current_comp_size = 0;
+  list->max_comp_size = 0;
 
   /* Locking, Reference Counters, and Similar Members */
   if (pthread_mutex_init(&list->lock, NULL) != 0)
@@ -89,16 +88,15 @@ List* list__initialize() {
     show_error(E_GENERIC, "Failed to initialize writer condition for a list.  This is fatal.");
   if (pthread_cond_init(&list->reader_condition, NULL) != 0)
     show_error(E_GENERIC, "Failed to initialize reader condition for a list.  This is fatal.");
+  if (pthread_cond_init(&list->sweeper_condition, NULL) != 0)
+    show_error(E_GENERIC, "Failed to initialized sweeper condition for a list.  This is fatal.");
   list->ref_count = 0;
   list->pending_writers = 0;
 
   /* Management and Administration Members */
-  list->offload_to = NULL;
-  list->restore_to = NULL;
   list->sweep_goal = 5;
   list->sweeps = 0;
   list->sweep_cost = 0;
-  list->offloads = 0;
   list->restorations = 0;
 
   /* Head Nodes of the List and Skiplist (Index). Make the Buffer list head a dummy buffer. */
@@ -106,16 +104,6 @@ List* list__initialize() {
   list->head->next = list->head;
   list->clock_hand = list->head;
   list->levels = 1;
-  list->youngest_generation = 0;
-  list->oldest_generation = 0;
-  list->generations_index_ceiling = 10000;
-  list->generations = malloc((MAX_POPULARITY+1) * sizeof(Buffer *));
-  if(list->generations == NULL)
-    show_error(E_GENERIC, "Failed to allocate memory for the generations double pointer.");
-  for(int i=0; i<=MAX_GENERATION; i++) {
-    list->generations_index[i] = 0;
-    list->generations[i] = calloc(list->generations_index_ceiling, sizeof(Buffer *));
-  }
   SkiplistNode *slnode = NULL;
   for(int i=0; i<SKIPLIST_MAX; i++) {
     slnode = (SkiplistNode *)malloc(sizeof(SkiplistNode));
@@ -140,6 +128,9 @@ List* list__initialize() {
   list->compressor_threads = calloc(opts.cpu_count, sizeof(pthread_t));
   if(list->compressor_threads == NULL)
     show_error(E_GENERIC, "Failed to allocate memory for the compressor_threads");
+  for(int i=0; i<VICTIM_BATCH_SIZE; i++)
+    list->comp_victims[i] = NULL;
+  list->comp_victims_index = 0;
   for(int i=0; i<VICTIM_BATCH_SIZE; i++)
     list->victims[i] = NULL;
   list->victims_index = 0;
@@ -236,41 +227,59 @@ int list__release_write_lock(List *list) {
  * to be sort-ordered.  We will also fail safely if the buffer already exists because we don't want duplicates.
  */
 int list__add(List *list, Buffer *buf) {
-  /* Get a write lock. */
-  list__acquire_write_lock(list);
-  int rv = E_OK;
+  /* Add a read pin to prevent a writer from removing anything from underneath us. */
+  list__update_ref(list, 1);
 
-  /* Make sure we have room to add a new buffer before we proceed. */
-  const uint32_t BUFFER_SIZE = BUFFER_OVERHEAD + (buf->comp_length == 0 ? buf->data_length : buf->comp_length);
-  if (list->max_size < list->current_size + BUFFER_SIZE) {
-    /* Determine the minimum sweep goal we need, then use the larger of the two. */
-    const uint8_t MINIMUM_SWEEP_GOAL = (100 * (list->current_size + BUFFER_SIZE) / list->current_size) - 99;
-    if (MINIMUM_SWEEP_GOAL > 99)
-      show_error(E_GENERIC, "When trying to add a buffer, sweep goal was incremented to 100+ which would eliminate the entire list.  This is, I believe, a condition that should never happen.");
-    /* Sweeping uses the write lock and checks the predicate again.  So we're safe to call it unlocked. */
-    list__sweep(list, MINIMUM_SWEEP_GOAL > list->sweep_goal ? MINIMUM_SWEEP_GOAL : list->sweep_goal);
+  /* Initialize a few basic values. */
+  int rv = E_OK;
+  int i_had_to_wait = 0;
+
+  /* Grab the list lock so we can handle sweeping processes and signaling correctly. */
+  while(list->current_raw_size > list->max_raw_size) {
+    i_had_to_wait = 1;
+    pthread_cond_broadcast(&list->sweeper_condition);
+    pthread_cond_wait(&list->reader_condition, &list->lock);
   }
+  if(i_had_to_wait == 1)
+    pthread_cond_broadcast(&list->reader_condition);
+  pthread_mutex_unlock(&list->lock);
 
   // Decide how many levels we're willing to set the node upon.
   int levels = 0;
   while((levels < SKIPLIST_MAX) && (levels < list->levels) && (rand() % 2 == 0))
     levels++;
-  if(levels == list->levels)
-    list->levels++;
 
-  // Build a local stack based on the main list->indexes[] to build breadcrumbs.
+  // Build a local stack based on the main list->indexes[] to build breadcrumbs.  Lock each buffer as we descend the skiplist tree.
+  // until we have the whole chain.  Since scanning always down-and-forward we're safe.
   SkiplistNode *slstack[SKIPLIST_MAX];
+  Buffer *locked_buffers[SKIPLIST_MAX];
+  bufferid_t last_lock_id = BUFFER_ID_MAX;
+  int locked_ids_index = -1;
   for(int i = 0; i < SKIPLIST_MAX; i++)
     slstack[i] = list->indexes[i];
+
   // Traverse the list to find the ideal location at each level.  Since we're searching, use list->levels as the start height.
-  for(int i = list->levels-1; i >= 0; i--) {
-    // Try shifting right until the ->right member is NULL or its value is too high.
-    while(slstack[i]->right != NULL && slstack[i]->right->target->id <= buf->id)
-      slstack[i] = slstack[i]->right;
-    // If this node's ->target is the lists's head, we never left the index's head.  Just continue to the next level.
-    if(slstack[i]->target == list->head)
-      continue;
-    // If the buffer already exists, flag it with rv and leave.
+  for(int i = list->levels; i >= 0; i--) {
+    for(;;) {
+      // Scan forward until we are as close as we can get.
+      while(slstack[i]->right != NULL && slstack[i]->right->target->id <= buf->id)
+        slstack[i] = slstack[i]->right;
+      // Lock the buffer pointed to (if we haven't already) to effectively lock this SkiplistNode so we can test it.
+      if(slstack[i]->target->id != last_lock_id)
+        buffer__lock(slstack[i]->target);
+      // If right is NULL or the ->right member is still bigger, we're as far over as we can go and should have a lock.
+      if(slstack[i]->right == NULL || slstack[i]->right->target->id > buf->id) {
+        if(slstack[i]->target->id != last_lock_id) {
+          last_lock_id = slstack[i]->target->id;
+          locked_ids_index++;
+          locked_buffers[locked_ids_index] = slstack[i]->target;
+        }
+        break;
+      }
+      // Otherwise, someone inserted while we acquired this lock.  Release and try moving forward again.
+      buffer__unlock(slstack[i]->target);
+    }
+    // If the buffer already exists, flag it with rv.  We'll release any locks we acquired before we leave.
     if(slstack[i]->target->id == buf->id) {
       rv = E_BUFFER_ALREADY_EXISTS;
       break;
@@ -291,8 +300,6 @@ int list__add(List *list, Buffer *buf) {
     } else {
       buf->next = nearest_neighbor->next;
       nearest_neighbor->next = buf;
-      list->current_size += BUFFER_SIZE;
-      list->count++;
     }
   }
 
@@ -310,8 +317,21 @@ int list__add(List *list, Buffer *buf) {
       slstack[i]->right->down = slstack[i-1]->right;
   }
 
-  /* Let go of the write lock we acquired. */
-  list__release_write_lock(list);
+  // Unlock any buffers we locked along the way.  Then remove our reference pin from the list.
+  for(int i = locked_ids_index; i >= 0; i--)
+    buffer__unlock(locked_buffers[i]);
+  list__update_ref(list, -1);
+
+  // If everything worked, grab the list lock whenever it's available and increment counters.
+  if (rv == E_OK) {
+    pthread_mutex_lock(&list->lock);
+    if(levels == list->levels)
+      list->levels++;
+    list->count++;
+    list->current_raw_size += buf->data_length;
+    pthread_mutex_unlock(&list->lock);
+  }
+
   return rv;
 }
 
@@ -361,7 +381,10 @@ int list__remove(List *list, bufferid_t id, bool destroy) {
     if(list->clock_hand == buf)
       list->clock_hand = list->clock_hand->next;
     list->count--;
-    list->current_size -= BUFFER_SIZE;
+    if(buf->comp_length == 0)
+      list->current_raw_size -= BUFFER_SIZE;
+    else
+      list->current_comp_size -= BUFFER_SIZE;
     // Now change our ->next pointer for nearest_neighbor to drop this from the list, then destroy buf.
     nearest_neighbor->next = buf->next;
     if(destroy)
@@ -431,6 +454,7 @@ int list__search(List *list, Buffer **buf, bufferid_t id) {
     if(nearest_neighbor->id == id) {
       rv = buffer__lock(nearest_neighbor);
       if(rv == E_OK) {
+        // Assign it.
         *buf = nearest_neighbor;
         buffer__update_ref(*buf, 1);
       }
@@ -440,46 +464,28 @@ int list__search(List *list, Buffer **buf, bufferid_t id) {
     }
   }
 
-  /* Regardless of whether we found it we need to remove our pin on the list's ref count because we're done searching it. */
-  list__update_ref(list, -1);
-
-  /* If we were unable to find the buffer, see if an offload_to list exists for us to search. */
-  if (rv == E_BUFFER_NOT_FOUND && list->offload_to != NULL) {
-    rv = list__search(list->offload_to, buf, id);
-    if (rv == E_OK) {
-      // Found it!  If it's popularity is high enough restore it, otherwise send back a copy.  Remove our buffer pin (we're safe via our list ref pin).
-      buffer__lock(*buf);
-      buffer__update_ref(*buf, -1);
-      buffer__unlock(*buf);
-      if ((*buf)->popularity < RESTORATION_THRESHOLD) {
-        //Buffer *copy = (Buffer *)malloc(sizeof(Buffer));
-        Buffer *copy = buffer__initialize(0, NULL);
-        buffer__copy((*buf), copy);
-        copy->is_ephemeral = 1;
-        buffer__decompress(copy);
-        *buf = copy;
-      } else {
-        // This buffer warrants restoration.  To avoid a race, acquire the write lock and then search again under its protection.
-        list__acquire_write_lock(list);
-        rv = list__search(list->offload_to, buf, id);
-        if (rv == E_OK) {
-          // We won any race to restore the given buffer.  Release our pin (again), restore it, and release the write lock protecting us.
-          buffer__lock(*buf);
-          buffer__update_ref(*buf, -1);
-          buffer__unlock(*buf);
-          if (list__restore(list, *buf) != E_OK)
-            show_error(E_GENERIC, "Failed to list__restore a buffer.  This should never happen.");
-          list__release_write_lock(list);
-        } else {
-          // We lost a race to restore the buffer.  It should exist in the raw list now.  Release the write lock and start all over.
-          list__release_write_lock(list);
-          // Currently list should equate to ->offload_to->restore_to; but this behavior may change later, so be pedantic, even if circular.
-          rv = list__search(list->offload_to->restore_to, buf, id);
-        }
-      }
-    }
+  /* If the buffer was found and is compressed, we need to send a decompressed copy or perform a restoration on it. */
+  if(rv == E_OK && (*buf)->popularity < RESTORATION_THRESHOLD) {
+    // Simply send back a copy.
+    Buffer *copy = buffer__initialize(0, NULL);
+    buffer__copy((*buf), copy);
+    // The original buffer needs to be released since we're sending back a copy.
+    buffer__lock(*buf);
+    buffer__update_ref(*buf, -1);
+    copy->is_ephemeral = 1;
+    if(buffer__decompress(copy) != E_OK)
+      show_error(E_GENERIC, "A buffer received a non-OK return code when being decompressed.");
+    *buf = copy;
+  } else {
+    // This buffer warrants full restoration to the raw list.  Hooray for it!  Block for protection.
+    buffer__block(*buf);
+    if (buffer__decompress(*buf) != E_OK)
+      show_error(E_GENERIC, "A buffer that deserved restoration failed to decompress properly.");
+    buffer__unblock(*buf);
   }
 
+  /* Regardless of whether we found it we need to remove our pin on the list's ref count because we're done searching it. */
+  list__update_ref(list, -1);
   return rv;
 }
 
@@ -526,28 +532,14 @@ int list__update_ref(List *list, int delta) {
  * current size should always be high enough to avoid errors because sweeping shouldn't be called until we're low on memory.
  */
 uint32_t list__sweep(List *list, uint8_t sweep_goal) {
-  // Acquire a list lock just to ensure we're operating safely.
-  list__acquire_write_lock(list);
-  if (list->offload_to == NULL)
-    show_error(E_GENERIC, "The list__sweep() function was given a list that doesn't have an offload_to target.  This is definitely a problem.");
-
   // Variables and tracking data.
   struct timespec start, end;
   clock_gettime(CLOCK_MONOTONIC, &start);
   int rv = E_OK;
   Buffer *victim = NULL;
-  generation_t current_generation = list->offload_to->youngest_generation;
   uint32_t bytes_freed = 0;
-  uint32_t bytes_to_add = 0;
-  const uint32_t BYTES_NEEDED = list->current_size * sweep_goal / 100;
-
-  // Check for a race condition.
-  if ((list->current_size < list->max_size) && BYTES_NEEDED < (list->max_size - list->current_size)) {
-    // Someone already did a sweep and freed up plenty of room.  Don't re-sweep in a race.
-    list__release_write_lock(list);
-    return rv;
-  }
-  list->sweeps++;
+  uint32_t comp_bytes_added = 0;
+  const uint32_t BYTES_NEEDED = list->current_raw_size * sweep_goal / 100;
 
   // Loop forever to free up memory.  Memory checks happen near the end of the loop.
   while(true) {
@@ -555,31 +547,24 @@ uint32_t list__sweep(List *list, uint8_t sweep_goal) {
     while(true) {
       list->clock_hand = list->clock_hand->next;
       if (list->clock_hand->popularity == 0 && list->clock_hand != list->head) {
+        // If it's compressed, just update the comp_victims array (if possible) and continue.
+        if (list->clock_hand->comp_length > 0) {
+          if(list->comp_victims_index < VICTIM_BATCH_SIZE) {
+            list->comp_victims[list->comp_victims_index] = list->clock_hand;
+            list->comp_victims_index++;
+          }
+          continue;
+        }
+        // We found a raw buffer victim, yay.
         victim = list->clock_hand;
         break;
       }
       list->clock_hand->popularity >>= 1;
     }
-    // We only reach this when an unpopular victim id is found.  Update space we'll free and offload count.
-    bytes_freed += victim->data_length + BUFFER_OVERHEAD;
-    list->offloads++;
-    // Assign the current generation and push on the generations_index stack.
-    victim->generation = current_generation;
-    if(list->offload_to->generations_index[current_generation] == list->offload_to->generations_index_ceiling) {
-      for(int i=0; i<=MAX_GENERATION; i++) {
-        *(list->offload_to->generations + i) = realloc(*(list->offload_to->generations + i), list->offload_to->generations_index_ceiling * 2 * sizeof(Buffer *));
-        show_error(E_GENERIC, "Failed to recalloc memory to expand the generation index %"PRIu32" from %"PRIu32" to %"PRIu32".", i, list->offload_to->generations_index[i], list->offload_to->generations_index[i] * 2);
-      }
-      list->offload_to->generations_index_ceiling *= 2;
-    }
-    list->offload_to->generations[current_generation][list->offload_to->generations_index[current_generation]] = victim;
-    list->offload_to->generations_index[current_generation]++;
-    // Track the pointer so we can batch compress later, then remove it from the raw list.
+    // We only reach this when an unpopular raw victim id is found.  Update space we'll free and start tracking victim.
+    bytes_freed += victim->data_length;
     list->victims[list->victims_index] = victim;
     list->victims_index++;
-    rv = list__remove(list, victim->id, false);
-    if (rv != E_OK)
-      show_error(rv, "Failed to remove the selected victim while sweeping.  Not sure how.  Return code is %d", rv);
 
     // If the victim pool is full or we've found enough memory to free, flush everything and reset counters.
     if(list->victims_index == VICTIM_BATCH_SIZE || BYTES_NEEDED <= bytes_freed) {
@@ -591,110 +576,42 @@ uint32_t list__sweep(List *list, uint8_t sweep_goal) {
       }
       pthread_mutex_unlock(&list->jobs_lock);
       for(int i=0; i<list->victims_index; i++)
-        bytes_to_add += list->victims[i]->comp_length + BUFFER_OVERHEAD;
-      while((list->offload_to->current_size + bytes_to_add) > list->offload_to->max_size)
-        list__pop(list->offload_to, bytes_to_add);
-      for(int i=0; i<list->victims_index; i++) {
-        rv = list__add(list->offload_to, list->victims[i]);
-        if (rv != E_OK)
-          show_error(rv, "Failed to send buf to the offload_list while sweeping.  Not sure how.  Return code is %d.", rv);
+        comp_bytes_added += list->victims[i]->comp_length;
+      for(int i=0; i<list->victims_index; i++)
         list->victims[i] = NULL;
-      }
       list->victims_index = 0;
       list->victims_compressor_index = 0;
-      bytes_to_add = 0;
-      // Check once again to see if we're done scanning.  This prevents double checking via while() with every loop iteration.
+      // Check to see if we're done scanning.  This prevents double checking via while() with every loop iteration.
       if(BYTES_NEEDED <= bytes_freed)
         break;
     }
   }
 
+  // We freed up enough raw space.  If comp space is too large start freeing up space.
+  list__acquire_write_lock(list);
+  if(list->current_comp_size > list->max_comp_size) {
+    for(int i=0; i<list->comp_victims_index && list->current_comp_size > list->max_comp_size; i++) {
+      list__remove(list, list->comp_victims[i]->id);
+      list->comp_victims[i] = NULL;
+    }
+    list->comp_victims_index = 0;
+    // If we still haven't freed enough comp space, start clockhand motion again and take more comp victims.
+    while(list->current_comp_size > list->max_comp_size) {
+      while(true) {
+        list->clock_hand = list->clock_hand->next;
+        if (list->clock_hand->popularity == 0 && list->clock_hand != list->head && list->clock_hand->comp_length != 0)
+            list__remove(list, list->clock_hand->id);
+        list->clock_hand->popularity >>= 1;
+      }
+    }
+  }
   // Wrap up and leave.
   clock_gettime(CLOCK_MONOTONIC, &end);
+  list->sweeps++;
   list->sweep_cost += BILLION * (end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec;
-  list->offload_to->youngest_generation = list->offload_to->youngest_generation == MAX_GENERATION ? 0 : list->offload_to->youngest_generation + 1;
   list__release_write_lock(list);
+
   return bytes_freed;
-}
-
-
-/* list__pop
- * A wrapper to scan for the least popular buffer(s) in a compressed list and have it/them removed until bytes_needed is satisfied.
- */
-int list__pop(List *list, uint64_t bytes_needed) {
-  // Quick error checking.  Then grab a lock.
-  if (list == NULL)
-    show_error(E_GENERIC, "The list__pop function was given a null list.  This is fatal.");
-  list__acquire_write_lock(list);
-
-  // Loop until we've freed up enough memory.
-  while(true) {
-    // Loop through and remove buffers until we've freed up enough space or this generation is all gone.
-    while(list->generations_index[list->oldest_generation] > 0 && bytes_needed > (list->max_size - list->current_size)) {
-      list->generations_index[list->oldest_generation]--;
-      list__remove(list, list->generations[list->oldest_generation][list->generations_index[list->oldest_generation]]->id, true);
-      list->offloads++;
-    }
-    // If this generation is depleted, increment oldest_generation and continue scanning from the top.
-    if(list->generations_index[list->oldest_generation] == 0) {
-      list->oldest_generation = list->oldest_generation == MAX_GENERATION ? 0 : list->oldest_generation + 1;
-      continue;
-    }
-    // If we reached this point we freed enough memory; otherwise we'd have jumped back to the top by now.
-    break;
-  }
-
-  // Release lock and leave.
-  list__release_write_lock(list);
-  return E_OK;
-}
-
-
-/* list__restore
- * Takes the buffer specified and adds it back to the list specified after decompressing the data member and updating all of the
- * tracking data.
- */
-int list__restore(List *list, Buffer *buf) {
-  // Make sure we have a list, an offload_to, and a valid buffer.
-  if (list == NULL)
-    show_error(E_GENERIC, "The list__restore function was given a NULL list.  This should never happen.");
-  if (list->offload_to == NULL)
-    show_error(E_GENERIC, "The list__restore function was given a list without an offload_to target list.  This should never happen.");
-  if (buf == NULL)
-    show_error(E_GENERIC, "The list__restore function was given an invalid buffer.  This should never happen.");
-
-  // Lock the raw list.  Offload list doesn't need it.
-  list__acquire_write_lock(list);
-
-  // Remove the buffer from the offload list without actually destroying it.
-  list__remove(list->offload_to, buf->id, false);
-
-  // Pop it from the generations array.
-  generation_t my_generation = buf->generation;
-  for(int i=0; i<list->offload_to->generations_index[my_generation]; i++) {
-    if(list->offload_to->generations[my_generation][i] == buf) {
-      // Found it.  Swap the last position with it, decrement index, and leave.
-      list->offload_to->generations[my_generation][i] = list->offload_to->generations[my_generation][list->offload_to->generations_index[my_generation]-1];
-      list->offload_to->generations_index[my_generation]--;
-      break;
-    }
-    // If we hit the end and didn't break out, we screwed up.
-    if(i == list->offload_to->generations_index[my_generation] - 1)
-      show_error(E_GENERIC, "Trying to restore buffer %u with generation %u but couldn't find it in the generations list.  This should never happen.", buf->id, buf->generation);
-  }
-
-  // Now decompress the orphaned buffer, update its metrics, and add it to the list.
-  if (buffer__decompress(buf) != E_OK)
-    show_error(E_GENERIC, "The list__restore function was unable to decompress the new buffer.");
-  buf->comp_hits++;
-  buf->victimized = 0;
-  buf->ref_count = 1;
-  list__add(list, buf);
-
-  // Update restorations and release the write lock.
-  list->restorations++;
-  list__release_write_lock(list);
-  return E_OK;
 }
 
 
@@ -804,7 +721,9 @@ void list__compressor_start(Compressor *comp) {
     pthread_cond_broadcast(comp->jobs_cond);
     for(int i = 0; i < work_me_count; i++) {
       rv = E_OK;
+      buffer__block(work_me[i]);
       rv = buffer__compress(work_me[i]);
+      buffer__unblock(work_me[i]);
       if(rv != E_OK)
         show_error(rv, "Compressor job failed to compress a buffer.  RV was %d.  Buffer id was %u", rv, work_me[i]->id);
       work_me[i] = NULL;

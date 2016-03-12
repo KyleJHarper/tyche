@@ -27,7 +27,6 @@ const Buffer BUFFER_INITIALIZER = {
   .id = 0,
   .ref_count = 0,
   .popularity = 0,
-  .generation = 0,
   .victimized = 0,
   .is_ephemeral = 0,
   .lock = PTHREAD_MUTEX_INITIALIZER,
@@ -147,11 +146,18 @@ void buffer__unlock(Buffer *buf) {
  *   -1) Anyone is safe to remove their own ref because victimization blocks, preventing *poofing*.
  */
 int buffer__update_ref(Buffer *buf, int delta) {
+  // Check to see if the buffer is victimized, if so we can't add new pins.
   if (delta > 0 && buf->victimized > 0)
     return E_BUFFER_IS_VICTIMIZED;
 
-  // At this point we're safe to modify the ref_count.  When decrementing, check to see if we need to broadcast.
+  // Check to see if new refs are supposed to be blocked.  If so, wait.
+  while (delta > 0 && buf->is_blocked > 0)
+    pthread_cond_wait(&buf->condition, &buf->lock);
+
+  // At this point we're safe to modify the ref_count.  When decrementing, check to see if we need to broadcast to anyone.
   buf->ref_count += delta;
+  if (buf->is_blocked != 0 && buf->ref_count == 0)
+    pthread_cond_broadcast(&buf->condition);
   if (buf->victimized != 0 && buf->ref_count == 0)
     pthread_cond_broadcast(&buf->condition);
 
@@ -175,8 +181,39 @@ int buffer__victimize(Buffer *buf) {
   if (rv > 0 && rv != E_BUFFER_IS_VICTIMIZED)
     return rv;
   buf->victimized = 1;
-  while(buf->ref_count != 0)
+  while(buf->ref_count != 0) {
+    pthread_cond_broadcast(&buf->condition);
     pthread_cond_wait(&buf->condition, &buf->lock);
+  }
+  return E_OK;
+}
+
+
+/* buffer__block
+ * Similar to buffer__victimize().  The main difference is this will simply block the caller until ref_count hits 0, upon which
+ * it will continue on while holding the lock to prevent others from doing anything else.  See buffer__update_ref() for how it
+ * works together.
+ * The buffer will REMAIN LOCKED since only an unblock() from this same thread should ever resume normal flow.
+ */
+int buffer__block(Buffer *buf) {
+  buffer__lock(buf);
+  buf->is_blocked = 1;
+  while(buf->ref_count != 0) {
+    pthread_cond_broadcast(&buf->condition);
+    pthread_cond_wait(&buf->condition, &buf->lock);
+  }
+  return E_OK;
+}
+
+
+/* buffer__unblock
+ * Removes the blocking status from the buffer and starts a cascade of signals to others.
+ */
+int buffer__unblock(Buffer *buf) {
+  // We don't need to do any checking because a block call previously has already protected us.  We just need to signal later.
+  buf->is_blocked = 0;
+  pthread_cond_broadcast(&buf->condition);
+  buffer__unlock(buf);
   return E_OK;
 }
 
@@ -314,7 +351,6 @@ int buffer__copy(Buffer *src, Buffer *dst) {
   dst->id           = src->id;
   dst->ref_count    = src->ref_count;
   dst->popularity   = src->popularity;
-  dst->generation   = src->generation;
   dst->is_ephemeral = src->is_ephemeral;
   dst->victimized   = src->victimized;
   // The lock and condition do not need to be linked.
