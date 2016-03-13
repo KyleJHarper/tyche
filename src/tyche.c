@@ -22,7 +22,6 @@
 #include "error_codes.h"
 #include "error.h"
 #include "list.h"
-#include "tests.h"
 #include "io.h"
 #include "options.h"
 #include "manager.h"
@@ -42,16 +41,8 @@ int main(int argc, char **argv) {
   /* Get a list of the pages we have to work with, respecting any limits specified in opts. */
   char **pages = NULL;
   io__get_pages(&pages);
-
-  /* Initialize the locker pool and then build the Manager to work with.  Fire an srand() for tests__* just in case. */
   srand(time(NULL));
   Manager *mgr = manager__initialize(0, pages);
-  /* If a test was specified, run it instead of the manager(s) and then leave. */
-  if (opts.test != NULL) {
-    tests__run_test(mgr->raw_list, pages);
-    fprintf(stderr, "A test (-t %s) was specified so we ran it.  All done.  Quitting non-zero for safety.\n", opts.test);
-    exit(E_GENERIC);
-  }
 
   /* Run the managers. */
   manager__start(mgr);

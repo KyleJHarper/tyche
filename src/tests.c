@@ -34,6 +34,8 @@ extern const int E_GENERIC;
 
 extern const int BUFFER_OVERHEAD;
 
+extern const int RESTORATION_THRESHOLD;
+
 /* Make the options stuct shared. */
 extern Options opts;
 
@@ -129,10 +131,10 @@ void tests__run_test(List *raw_list, char **pages) {
 }
 
 
-void tests__synchronized_readwrite(List *raw_list) {
+void tests__synchronized_readwrite(List *list) {
   // Set up the default options for the readwrite test.
   ReadWriteOpts rwopts;
-  rwopts.raw_list = raw_list;
+  rwopts.list = list;
   rwopts.chaos_monkeys    =   10;
   rwopts.list_count       = 1000;
   rwopts.list_floor       =  500;
@@ -159,7 +161,7 @@ void tests__synchronized_readwrite(List *raw_list) {
     if(rwopts.list_count <= rwopts.list_floor)
       show_error(E_GENERIC, "The list count (%d) cannot be less than or equal to the list floor (%d)", rwopts.list_count, rwopts.list_floor);
   }
-  raw_list->max_size = 100 * 1024 * 1024;
+  list->max_raw_size = 100 * 1024 * 1024;
   Buffer *temp = NULL, *current = NULL;
   char *sample_data = "some text, hooray for me";
 
@@ -169,7 +171,7 @@ void tests__synchronized_readwrite(List *raw_list) {
     temp->data = malloc(strlen(sample_data) + 1);
     strcpy(temp->data, sample_data);
     temp->data_length = strlen(temp->data) + 1;
-    list__add(raw_list, temp);
+    list__add(list, temp);
   }
 
   // Start worker threads which will try to read data at the same time.
@@ -189,8 +191,8 @@ void tests__synchronized_readwrite(List *raw_list) {
     pthread_join(chaos_monkeys[i], NULL);
 
   int has_failures = 0;
-  current = raw_list->head;
-  while(current->next != raw_list->head) {
+  current = list->head;
+  while(current->next != list->head) {
     current = current->next;
     if (current->ref_count != 0) {
       printf("Buffer ID number %d has non-zero ref_count: %d\n", current->id, current->ref_count);
@@ -199,11 +201,11 @@ void tests__synchronized_readwrite(List *raw_list) {
   }
   if (has_failures > 0)
     show_error(E_GENERIC, "Test 'synchronized_readwrite' has failures :(\n");
-  if (raw_list->count > rwopts.list_floor || raw_list->count < (rwopts.list_floor - rwopts.chaos_monkeys))
-    show_error(E_GENERIC, "Test 'synchronized_readwrite' didn't reduce the list count (%d) to LIST_FLOOR (%d) as expected.", raw_list->count, rwopts.list_floor);
+  if (list->raw_count > rwopts.list_floor || list->raw_count < (rwopts.list_floor - rwopts.chaos_monkeys))
+    show_error(E_GENERIC, "Test 'synchronized_readwrite' didn't reduce the list count (%d) to LIST_FLOOR (%d) as expected.", list->raw_count, rwopts.list_floor);
 
   setlocale(LC_NUMERIC, "");
-  printf("All done.  I used %d workers performing a combined %'d reads with %d chaos workers taking buffers from %d to %d (true final count is %d, due to known race condition with chaos workers)\n", rwopts.worker_count, rwopts.worker_count * rwopts.reads_per_worker, rwopts.chaos_monkeys, rwopts.list_count, rwopts.list_floor, raw_list->count);
+  printf("All done.  I used %d workers performing a combined %'d reads with %d chaos workers taking buffers from %d to %d (true final count is %d, due to known race condition with chaos workers)\n", rwopts.worker_count, rwopts.worker_count * rwopts.reads_per_worker, rwopts.chaos_monkeys, rwopts.list_count, rwopts.list_floor, list->raw_count);
 
   printf("Test 'synchronized_readwrite': all passed\n");
   return;
@@ -218,7 +220,7 @@ void tests__read(ReadWriteOpts *rwopts) {
   for (int i=0; i<rwopts->reads_per_worker; i++) {
     for(;;) {
       id_to_get = rand() % rwopts->list_count;
-      rv = list__search(rwopts->raw_list, &selected, id_to_get);
+      rv = list__search(rwopts->list, &selected, id_to_get);
       if (rv == E_OK)
         break;
       if (rv == E_BUFFER_NOT_FOUND || rv == E_BUFFER_POOFED || E_BUFFER_IS_VICTIMIZED)
@@ -242,16 +244,16 @@ void tests__chaos(ReadWriteOpts *rwopts) {
   int rv = 0;
   bufferid_t id_to_remove = 0;
   // Loop through and remove stuff until we reach LIST_FLOOR.  This predicate cannot be (reasonably) made safe.
-  while(rwopts->raw_list->count >= rwopts->list_floor) {
+  while(rwopts->list->raw_count >= rwopts->list_floor) {
     id_to_remove = rand() % rwopts->list_count;
-    rv = list__search(rwopts->raw_list, &temp, id_to_remove);
+    rv = list__search(rwopts->list, &temp, id_to_remove);
     if (rv == E_BUFFER_NOT_FOUND)
       continue;
     // List search gave us a ref_count, need to decrement ourself.
     buffer__lock(temp);
     buffer__update_ref(temp, -1);
     buffer__unlock(temp);
-    rv = list__remove(rwopts->raw_list, id_to_remove, true);
+    rv = list__remove(rwopts->list, id_to_remove);
     usleep(rwopts->sleep_delay);
   }
   pthread_exit(0);
@@ -261,7 +263,7 @@ void tests__chaos(ReadWriteOpts *rwopts) {
 /* tests__elements
  * Simply creates buffers and assigns them to the list.  Should update the counts and so forth.
  */
-void tests__elements(List *raw_list) {
+void tests__elements(List *list) {
   Buffer *buf = NULL;
   int rv = E_OK;
   int id = 0;
@@ -276,28 +278,28 @@ void tests__elements(List *raw_list) {
       show_error(E_GENERIC, "One or more of the extended options passed in ended up 0, this means you sent a 0 or bad input:\n");
   }
   opts.max_memory = BUFFER_OVERHEAD * element_count;
-  raw_list->max_size = opts.max_memory;
+  list->max_raw_size = opts.max_memory;
 
   // Add all the buffers.
   printf("Step 1.  Adding %d dummy buffers to the list in with random IDs.\n", element_count);
   buf = buffer__initialize(1, NULL);
-  list__add(raw_list, buf);
-  while(raw_list->count < element_count) {
+  list__add(list, buf);
+  while(list->raw_count < element_count) {
     id = rand() % (element_count * 10);
     buf = buffer__initialize(id, NULL);
-    rv = list__add(raw_list, buf);
+    rv = list__add(list, buf);
     if (rv != E_OK)
       free(buf);
   }
 
   // Display the statistics of the list.
   printf("\nStep 2.  Showing list statistics.\n");
-  tests__list_structure(raw_list);
+  tests__list_structure(list);
 
   // Search for an item just to prove it works.
   printf("\nStep 3.  Searching for a buffer, just to prove it works.\n");
   buf = NULL;
-  rv = list__search(raw_list, &buf, 1);
+  rv = list__search(list, &buf, 1);
   if (rv != E_OK)
     show_error(E_GENERIC, "Failed to search for a buffer which should have existed.  rv was %d\n", rv);
   printf("Got the buffer, it's ref count is %"PRIu16".\n", buf->ref_count);
@@ -307,12 +309,12 @@ void tests__elements(List *raw_list) {
 
   // Remove the buffers.
   printf("\nStep 4.  Removing all the dummy buffers.\n");
-  while(raw_list->head->next != raw_list->head)
-    list__remove(raw_list, raw_list->head->next->id, true);
+  while(list->head->next != list->head)
+    list__remove(list, list->head->next->id);
 
   // Display the statistics of the list again.
   printf("\nStep 5.  Showing list statistics.\n");
-  tests__list_structure(raw_list);
+  tests__list_structure(list);
 
   printf("Test 'elements': All Passed\n");
   return;
@@ -450,8 +452,8 @@ void tests__compression() {
 /*
  * Make sure that we can create a list, try to put too many buffers in it, and have it offload things as expected.
  */
-void tests__move_buffers(List *raw_list, char **pages) {
-  raw_list->sweep_goal = 30;
+void tests__move_buffers(List *list, char **pages) {
+  list->sweep_goal = 30;
   Buffer *buf = NULL;
   uint total_bytes = 0;
 
@@ -463,86 +465,75 @@ void tests__move_buffers(List *raw_list, char **pages) {
     buffer__victimize(buf);
     buffer__destroy(buf);
   }
-  /* Now add them all to the list and see if the list size matches.  Give padding, because we want to avoid offloading for now. */
-  raw_list->max_size = total_bytes + (1024 * 1024);
+  /* Now add them all to the list and see if the list size matches. */
+  list->max_raw_size = total_bytes + (1024 * 1024);
   for (uint i = 0; i < opts.page_count; i++) {
     buf = buffer__initialize(i, pages[i]);
-    list__add(raw_list, buf);
+    list__add(list, buf);
   }
-  if (total_bytes != raw_list->current_size)
-    show_error(E_GENERIC, "Calculated a total size of %d, and raw_list->current_size is %"PRIu64"\n", total_bytes, raw_list->current_size);
+  if (total_bytes != list->current_raw_size)
+    show_error(E_GENERIC, "Calculated a total size of %d, and raw_list->current_size is %"PRIu64"\n", total_bytes, list->current_raw_size);
   printf("Total bytes measured in buffers matches the list size, success!\n");
-  while(raw_list->head->next != raw_list->head)
-    list__remove(raw_list, raw_list->head->next->id, true);
-  while(raw_list->offload_to->head->next != raw_list->offload_to->head)
-    list__remove(raw_list->offload_to, raw_list->offload_to->head->next->id, true);
+  while(list->head->next != list->head)
+    list__remove(list, list->head->next->id);
   printf("Test 1 Passed:  Does the list size match the known size of data read from disk?\n\n");
 
-  // -- TEST 2:  Can we offload from raw to a compressed list?
+  // -- TEST 2:  Can we compress an item?
   /* Alright, let's purposely set the list to a value smaller than we know we need and ensure offloading happens. */
-  raw_list->max_size = total_bytes >> 1;
-  raw_list->offload_to->max_size = total_bytes;
+  list->max_raw_size = total_bytes >> 1;
+  list->max_comp_size = total_bytes;
   for (uint i = 0; i < opts.page_count; i++) {
     buf = buffer__initialize(i, pages[i]);
     buf->popularity = MAX_POPULARITY/(i+1);
-    list__add(raw_list, buf);
+printf("adding %d of %d\n", i, opts.page_count);
+    list__add(list, buf);
   }
-  printf("All done.  Raw list has %d buffers using %"PRIu64" bytes.  Comp list has %d buffers using %"PRIu64" bytes.\n", raw_list->count, raw_list->current_size, raw_list->offload_to->count, raw_list->offload_to->current_size);
-  while(raw_list->head->next != raw_list->head)
-    list__remove(raw_list, raw_list->head->next->id, true);
-  while(raw_list->offload_to->head->next != raw_list->offload_to->head)
-    list__remove(raw_list->offload_to, raw_list->offload_to->head->next->id, true);
-  printf("Test 2 Passed:  Will items overflow from the raw list to the compressed one as needed?\n\n");
+  printf("All done.  Raw list has %d buffers using %"PRIu64" bytes.  Comp list has %d buffers using %"PRIu64" bytes.\n", list->raw_count, list->current_raw_size, list->comp_count, list->current_comp_size);
+  while(list->head->next != list->head)
+    list__remove(list, list->head->next->id);
+  printf("Test 2 Passed:  Will items go into the compressed space if necessary?\n\n");
 
-  // -- TEST 3:  Will offloading properly pop the compressed buffer?
-  /* Now let's do the same test again, but shrink the comp_list to ensure data has to be popped off the end. */
-  raw_list->max_size = total_bytes >> 1;
-  raw_list->offload_to->max_size = total_bytes >> 3;
+  // -- TEST 3:  Will running out of comp space properly shrink and remove comp victims?
+  /* Now let's do the same test again, but shrink the comp space to ensure data has to be popped off the end. */
+  list->max_raw_size = total_bytes >> 1;
+  list->max_comp_size = total_bytes >> 3;
   for (uint i = 0; i < opts.page_count; i++) {
     buf = buffer__initialize(i, pages[i]);
     buf->popularity = MAX_POPULARITY/(i+1);
-    list__add(raw_list, buf);
+    list__add(list, buf);
   }
-  printf("All done.  Raw list has %d buffers using %"PRIu64" bytes.  Comp list has %d buffers using %"PRIu64" bytes.\n", raw_list->count, raw_list->current_size, raw_list->offload_to->count, raw_list->offload_to->current_size);
-  while(raw_list->head->next != raw_list->head)
-    list__remove(raw_list, raw_list->head->next->id, true);
-  while(raw_list->offload_to->head->next != raw_list->offload_to->head)
-    list__remove(raw_list->offload_to, raw_list->offload_to->head->next->id, true);
-  printf("Test 3 Passed:  Will the compressed list pop buffers when out of room?\n\n");
+  list__sweep(list, 5);
+  printf("All done.  Raw list has %d buffers using %"PRIu64" bytes.  Comp list has %d buffers using %"PRIu64" bytes.\n", list->raw_count, list->current_raw_size, list->comp_count, list->current_comp_size);
+  while(list->head->next != list->head)
+    list__remove(list, list->head->next->id);
+  printf("Test 3 Passed:  Will running out of comp space remove buffers when swept?\n\n");
 
   // -- TEST 4:  Can we move items back to the raw list after they've been compressed?
-  raw_list->max_size = total_bytes >> 1;
-  raw_list->offload_to->max_size = total_bytes >> 3;
+  list->max_raw_size = total_bytes >> 1;
+  list->max_comp_size = total_bytes >> 3;
   for (uint i = 0; i < opts.page_count; i++) {
     buf = buffer__initialize(i, pages[i]);
     buf->popularity = MAX_POPULARITY/(i+1);
-    list__add(raw_list, buf);
+    list__add(list, buf);
   }
-  /* Pick a random buffer from the offload list and do a search for it.  The result should be it getting moved to the raw list. */
-  if (raw_list->offload_to->count == 0)
-    show_error(E_GENERIC, "The comp_list doesn't have anything in the pool.  Can't do this test.");
-  Buffer *test4_buf = NULL, *test4_current = NULL;
-  bufferid_t test4_sample_id = raw_list->offload_to->head->next->id;
-  printf("About to start searching for a buffer which should be found in comp list.\n");
-  if (list__search(raw_list, &test4_buf, test4_sample_id) != E_OK)
-    show_error(E_GENERIC, "list__search says it failed to find our buffer.  Boo.");
-  printf("The list search buffer returned gave id of %d, the id we wanted was %d.\n", test4_buf->id, test4_sample_id);
-  buffer__lock(test4_buf);
-  buffer__update_ref(test4_buf, -1);
-  buffer__unlock(test4_buf);
-  if(test4_buf->is_ephemeral)
-    buffer__destroy(test4_buf);
-  int found_in_raw = 0;
-  test4_current = raw_list->head;
-  while(test4_current->next != raw_list->head) {
-    test4_current = test4_current->next;
-    if(test4_current->id == test4_sample_id)
-      found_in_raw++;
+  list__sweep(list, 5);
+  // Find a buffer that was compressed and list__search it until it's restored.
+  Buffer *test4_buf = list->head->next;
+  while(test4_buf->comp_length == 0 && test4_buf != list->head)
+    test4_buf = test4_buf->next;
+  bufferid_t test4_id = test4_buf->id;
+  int i=0;
+  while(i<=RESTORATION_THRESHOLD*2) {
+    i++;
+    list__search(list, &test4_buf, test4_id);
+    buffer__lock(test4_buf);
+    buffer__update_ref(test4_buf, -1);
+    buffer__unlock(test4_buf);
+    if(test4_buf->is_ephemeral == 0)
+      break;
+    buffer__destroy(buf);
+    continue;
   }
-  if (found_in_raw == 0)
-    show_error(E_GENERIC, "The id we searched for didn't show up in the raw list... this means we failed to restore it.");
-  if (found_in_raw > 1)
-    show_error(E_GENERIC, "The found_in_raw variable is higher than 1, this is bad.\n");
   printf("Test 4 Passed:  Can we restore items from the offload list when searching finds them there?\n\n");
 
   printf("Test 'move_buffers': all passed\n");
@@ -581,18 +572,18 @@ void tests__options() {
 void tests__list_structure(List *list) {
   // List attributes
   /* Size and Counter Members */
-  printf("          count: %"PRIu32"\n", list->count);
-  printf("   current_size: %"PRIu64"\n", list->current_size);
-  printf("       max_size: %"PRIu64"\n", list->max_size);
+  printf("       raw/comp count: %"PRIu32" / %"PRIu32"\n", list->raw_count, list->comp_count);
+  printf("raw/comp current size: %"PRIu64" / %"PRIu64"\n", list->current_raw_size, list->current_comp_size);
+  printf("    raw/comp max size: %"PRIu64" / %"PRIu64"\n", list->max_raw_size, list->max_comp_size);
   /* Locking, Reference Counters, and Similar Members */
-  printf("      ref_count: %"PRIu32"\n", list->ref_count);
-  printf("pending_writers: %"PRIu8"\n", list->pending_writers);
+  printf("            ref_count: %"PRIu32"\n", list->ref_count);
+  printf("      pending_writers: %"PRIu8"\n", list->pending_writers);
   /* Management and Administration Members */
-  printf("     sweep_goal: %"PRIu8"\n", list->sweep_goal);
-  printf("         sweeps: %"PRIu32"\n", list->sweeps);
-  printf("     sweep_cost: %"PRIu64"\n", list->sweep_cost);
+  printf("           sweep_goal: %"PRIu8"\n", list->sweep_goal);
+  printf("               sweeps: %"PRIu64"\n", list->sweeps);
+  printf("           sweep_cost: %"PRIu64"\n", list->sweep_cost);
   /* Management of Nodes for Skiplist and Buffers */
-  printf("         levels: %"PRIu8"\n", list->levels);
+  printf("               levels: %"PRIu8"\n", list->levels);
 
   // Skiplist Index information.
   int count = 0, out_of_order = 0, downs_wrong = 0, downs = 0;
@@ -620,7 +611,7 @@ void tests__list_structure(List *list) {
       if((slnode->right != NULL) && (slnode->target->id >= slnode->right->target->id))
         out_of_order++;
     }
-    printf("Index %02d:  in order - %s, down pointers correct - %s, count %d (%3.1f%%)\n", i, out_of_order == 0 ? "yes" : "no", downs_wrong == 0 ? "yes" : "no", count, 100 * (double)count/list->count);
+    printf("Index %02d:  in order - %s, down pointers correct - %s, count %d (%3.1f%%)\n", i, out_of_order == 0 ? "yes" : "no", downs_wrong == 0 ? "yes" : "no", count, 100 * (double)count/(list->raw_count + list->comp_count));
     if(out_of_order != 0) {
       printf("Index was out of order displaying: ");
       slnode = list->indexes[i];

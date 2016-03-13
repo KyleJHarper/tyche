@@ -13,7 +13,7 @@
 /* This structure exists to share and synchronize items for the readwrite test. */
 typedef struct readwriteopts ReadWriteOpts;
 struct readwriteopts {
-  List *raw_list;
+  List *list;
   int list_count;
   int worker_count;
   int chaos_monkeys;

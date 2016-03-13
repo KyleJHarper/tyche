@@ -18,6 +18,7 @@
 #include "list.h"
 #include "error.h"
 #include "manager.h"
+#include "tests.h"
 
 
 /* We need to know what one billion is for clock timing. */
@@ -68,21 +69,13 @@ Manager* manager__initialize(managerid_t id, char **pages) {
   mgr->misses = 0;
 
   /* Create the listset for this manager to use. */
-  List *raw_list = list__initialize();
-  if (raw_list == NULL)
-    show_error(E_GENERIC, "Couldn't create the raw list for manager "PRIu8".  This is fatal.", id);
-  List *comp_list = list__initialize();
-  if (comp_list == NULL)
-    show_error(E_GENERIC, "Couldn't create the compressed list for manager "PRIu8".  This is fatal.", id);
-
-  /* Add the lists to the Manager and then set their offload/restore values. */
-  mgr->raw_list = raw_list;
-  mgr->comp_list = comp_list;
-  raw_list->offload_to = comp_list;
-  comp_list->restore_to = raw_list;
+  List *list = list__initialize();
+  if (list == NULL)
+    show_error(E_GENERIC, "Couldn't create the list for manager "PRIu8".  This is fatal.", id);
+  mgr->list = list;
 
   /* Set the memory sizes for both lists. */
-  list__balance(raw_list, opts.fixed_ratio > 0 ? opts.fixed_ratio : INITIAL_RAW_RATIO);
+  list__balance(list, opts.fixed_ratio > 0 ? opts.fixed_ratio : INITIAL_RAW_RATIO);
 
   /* Return our manager. */
   return mgr;
@@ -93,6 +86,23 @@ Manager* manager__initialize(managerid_t id, char **pages) {
  * Takes a previous created manager object and attempts to start the main tyche logic with it.
  */
 int manager__start(Manager *mgr) {
+  /* Whether we're doing tests or not, we need the sweeper running for this manager. */
+  pthread_t pt_sweeper;
+  pthread_create(&pt_sweeper, NULL, (void *) &manager__sweeper, mgr);
+
+  /* If a test was specified, run it instead of the manager(s) and then leave. */
+  if (opts.test != NULL) {
+    tests__run_test(mgr->list, mgr->pages);
+    fprintf(stderr, "A test (-t %s) was specified so we ran it.  All done.  Quitting non-zero for safety.\n", opts.test);
+    /* Stop the sweeper.  It requires being woken up. */
+    mgr->runnable = 0;
+    pthread_mutex_lock(&mgr->list->lock);
+    pthread_cond_broadcast(&mgr->list->sweeper_condition);
+    pthread_mutex_unlock(&mgr->list->lock);
+    pthread_join(pt_sweeper, NULL);
+    exit(E_GENERIC);
+  }
+
   /* Start another thread to change our runnable flag when the timer is up. */
   pthread_t pt_timer;
   pthread_create(&pt_timer, NULL, (void *) &manager__timer, mgr);
@@ -107,19 +117,49 @@ int manager__start(Manager *mgr) {
   for(int i=0; i<opts.workers; i++)
     pthread_join(workers[i], NULL);
 
-  /* Show results and leave.  We */
+  /* Stop the sweeper.  It requires being woken up. */
+  pthread_mutex_lock(&mgr->list->lock);
+  pthread_cond_broadcast(&mgr->list->sweeper_condition);
+  pthread_mutex_unlock(&mgr->list->lock);
+  pthread_join(pt_sweeper, NULL);
+
+  /* Show results and leave. */
   uint64_t total_acquisitions = mgr->hits + mgr->misses;
   clock_gettime(CLOCK_MONOTONIC, &end);
   mgr->run_duration = (BILLION *(end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec) / MILLION;
   printf("Buffer Acquisitions : %"PRIu64" (%"PRIu64" hits, %"PRIu64" misses)\n", total_acquisitions, mgr->hits, mgr->misses);
   printf("Pages in Data Set   : %"PRIu32" (%"PRIu64" bytes)\n",opts.page_count, opts.dataset_size);
-  printf("Raw List Migrations : %"PRIu32" offloads, %"PRIu32" restorations\n", mgr->raw_list->offloads, mgr->raw_list->restorations);
-  printf("Comp List Migrations: %"PRIu32" offloads (popped)\n", mgr->comp_list->offloads);
+  printf("Compressions        : %"PRIu64" compressions\n", mgr->list->compressions);
+  printf("Restorations        : %"PRIu64" restorations\n", mgr->list->restorations);
   printf("Hit Ratio           : %4.2f%%\n", 100.0 * mgr->hits / total_acquisitions);
-  printf("Fixed Memory Ratio  : %"PRIi8"%% (%"PRIu64" bytes raw, %"PRIu64" bytes compressed)\n", opts.fixed_ratio, mgr->raw_list->max_size, mgr->comp_list->max_size);
+  printf("Fixed Memory Ratio  : %"PRIi8"%% (%"PRIu64" bytes raw, %"PRIu64" bytes compressed)\n", opts.fixed_ratio, mgr->list->max_raw_size, mgr->list->max_comp_size);
   printf("Manager run time    : %.1f sec\n", 1.0 * mgr->run_duration / 1000);
-  printf("Time sweeping       : %u sweeps, %'"PRIu64"\n", mgr->raw_list->sweeps, mgr->raw_list->sweep_cost);
+  printf("Time sweeping       : %"PRIu64" sweeps, %'"PRIu64"\n", mgr->list->sweeps, mgr->list->sweep_cost);
   return E_OK;
+}
+
+
+/* manager__sweeper
+ * A dedicated thread for sweeping the list when it's time.  If this fails, bye bye RAM.
+ */
+void manager__sweeper(Manager *mgr) {
+  while(1) {
+    pthread_mutex_lock(&mgr->list->lock);
+    while(mgr->list->current_raw_size < mgr->list->max_raw_size) {
+printf("Raw size is less than max.  Waking up reader and then waiting.\n");
+      pthread_cond_broadcast(&mgr->list->reader_condition);
+      pthread_cond_wait(&mgr->list->sweeper_condition, &mgr->list->lock);
+printf("Sweeper was woken up.\n");
+    }
+    pthread_mutex_unlock(&mgr->list->lock);
+    if(mgr->runnable == 0)
+      break;
+printf("Going to sweep.\n");
+    list__sweep(mgr->list, mgr->list->sweep_goal);
+printf("Done sweeping.  Looping around.\n");
+  }
+
+  return;
 }
 
 
@@ -148,7 +188,7 @@ void manager__timer(Manager *mgr) {
     if(opts.quiet == 1)
       continue;
     fprintf(stderr, "\r%-90s", "");
-    fprintf(stderr, "\r%"PRIu16" sec ETA.  %'"PRIu32" raw (%'"PRIu32" comp) buffers.  %'"PRIu32" restorations.  %'"PRIu32" pops.  %'"PRIu64" hits.  %'"PRIu64" misses.", opts.duration - elapsed, mgr->raw_list->count, mgr->comp_list->count, mgr->raw_list->restorations, mgr->comp_list->offloads, hits, misses);
+    fprintf(stderr, "\r%"PRIu16" sec ETA.  %'"PRIu32" raw (%'"PRIu32" comp) buffers.  %'"PRIu64" restorations.  %'"PRIu64" compressions.  %'"PRIu64" hits.  %'"PRIu64" misses.", opts.duration - elapsed, mgr->list->raw_count, mgr->list->comp_count, mgr->list->restorations, mgr->list->compressions, hits, misses);
     fflush(stderr);
   }
   if(opts.quiet == 0)
@@ -183,17 +223,17 @@ void manager__spawn_worker(Manager *mgr) {
   while(mgr->runnable != 0) {
     /* Go find buffers to play with!  If the one we need doesn't exist, get it and add it. */
     id_to_get = rand() % opts.page_count;
-    rv = list__search(mgr->raw_list, &buf, id_to_get);
+    rv = list__search(mgr->list, &buf, id_to_get);
     if(rv == E_OK)
       mgr->workers[id].hits++;
     if(rv == E_BUFFER_NOT_FOUND) {
       mgr->workers[id].misses++;
       buf = buffer__initialize(id_to_get, mgr->pages[id_to_get]);
       buffer__update_ref(buf, 1);
-      rv = list__add(mgr->raw_list, buf);
+      rv = list__add(mgr->list, buf);
       if (rv == E_BUFFER_ALREADY_EXISTS) {
         // Someone beat us to it.  Just free it and loop around for something else.
-        free(buf);
+        buffer__destroy(buf);
         buf = NULL;
         continue;
       }
@@ -237,8 +277,8 @@ void manager__assign_worker_id(workerid_t *referring_id_ptr) {
  * Deconstruct the members of a Manager object.
  */
 int manager__destroy(Manager *mgr) {
-  list__destroy(mgr->comp_list);
-  list__destroy(mgr->raw_list);
+  // We have to wake up the sweeper so it knows to shut down.
+  list__destroy(mgr->list);
   free(mgr->workers);
   return E_OK;
 }

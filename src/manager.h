@@ -27,8 +27,7 @@ typedef struct manager Manager;
 struct manager {
   /* Identifier(s) & Lists */
   managerid_t id;         // The ID of the manager, in case we have multiple in the future.
-  List *raw_list;         // The raw list of buffers.
-  List *comp_list;        // The compressed list of buffers.
+  List *list;             // The list of buffers.
 
   /* Page Information */
   char **pages;           // The list of pages we can ask for.
@@ -48,6 +47,7 @@ struct manager {
 /* Prototypes */
 Manager* manager__initialize(managerid_t id, char **pages);
 int manager__start(Manager *mgr);
+void manager__sweeper(Manager *mgr);
 void manager__timer(Manager *mgr);
 void manager__spawn_worker(Manager *mgr);
 void manager__assign_worker_id(workerid_t *referring_id_ptr);

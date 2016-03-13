@@ -25,7 +25,14 @@
      g) Your page replacement is sub-optimal compared to <some_other_strategy>!
         Might be.  But it's fast enough to not be a bottleneck and prove the point I'm trying to make with compression.
 3. Niceness & Bug Fixes
-     a) Update all the documentation in the source files.
+     a) Update ALLLLLL the documentation in the source files.
      b) When there isn't enough space in comp max_size for a single sweep, it hangs (100% cpu, not deadlock).
      c) Very first sweep of a run can deadlock... why?
      d) Debug logging is probably a good idea for Managers and Workers.
+4. Single list.
+     a) Get rid of the raw/comp list concept.
+     b) Allow list__search to continue working while list__add() is working.
+     c) Consider using __sync_fetch_and_add in place of mutex locks:
+          1. list__add() for the count and size.
+          2. list__sweep() for the sweeps++ and sweep_cost increments.
+          3. list__search() restoration when a compressed buffer warrants it.

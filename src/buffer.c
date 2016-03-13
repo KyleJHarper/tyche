@@ -236,9 +236,7 @@ int buffer__compress(Buffer *buf) {
   /* Make sure we have a valid buffer with valid data element. */
   if (buf == NULL)
     return E_BUFFER_NOT_FOUND;
-  int rv = buffer__lock(buf);
-  if (rv != E_OK)
-    return rv;
+  int rv = E_OK;
   if (buf->data == NULL || buf->data_length == 0 || buf->comp_length != 0) {
     buffer__unlock(buf);
     return E_BUFFER_MISSING_DATA;

@@ -19,8 +19,7 @@ int main() {
   printf("\n");
   /* Identifier(s) & Lists */
   printf("Size of Manager->id                           : %4zu Bytes\n", sizeof((Manager *)0)->id);
-  printf("Size of Manager->raw_list                     : %4zu Bytes\n", sizeof((Manager *)0)->raw_list);
-  printf("Size of Manager->comp_list                    : %4zu Bytes\n", sizeof((Manager *)0)->comp_list);
+  printf("Size of Manager->list                         : %4zu Bytes\n", sizeof((Manager *)0)->list);
   /* Page Information */
   printf("Size of Manager->pages                        : %4zu Bytes\n", sizeof((Manager *)0)->pages);
   /* Manager Control */
@@ -48,39 +47,38 @@ int main() {
   // -- List Information
   printf("\n");
   /* Size and Counter Members */
-  printf("Size of List->count                           : %4zu Bytes\n", sizeof((List *)0)->count);
-  printf("Size of List->current_size                    : %4zu Bytes\n", sizeof((List *)0)->current_size);
-  printf("Size of List->max_size                        : %4zu Bytes\n", sizeof((List *)0)->max_size);
+  printf("Size of List->raw_count                       : %4zu Bytes\n", sizeof((List *)0)->raw_count);
+  printf("Size of List->comp_count                      : %4zu Bytes\n", sizeof((List *)0)->comp_count);
+  printf("Size of List->current_raw_size                : %4zu Bytes\n", sizeof((List *)0)->current_raw_size);
+  printf("Size of List->current_size                    : %4zu Bytes\n", sizeof((List *)0)->current_comp_size);
+  printf("Size of List->max_raw_size                    : %4zu Bytes\n", sizeof((List *)0)->max_raw_size);
+  printf("Size of List->max_comp_size                   : %4zu Bytes\n", sizeof((List *)0)->max_comp_size);
   /* Locking, Reference Counters, and Similar Members */
   printf("Size of List->lock                            : %4zu Bytes\n", sizeof((List *)0)->lock);
   printf("Size of List->lock_owner                      : %4zu Bytes\n", sizeof((List *)0)->lock_owner);
   printf("Size of List->lock_depth                      : %4zu Bytes\n", sizeof((List *)0)->lock_depth);
   printf("Size of List->writer_condition                : %4zu Bytes\n", sizeof((List *)0)->writer_condition);
   printf("Size of List->reader_condition                : %4zu Bytes\n", sizeof((List *)0)->reader_condition);
+  printf("Size of List->sweeper_condition               : %4zu Bytes\n", sizeof((List *)0)->sweeper_condition);
   printf("Size of List->ref_count                       : %4zu Bytes\n", sizeof((List *)0)->ref_count);
   printf("Size of List->pending_writers                 : %4zu Bytes\n", sizeof((List *)0)->pending_writers);
   /* Management and Administration Members */
-  printf("Size of List->offload_to                      : %4zu Bytes\n", sizeof((List *)0)->offload_to);
-  printf("Size of List->restore_to                      : %4zu Bytes\n", sizeof((List *)0)->restore_to);
   printf("Size of List->sweep_goal                      : %4zu Bytes\n", sizeof((List *)0)->sweep_goal);
   printf("Size of List->sweeps                          : %4zu Bytes\n", sizeof((List *)0)->sweeps);
   printf("Size of List->sweep_cost                      : %4zu Bytes\n", sizeof((List *)0)->sweep_cost);
-  printf("Size of List->offloads                        : %4zu Bytes\n", sizeof((List *)0)->offloads);
   printf("Size of List->restorations                    : %4zu Bytes\n", sizeof((List *)0)->restorations);
+  printf("Size of List->compressions                    : %4zu Bytes\n", sizeof((List *)0)->compressions);
   /* Management of Nodes for Skiplist and Buffers */
   printf("Size of List->head                            : %4zu Bytes\n", sizeof((List *)0)->head);
   printf("Size of List->clock_hand                      : %4zu Bytes\n", sizeof((List *)0)->clock_hand);
   printf("Size of List->indexes                         : %4zu Bytes\n", sizeof((List *)0)->indexes);
   printf("Size of List->levels                          : %4zu Bytes\n", sizeof((List *)0)->levels);
-  printf("Size of List->youngest_generation             : %4zu Bytes\n", sizeof((List *)0)->youngest_generation);
-  printf("Size of List->oldest_generation               : %4zu Bytes\n", sizeof((List *)0)->oldest_generation);
-  printf("Size of List->generations                     : %4zu Bytes\n", sizeof((List *)0)->generations);
-  printf("Size of List->generations_index               : %4zu Bytes\n", sizeof((List *)0)->generations_index);
-  printf("Size of List->generations_index_ceiling       : %4zu Bytes\n", sizeof((List *)0)->generations_index_ceiling);
   /* Compressor Pool Management */
   printf("Size of List->jobs_lock                       : %4zu Bytes\n", sizeof((List *)0)->jobs_lock);
   printf("Size of List->jobs_cond                       : %4zu Bytes\n", sizeof((List *)0)->jobs_cond);
   printf("Size of List->jobs_parent_cond                : %4zu Bytes\n", sizeof((List *)0)->jobs_parent_cond);
+  printf("Size of List->comp_victims                    : %4zu Bytes\n", sizeof((List *)0)->comp_victims);
+  printf("Size of List->comp_victims_index              : %4zu Bytes\n", sizeof((List *)0)->comp_victims_index);
   printf("Size of List->victims                         : %4zu Bytes\n", sizeof((List *)0)->victims);
   printf("Size of List->victims_index                   : %4zu Bytes\n", sizeof((List *)0)->victims_index);
   printf("Size of List->victims_compressor_index        : %4zu Bytes\n", sizeof((List *)0)->victims_compressor_index);
@@ -123,8 +121,9 @@ int main() {
   printf("Size of Buffer->id                            : %4zu Bytes\n", sizeof((Buffer *)0)->id);
   printf("Size of Buffer->ref_count                     : %4zu Bytes\n", sizeof((Buffer *)0)->ref_count);
   printf("Size of Buffer->popularity                    : %4zu Bytes\n", sizeof((Buffer *)0)->popularity);
-  printf("Size of Buffer->generation                    : %4zu Bytes\n", sizeof((Buffer *)0)->generation);
+  printf("Size of Buffer->is_blocked                    : %4zu Bytes\n", sizeof((Buffer *)0)->is_blocked);
   printf("Size of Buffer->victimized                    : %4zu Bytes\n", sizeof((Buffer *)0)->victimized);
+  printf("Size of Buffer->is_ephemeral                  : %4zu Bytes\n", sizeof((Buffer *)0)->is_ephemeral);
   printf("Size of Buffer->lock                          : %4zu Bytes\n", sizeof((Buffer *)0)->lock);
   printf("Size of Buffer->condition                     : %4zu Bytes\n", sizeof((Buffer *)0)->condition);
   /* Cost values for each buffer when pulled from disk or compressed/decompressed. */

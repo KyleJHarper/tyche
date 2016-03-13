@@ -11,7 +11,6 @@
 /* Includes */
 #include <stdint.h>
 #include <inttypes.h>
-#include <stdbool.h>
 #include <pthread.h>
 #include "buffer.h"
 
@@ -58,7 +57,8 @@ struct compressor {
 typedef struct list List;
 struct list {
   /* Size and Counter Members */
-  uint32_t count;                                /* Number of buffers in the list. */
+  uint32_t raw_count;                            /* Number of raw buffers in the list. */
+  uint32_t comp_count;                           /* Number of compressed buffers in the list. */
   uint64_t current_raw_size;                     /* Number of bytes currently allocated to the raw buffers in this list. */
   uint64_t max_raw_size;                         /* Maximum number of bytes the raw list is allowed to hold, ever. */
   uint64_t current_comp_size;                    /* Number of bytes currently allocated to the comp buffers in this list. */
@@ -76,9 +76,10 @@ struct list {
 
   /* Management and Administration Members */
   uint8_t sweep_goal;                            /* Minimum percentage of memory we want to free up whenever we sweep, relative to current_size. */
-  uint32_t sweeps;                               /* Number of times the list has been swept. */
+  uint64_t sweeps;                               /* Number of times the list has been swept. */
   uint64_t sweep_cost;                           /* Time in ns spent sweeping lists. */
-  uint32_t restorations;                         /* Number of buffers restored to the raw list (compressed list doesn't use this). */
+  uint64_t restorations;                         /* Number of buffers restored to the raw list (compressed list doesn't use this). */
+  uint64_t compressions;                         /* Buffers compressed during the life of the list. */
 
   /* Management of Nodes for Skiplist and Buffers */
   Buffer *head;                                  /* The head of the list of buffers. */
@@ -105,7 +106,7 @@ struct list {
 List* list__initialize();
 SkiplistNode* list__initialize_skiplistnode(Buffer *buf);
 int list__add(List *list, Buffer *buf);
-int list__remove(List *list, bufferid_t id, bool destroy);
+int list__remove(List *list, bufferid_t id);
 int list__update_ref(List *list, int delta);
 int list__search(List *list, Buffer **buf, bufferid_t id);
 int list__acquire_write_lock(List *list);

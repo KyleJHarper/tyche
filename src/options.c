@@ -216,7 +216,7 @@ void options__show_help() {
   fprintf(stderr, "    %2s   %-10s   %s", "-t", "test_name", "Run an internal test.  Specify 'help' to see available tests.  (For debugging).\n");
   fprintf(stderr, "    %2s   %-10s   %s", "-w", "<number>",  "Number of workers (threads) to use while testing.  Defaults to CPU count.\n");
   fprintf(stderr, "    %2s   %-10s   %s", "-X", "opt1,opt2", "Extended options for tests that require it.  Specify -X 'help' for information.\n");
-  fprintf(stderr, "(Note, capital options are usually for advanced testing use only.\n");
+  fprintf(stderr, "(Note, capital options are usually for advanced testing use only.)\n");
   fprintf(stderr, "\n");
 
   return;
