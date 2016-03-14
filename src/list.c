@@ -234,11 +234,9 @@ int list__add(List *list, Buffer *buf) {
   /* Grab the list lock so we can handle sweeping processes and signaling correctly. */
   pthread_mutex_lock(&list->lock);
   while(list->current_raw_size > list->max_raw_size) {
-printf("Need to wait for the sweeper, waking it up.\n");
     i_had_to_wait = 1;
     pthread_cond_signal(&list->sweeper_condition);
     pthread_cond_wait(&list->reader_condition, &list->lock);
-printf("Done waiting for sweeper.\n");
   }
   if(i_had_to_wait == 1)
     pthread_cond_broadcast(&list->reader_condition);
@@ -465,6 +463,9 @@ int list__search(List *list, Buffer **buf, bufferid_t id) {
     }
   }
 
+  /* Regardless of whether we found it we need to remove our pin on the list's ref count because we're done searching it. */
+  list__update_ref(list, -1);
+
   /* If the buffer was found and is compressed, we need to send a decompressed copy or perform a restoration on it. */
   if(rv == E_OK && (*buf)->comp_length != 0) {
     if((*buf)->popularity < RESTORATION_THRESHOLD) {
@@ -474,24 +475,43 @@ int list__search(List *list, Buffer **buf, bufferid_t id) {
       // The original buffer needs to be released since we're sending back a copy.
       buffer__lock(*buf);
       buffer__update_ref(*buf, -1);
+      buffer__unlock(*buf);
       copy->is_ephemeral = 1;
       if(buffer__decompress(copy) != E_OK)
         show_error(E_GENERIC, "A buffer received a non-OK return code when being decompressed.");
       *buf = copy;
     } else {
-      // This buffer warrants full restoration to the raw list.  Hooray for it!  Block for protection.
+      // This buffer warrants full restoration to the raw list.  Hooray for it!  Removing our pin and block for protection.
+      uint16_t comp_length = (*buf)->comp_length;
+      int i_had_to_wait = 0;
+      buffer__lock(*buf);
+      buffer__update_ref(*buf, -1);
+      buffer__unlock(*buf);
       buffer__block(*buf);
       if (buffer__decompress(*buf) != E_OK)
         show_error(E_GENERIC, "A buffer that deserved restoration failed to decompress properly.");
       buffer__unblock(*buf);
+      // Now add our pin back and update some counters.
+      buffer__lock(*buf);
+      buffer__update_ref(*buf, 1);
+      buffer__unlock(*buf);
       pthread_mutex_lock(&list->lock);
+      list->raw_count++;
+      list->comp_count--;
+      list->current_comp_size -= comp_length;
+      list->current_raw_size += (*buf)->data_length;
       list->restorations++;
+      while(list->current_raw_size > list->max_raw_size) {
+        i_had_to_wait = 1;
+        pthread_cond_signal(&list->sweeper_condition);
+        pthread_cond_wait(&list->reader_condition, &list->lock);
+      }
+      if(i_had_to_wait == 1)
+        pthread_cond_broadcast(&list->reader_condition);
       pthread_mutex_unlock(&list->lock);
     }
   }
 
-  /* Regardless of whether we found it we need to remove our pin on the list's ref count because we're done searching it. */
-  list__update_ref(list, -1);
   return rv;
 }
 
@@ -546,25 +566,37 @@ uint32_t list__sweep(List *list, uint8_t sweep_goal) {
   uint32_t comp_bytes_added = 0;
   uint32_t total_victims = 0;
   const uint32_t BYTES_NEEDED = list->current_raw_size * sweep_goal / 100;
-printf("sweep1\n");
+
   // Loop forever to free up memory.  Memory checks happen near the end of the loop.  Surround with a zero-check for initial balancing.
+Buffer *tmp = list->head->next;
+int pending = 0;
+while(tmp != list->head){
+  if(tmp->pending_sweep == 1)
+    pending++;
+  tmp = tmp->next;
+}
+printf("\nSweeping: buffers tagged pending vs total is: %d / %u.  Raw size: %"PRIu64"  comp size %"PRIu64"\n", pending, list->raw_count + list->comp_count, list->current_raw_size, list->current_comp_size);
   if(BYTES_NEEDED != 0) {
     while(1) {
-printf("sweep2: needed/freed... %d / %d\n", BYTES_NEEDED, bytes_freed);
       // Scan until we find a buffer to remove.  Popularity is halved until a victim is found.  Skip head matches.
       while(1) {
         list->clock_hand = list->clock_hand->next;
+        // If the buffer is already pending for sweep operations, we can't reuse it.  Skip.
+        if(list->clock_hand->pending_sweep == 1)
+          continue;
         if (list->clock_hand->popularity == 0 && list->clock_hand != list->head) {
           // If it's compressed, just update the comp_victims array (if possible) and continue.
           if (list->clock_hand->comp_length > 0) {
             if(list->comp_victims_index < VICTIM_BATCH_SIZE) {
               list->comp_victims[list->comp_victims_index] = list->clock_hand;
               list->comp_victims_index++;
+              list->clock_hand->pending_sweep = 1;
             }
             continue;
           }
           // We found a raw buffer victim, yay.
           victim = list->clock_hand;
+          victim->pending_sweep = 1;
           break;
         }
         list->clock_hand->popularity >>= 1;
@@ -578,22 +610,17 @@ printf("sweep2: needed/freed... %d / %d\n", BYTES_NEEDED, bytes_freed);
       // If the victim pool is full or we've found enough memory to free, flush everything and reset counters.
       if(list->victims_index == VICTIM_BATCH_SIZE || BYTES_NEEDED <= bytes_freed) {
         // Grab the jobs lock and rely on our condition to tell us when compressor_jobs is empty.
-printf("sweep3\n");
         pthread_mutex_lock(&list->jobs_lock);
-printf("sweep4\n");
         while(list->active_compressors > 0 || list->victims_index > list->victims_compressor_index) {
-printf("sweep4: waking up jobs_cond\n");
           pthread_cond_broadcast(&list->jobs_cond);
           pthread_cond_wait(&list->jobs_parent_cond, &list->jobs_lock);
-printf("sweep4: parent was woken up\n");
         }
         pthread_mutex_unlock(&list->jobs_lock);
-printf("sweep5\n");
         for(int i=0; i<list->victims_index; i++) {
           comp_bytes_added += list->victims[i]->comp_length;
+          list->victims[i]->pending_sweep = 0;
           list->victims[i] = NULL;
         }
-        for(int i=0; i<list->victims_index; i++)
         list->victims_index = 0;
         list->victims_compressor_index = 0;
         // Check to see if we're done scanning.  This prevents double checking via while() with every loop iteration.
@@ -602,11 +629,21 @@ printf("sweep5\n");
       }
     }
   }
+  // Finally, remove all pending_sweep flags from the compressed victims now that we're done scanning.
+  for(int i=0; i<list->comp_victims_index; i++)
+    list->comp_victims[i]->pending_sweep = 0;
+
+pending = 0;
+tmp = list->head->next;
+while(tmp != list->head){
+  if(tmp->pending_sweep == 1 && tmp->comp_length > 0)
+    pending++;
+  tmp = tmp->next;
+}
+printf("All raw searching is done.  Pending sweeper count is %d\n", pending);
 
   // We freed up enough raw space.  If comp space is too large start freeing up space.  Update some counters under write protection.
-printf("I need the write lock... %u\n", list->ref_count);
   list__acquire_write_lock(list);
-printf("I got the write lock.\n");
   list->compressions += total_victims;
   list->raw_count -= total_victims;
   list->comp_count += total_victims;
@@ -633,7 +670,7 @@ printf("I got the write lock.\n");
   list->sweeps++;
   list->sweep_cost += BILLION * (end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec;
   list__release_write_lock(list);
-
+printf("All done sweeping.  Raw size is now %"PRIu64" and comp size is %"PRIu64"\n", list->current_raw_size, list->current_comp_size);
   return bytes_freed;
 }
 
@@ -701,7 +738,6 @@ void list__compressor_start(Compressor *comp) {
 
   while(1) {
     // Secure the lock to test the predicate.  If there's no work to do, do some signaling and wait.
-printf("c-1\n");
     pthread_mutex_lock(comp->jobs_lock);
     if((*comp->victims_index) == (*comp->victims_compressor_index)) {
       // There's no work to do.  Remove our active pin, notify the parent if pin count is 0, and then wait to be woken up again.
@@ -711,7 +747,6 @@ printf("c-1\n");
       while((*comp->victims_index) == (*comp->victims_compressor_index) && comp->runnable == 0)
         pthread_cond_wait(comp->jobs_cond, comp->jobs_lock);
       // Someone woke us up and we have work to do.  Increment active counter.
-printf("Someone woke me up\n");
       (*comp->active_compressors)++;
     }
 
@@ -734,7 +769,6 @@ printf("Someone woke me up\n");
     for(int i = 0; i < work_me_count; i++) {
       rv = E_OK;
       buffer__block(work_me[i]);
-printf("Iteration %d: Going to compress id %u\n", i, work_me[i]->id);
       rv = buffer__compress(work_me[i]);
       buffer__unblock(work_me[i]);
       if(rv != E_OK)

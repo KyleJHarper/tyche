@@ -55,5 +55,3 @@ int main(int argc, char **argv) {
   printf("Tyche finished, shutting down.\n");
   return 0;
 }
-
-

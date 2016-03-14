@@ -135,6 +135,7 @@ int manager__start(Manager *mgr) {
   printf("Fixed Memory Ratio  : %"PRIi8"%% (%"PRIu64" bytes raw, %"PRIu64" bytes compressed)\n", opts.fixed_ratio, mgr->list->max_raw_size, mgr->list->max_comp_size);
   printf("Manager run time    : %.1f sec\n", 1.0 * mgr->run_duration / 1000);
   printf("Time sweeping       : %"PRIu64" sweeps, %'"PRIu64"\n", mgr->list->sweeps, mgr->list->sweep_cost);
+  tests__list_structure(mgr->list);
   return E_OK;
 }
 
@@ -145,18 +146,14 @@ int manager__start(Manager *mgr) {
 void manager__sweeper(Manager *mgr) {
   while(1) {
     pthread_mutex_lock(&mgr->list->lock);
-    while(mgr->list->current_raw_size < mgr->list->max_raw_size) {
-printf("Raw size is less than max.  Waking up reader and then waiting.\n");
+    while(mgr->list->current_raw_size < mgr->list->max_raw_size && mgr->runnable != 0) {
       pthread_cond_broadcast(&mgr->list->reader_condition);
       pthread_cond_wait(&mgr->list->sweeper_condition, &mgr->list->lock);
-printf("Sweeper was woken up.\n");
     }
     pthread_mutex_unlock(&mgr->list->lock);
     if(mgr->runnable == 0)
       break;
-printf("Going to sweep.\n");
     list__sweep(mgr->list, mgr->list->sweep_goal);
-printf("Done sweeping.  Looping around.\n");
   }
 
   return;
@@ -233,6 +230,7 @@ void manager__spawn_worker(Manager *mgr) {
       rv = list__add(mgr->list, buf);
       if (rv == E_BUFFER_ALREADY_EXISTS) {
         // Someone beat us to it.  Just free it and loop around for something else.
+        buf->is_ephemeral = 1;
         buffer__destroy(buf);
         buf = NULL;
         continue;
@@ -242,7 +240,7 @@ void manager__spawn_worker(Manager *mgr) {
     buffer__lock(buf);
     buffer__update_ref(buf, -1);
     buffer__unlock(buf);
-    if(buf->is_ephemeral)
+    if(buf->is_ephemeral == 1)
       buffer__destroy(buf);
     buf = NULL;
   }

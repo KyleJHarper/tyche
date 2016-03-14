@@ -25,27 +25,28 @@ typedef uint8_t popularity_t;
 typedef struct buffer Buffer;
 struct buffer {
   /* Attributes for typical buffer organization and management. */
-  bufferid_t id;                  /* Identifier of the page. Should come from the system providing the data itself (e.g.: inode). */
-  uint16_t ref_count;             /* Number of references currently holding this buffer. */
-  popularity_t popularity;        /* Rapidly decaying counter used for victim selection with clock sweep.  Ceiling of MAX_POPULARITY. */
-  uint8_t is_blocked;             /* If the buffer needs to be drained of refs, this flag is set to other readers wait. */
-  uint8_t victimized;             /* If the buffer has been victimized this is set non-zero.  Prevents incrementing of ref_count. */
-  uint8_t is_ephemeral;           /* Is this buffer part of a list, or an ephemeral copy the caller needs to remove? */
-  pthread_mutex_t lock;           /* The primary locking element for individual buffer protection. */
-  pthread_cond_t condition;       /* The conditional variable for use with the lock when we're blocked and need signaling. */
+  bufferid_t id;             /* Identifier of the page. Should come from the system providing the data itself (e.g.: inode). */
+  uint16_t ref_count;        /* Number of references currently holding this buffer. */
+  uint8_t pending_sweep;     /* Flag to indicate if this buffer is pending a sweep operation.  Prevents re-victimizing during a sweep. */
+  popularity_t popularity;   /* Rapidly decaying counter used for victim selection with clock sweep.  Ceiling of MAX_POPULARITY. */
+  uint8_t is_blocked;        /* If the buffer needs to be drained of refs, this flag is set to other readers wait. */
+  uint8_t victimized;        /* If the buffer has been victimized this is set non-zero.  Prevents incrementing of ref_count. */
+  uint8_t is_ephemeral;      /* Is this buffer part of a list, or an ephemeral copy the caller needs to remove? */
+  pthread_mutex_t lock;      /* The primary locking element for individual buffer protection. */
+  pthread_cond_t condition;  /* The conditional variable for use with the lock when we're blocked and need signaling. */
 
   /* Cost values for each buffer when pulled from disk or compressed/decompressed. */
-  uint32_t comp_cost;             /* Time spent, in ns, to compress and decompress a page.  Using clock_gettime(3) */
-  uint32_t io_cost;               /* Time spent, in ns, to read this buffer from the disk.  Using clock_gettime(3) */
-  uint16_t comp_hits;             /* Number of times reclaimed from the compressed table during a polling period. */
+  uint32_t comp_cost;        /* Time spent, in ns, to compress and decompress a page.  Using clock_gettime(3) */
+  uint32_t io_cost;          /* Time spent, in ns, to read this buffer from the disk.  Using clock_gettime(3) */
+  uint16_t comp_hits;        /* Number of times reclaimed from the compressed table during a polling period. */
 
   /* The actual payload we want to cache (i.e.: the page). */
-  uint16_t data_length;           /* Number of bytes originally in *data. */
-  uint16_t comp_length;           /* Number of bytes in *data if it was compressed.  Set to 0 when not used. */
-  void *data;                     /* Pointer to the memory holding the page data, whether raw or compressed. */
+  uint16_t data_length;      /* Number of bytes originally in *data. */
+  uint16_t comp_length;      /* Number of bytes in *data if it was compressed.  Set to 0 when not used. */
+  void *data;                /* Pointer to the memory holding the page data, whether raw or compressed. */
 
   /* Tracking for the list we're part of. */
-  Buffer *next;                   /* Pointer to the next neighbor since lists are singularly linked. */
+  Buffer *next;              /* Pointer to the next neighbor since lists are singularly linked. */
 };
 
 

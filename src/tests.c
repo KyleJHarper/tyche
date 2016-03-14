@@ -485,7 +485,6 @@ void tests__move_buffers(List *list, char **pages) {
   for (uint i = 0; i < opts.page_count; i++) {
     buf = buffer__initialize(i, pages[i]);
     buf->popularity = MAX_POPULARITY/(i+1);
-printf("adding %d of %d\n", i, opts.page_count);
     list__add(list, buf);
   }
   printf("All done.  Raw list has %d buffers using %"PRIu64" bytes.  Comp list has %d buffers using %"PRIu64" bytes.\n", list->raw_count, list->current_raw_size, list->comp_count, list->current_comp_size);
@@ -502,7 +501,6 @@ printf("adding %d of %d\n", i, opts.page_count);
     buf->popularity = MAX_POPULARITY/(i+1);
     list__add(list, buf);
   }
-  list__sweep(list, 5);
   printf("All done.  Raw list has %d buffers using %"PRIu64" bytes.  Comp list has %d buffers using %"PRIu64" bytes.\n", list->raw_count, list->current_raw_size, list->comp_count, list->current_comp_size);
   while(list->head->next != list->head)
     list__remove(list, list->head->next->id);
@@ -516,7 +514,6 @@ printf("adding %d of %d\n", i, opts.page_count);
     buf->popularity = MAX_POPULARITY/(i+1);
     list__add(list, buf);
   }
-  list__sweep(list, 5);
   // Find a buffer that was compressed and list__search it until it's restored.
   Buffer *test4_buf = list->head->next;
   while(test4_buf->comp_length == 0 && test4_buf != list->head)
@@ -531,8 +528,7 @@ printf("adding %d of %d\n", i, opts.page_count);
     buffer__unlock(test4_buf);
     if(test4_buf->is_ephemeral == 0)
       break;
-    buffer__destroy(buf);
-    continue;
+    buffer__destroy(test4_buf);
   }
   printf("Test 4 Passed:  Can we restore items from the offload list when searching finds them there?\n\n");
 

@@ -26,7 +26,9 @@ const Buffer BUFFER_INITIALIZER = {
   /* Attributes for typical buffer organization and management. */
   .id = 0,
   .ref_count = 0,
+  .pending_sweep = 0,
   .popularity = 0,
+  .is_blocked = 0,
   .victimized = 0,
   .is_ephemeral = 0,
   .lock = PTHREAD_MUTEX_INITIALIZER,
@@ -280,6 +282,7 @@ int buffer__compress(Buffer *buf) {
  * this function at the same time.  The resident buffer__lock(buf) should protect the buffer itself from anyone who might be trying
  * to lock it for whatever reason.  Since no one is reading ->data (it's compressed) and we don't care about dirty reads from race
  * conditions with this buffer's other members, we don't need to victimize or drain it of refs.
+ * Caller MUST block (buffer__block/unblock) to drain readers!
  */
 int buffer__decompress(Buffer *buf) {
   // Make sure we're supposed to actually be doing work.
@@ -291,22 +294,13 @@ int buffer__decompress(Buffer *buf) {
   /* Make sure we have a valid buffer with valid data element. */
   if (buf == NULL)
     return E_BUFFER_NOT_FOUND;
-  int rv = buffer__lock(buf);
-  if (rv != E_OK)
-    return rv;
-  if (buf->data == NULL) {
-    buffer__unlock(buf);
+  int rv = E_OK;
+  if (buf->data == NULL)
     return E_BUFFER_MISSING_DATA;
-  }
-  if (buf->data_length == 0) {
-    buffer__unlock(buf);
+  if (buf->data_length == 0)
     return E_BUFFER_MISSING_DATA;
-  }
-  if (buf->comp_length == 0) {
-    // Someone beat us to it...
-    buffer__unlock(buf);
+  if (buf->comp_length == 0)
     return E_OK;
-  }
 
   /* Data looks good, time to decompress.  Lock the buffer for safety. */
   struct timespec start, end;
