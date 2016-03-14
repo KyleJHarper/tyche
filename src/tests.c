@@ -294,7 +294,7 @@ void tests__elements(List *list) {
 
   // Display the statistics of the list.
   printf("\nStep 2.  Showing list statistics.\n");
-  tests__list_structure(list);
+  list__show_structure(list);
 
   // Search for an item just to prove it works.
   printf("\nStep 3.  Searching for a buffer, just to prove it works.\n");
@@ -314,7 +314,7 @@ void tests__elements(List *list) {
 
   // Display the statistics of the list again.
   printf("\nStep 5.  Showing list statistics.\n");
-  tests__list_structure(list);
+  list__show_structure(list);
 
   printf("Test 'elements': All Passed\n");
   return;
@@ -560,71 +560,4 @@ void tests__options() {
   printf("opts->quiet          = %"PRIi8"\n",  opts.quiet);
 
   return;
-}
-
-/* tests__list_structure
- * Spits out a bunch of information about a list.  Mostly for debugging.  Might delete later.
- */
-void tests__list_structure(List *list) {
-  // List attributes
-  /* Size and Counter Members */
-  printf("       raw/comp count: %"PRIu32" / %"PRIu32"\n", list->raw_count, list->comp_count);
-  printf("raw/comp current size: %"PRIu64" / %"PRIu64"\n", list->current_raw_size, list->current_comp_size);
-  printf("    raw/comp max size: %"PRIu64" / %"PRIu64"\n", list->max_raw_size, list->max_comp_size);
-  /* Locking, Reference Counters, and Similar Members */
-  printf("            ref_count: %"PRIu32"\n", list->ref_count);
-  printf("      pending_writers: %"PRIu8"\n", list->pending_writers);
-  /* Management and Administration Members */
-  printf("           sweep_goal: %"PRIu8"\n", list->sweep_goal);
-  printf("               sweeps: %"PRIu64"\n", list->sweeps);
-  printf("           sweep_cost: %"PRIu64"\n", list->sweep_cost);
-  /* Management of Nodes for Skiplist and Buffers */
-  printf("               levels: %"PRIu8"\n", list->levels);
-
-  // Skiplist Index information.
-  int count = 0, out_of_order = 0, downs_wrong = 0, downs = 0;
-  SkiplistNode *slnode = NULL, *sldown = NULL;
-  // Step 1:  For each level...
-  for(int i=0; i<list->levels; i++) {
-    count = 0;
-    out_of_order = 0;
-    downs_wrong = 0;
-    slnode = list->indexes[i];
-    // Step 2:  For each slnode moving rightward...
-    while(slnode->right != NULL) {
-      downs = 0;
-      sldown = slnode;
-      // Step 3:  For each slnode looking downward...
-      while(sldown->down != NULL) {
-        if(sldown->target->id == sldown->down->target->id)
-          downs++;
-        sldown = sldown->down;
-      }
-      if(downs != i)
-        downs_wrong++;
-      slnode = slnode->right;
-      count++;
-      if((slnode->right != NULL) && (slnode->target->id >= slnode->right->target->id))
-        out_of_order++;
-    }
-    printf("Index %02d:  in order - %s, down pointers correct - %s, count %d (%3.1f%%)\n", i, out_of_order == 0 ? "yes" : "no", downs_wrong == 0 ? "yes" : "no", count, 100 * (double)count/(list->raw_count + list->comp_count));
-    if(out_of_order != 0) {
-      printf("Index was out of order displaying: ");
-      slnode = list->indexes[i];
-      while(slnode->right != NULL) {
-        slnode = slnode->right;
-        printf(" %"PRIu32, slnode->target->id);
-      }
-      printf("\n");
-    }
-  }
-  printf("Indexes %02d - %02d are all 0 / 0.0%%\n", list->levels, SKIPLIST_MAX);
-  out_of_order = 0;
-  Buffer *nearest_neighbor = list->head->next;
-  while(nearest_neighbor->next != list->head) {
-    if(nearest_neighbor->id >= nearest_neighbor->next->id)
-      out_of_order++;
-    nearest_neighbor = nearest_neighbor->next;
-  }
-  printf("In order from head: %s\n", out_of_order == 0 ? "yes" : "no");
 }

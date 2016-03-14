@@ -33,6 +33,5 @@ void tests__wake_up(List *raw_list);
 void tests__read(ReadWriteOpts *rwopts);
 void tests__chaos(ReadWriteOpts *rwopts);
 void tests__elements(List *raw_list);
-void tests__list_structure(List *list);
 
 #endif /* SRC_TESTS_H_ */

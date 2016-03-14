@@ -127,15 +127,15 @@ int manager__start(Manager *mgr) {
   uint64_t total_acquisitions = mgr->hits + mgr->misses;
   clock_gettime(CLOCK_MONOTONIC, &end);
   mgr->run_duration = (BILLION *(end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec) / MILLION;
-  printf("Buffer Acquisitions : %"PRIu64" (%"PRIu64" hits, %"PRIu64" misses)\n", total_acquisitions, mgr->hits, mgr->misses);
-  printf("Pages in Data Set   : %"PRIu32" (%"PRIu64" bytes)\n",opts.page_count, opts.dataset_size);
-  printf("Compressions        : %"PRIu64" compressions\n", mgr->list->compressions);
-  printf("Restorations        : %"PRIu64" restorations\n", mgr->list->restorations);
+  printf("Buffer Acquisitions : %'"PRIu64" (%'"PRIu64" hits, %'"PRIu64" misses)\n", total_acquisitions, mgr->hits, mgr->misses);
+  printf("Pages in Data Set   : %'"PRIu32" (%'"PRIu64" bytes)\n",opts.page_count, opts.dataset_size);
+  printf("Compressions        : %'"PRIu64" compressions\n", mgr->list->compressions);
+  printf("Restorations        : %'"PRIu64" restorations\n", mgr->list->restorations);
   printf("Hit Ratio           : %4.2f%%\n", 100.0 * mgr->hits / total_acquisitions);
   printf("Fixed Memory Ratio  : %"PRIi8"%% (%"PRIu64" bytes raw, %"PRIu64" bytes compressed)\n", opts.fixed_ratio, mgr->list->max_raw_size, mgr->list->max_comp_size);
   printf("Manager run time    : %.1f sec\n", 1.0 * mgr->run_duration / 1000);
   printf("Time sweeping       : %"PRIu64" sweeps, %'"PRIu64"\n", mgr->list->sweeps, mgr->list->sweep_cost);
-  tests__list_structure(mgr->list);
+  list__show_structure(mgr->list);
   return E_OK;
 }
 

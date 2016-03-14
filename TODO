@@ -36,3 +36,5 @@
           1. list__add() for the count and size.
           2. list__sweep() for the sweeps++ and sweep_cost increments.
           3. list__search() restoration when a compressed buffer warrants it.
+     d) When fixed ratio is low (-f 1) the sweep logic goes into a deadlock somehow.
+     e) Pushing items off the compressed list still fails.  Need to debug (I think I'm checking raw).

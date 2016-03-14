@@ -568,23 +568,15 @@ uint32_t list__sweep(List *list, uint8_t sweep_goal) {
   const uint32_t BYTES_NEEDED = list->current_raw_size * sweep_goal / 100;
 
   // Loop forever to free up memory.  Memory checks happen near the end of the loop.  Surround with a zero-check for initial balancing.
-Buffer *tmp = list->head->next;
-int pending = 0;
-while(tmp != list->head){
-  if(tmp->pending_sweep == 1)
-    pending++;
-  tmp = tmp->next;
-}
-printf("\nSweeping: buffers tagged pending vs total is: %d / %u.  Raw size: %"PRIu64"  comp size %"PRIu64"\n", pending, list->raw_count + list->comp_count, list->current_raw_size, list->current_comp_size);
   if(BYTES_NEEDED != 0) {
     while(1) {
       // Scan until we find a buffer to remove.  Popularity is halved until a victim is found.  Skip head matches.
       while(1) {
         list->clock_hand = list->clock_hand->next;
-        // If the buffer is already pending for sweep operations, we can't reuse it.  Skip.
-        if(list->clock_hand->pending_sweep == 1)
-          continue;
         if (list->clock_hand->popularity == 0 && list->clock_hand != list->head) {
+          // If the buffer is already pending for sweep operations, we can't reuse it.  Skip.
+          if(list->clock_hand->pending_sweep == 1)
+            continue;
           // If it's compressed, just update the comp_victims array (if possible) and continue.
           if (list->clock_hand->comp_length > 0) {
             if(list->comp_victims_index < VICTIM_BATCH_SIZE) {
@@ -633,15 +625,6 @@ printf("\nSweeping: buffers tagged pending vs total is: %d / %u.  Raw size: %"PR
   for(int i=0; i<list->comp_victims_index; i++)
     list->comp_victims[i]->pending_sweep = 0;
 
-pending = 0;
-tmp = list->head->next;
-while(tmp != list->head){
-  if(tmp->pending_sweep == 1 && tmp->comp_length > 0)
-    pending++;
-  tmp = tmp->next;
-}
-printf("All raw searching is done.  Pending sweeper count is %d\n", pending);
-
   // We freed up enough raw space.  If comp space is too large start freeing up space.  Update some counters under write protection.
   list__acquire_write_lock(list);
   list->compressions += total_victims;
@@ -670,7 +653,7 @@ printf("All raw searching is done.  Pending sweeper count is %d\n", pending);
   list->sweeps++;
   list->sweep_cost += BILLION * (end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec;
   list__release_write_lock(list);
-printf("All done sweeping.  Raw size is now %"PRIu64" and comp size is %"PRIu64"\n", list->current_raw_size, list->current_comp_size);
+
   return bytes_freed;
 }
 
@@ -777,4 +760,72 @@ void list__compressor_start(Compressor *comp) {
     }
   }
   return;
+}
+
+
+/* tests__list_structure
+ * Spits out a bunch of information about a list.  Mostly for debugging.  Might delete later.
+ */
+void list__show_structure(List *list) {
+  // List attributes
+  /* Size and Counter Members */
+  printf("       raw/comp count: %"PRIu32" / %"PRIu32"\n", list->raw_count, list->comp_count);
+  printf("raw/comp current size: %"PRIu64" / %"PRIu64"\n", list->current_raw_size, list->current_comp_size);
+  printf("    raw/comp max size: %"PRIu64" / %"PRIu64"\n", list->max_raw_size, list->max_comp_size);
+  /* Locking, Reference Counters, and Similar Members */
+  printf("            ref_count: %"PRIu32"\n", list->ref_count);
+  printf("      pending_writers: %"PRIu8"\n", list->pending_writers);
+  /* Management and Administration Members */
+  printf("           sweep_goal: %"PRIu8"\n", list->sweep_goal);
+  printf("               sweeps: %"PRIu64"\n", list->sweeps);
+  printf("           sweep_cost: %"PRIu64"\n", list->sweep_cost);
+  /* Management of Nodes for Skiplist and Buffers */
+  printf("               levels: %"PRIu8"\n", list->levels);
+
+  // Skiplist Index information.
+  int count = 0, out_of_order = 0, downs_wrong = 0, downs = 0;
+  SkiplistNode *slnode = NULL, *sldown = NULL;
+  // Step 1:  For each level...
+  for(int i=0; i<list->levels; i++) {
+    count = 0;
+    out_of_order = 0;
+    downs_wrong = 0;
+    slnode = list->indexes[i];
+    // Step 2:  For each slnode moving rightward...
+    while(slnode->right != NULL) {
+      downs = 0;
+      sldown = slnode;
+      // Step 3:  For each slnode looking downward...
+      while(sldown->down != NULL) {
+        if(sldown->target->id == sldown->down->target->id)
+          downs++;
+        sldown = sldown->down;
+      }
+      if(downs != i)
+        downs_wrong++;
+      slnode = slnode->right;
+      count++;
+      if((slnode->right != NULL) && (slnode->target->id >= slnode->right->target->id))
+        out_of_order++;
+    }
+    printf("Index %02d:  in order - %s, down pointers correct - %s, count %d (%4.2f%%)\n", i, out_of_order == 0 ? "yes" : "no", downs_wrong == 0 ? "yes" : "no", count, 100 * (double)count/(list->raw_count + list->comp_count));
+    if(out_of_order != 0) {
+      printf("Index was out of order displaying: ");
+      slnode = list->indexes[i];
+      while(slnode->right != NULL) {
+        slnode = slnode->right;
+        printf(" %"PRIu32, slnode->target->id);
+      }
+      printf("\n");
+    }
+  }
+  printf("Indexes %02d - %02d are all 0 / 0.0%%\n", list->levels, SKIPLIST_MAX);
+  out_of_order = 0;
+  Buffer *nearest_neighbor = list->head->next;
+  while(nearest_neighbor->next != list->head) {
+    if(nearest_neighbor->id >= nearest_neighbor->next->id)
+      out_of_order++;
+    nearest_neighbor = nearest_neighbor->next;
+  }
+  printf("In order from head: %s\n", out_of_order == 0 ? "yes" : "no");
 }
