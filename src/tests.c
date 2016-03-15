@@ -558,6 +558,7 @@ void tests__options() {
   printf("opts->hit_ratio      = %"PRIi8"\n",  opts.hit_ratio);
   /* Niceness Features */
   printf("opts->quiet          = %"PRIi8"\n",  opts.quiet);
+  printf("opts->verbosity      = %"PRIi8"\n",  opts.verbosity);
 
   return;
 }

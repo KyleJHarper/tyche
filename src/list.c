@@ -29,6 +29,7 @@
 #include <assert.h>
 #include <inttypes.h>
 #include <time.h>      /* for clock_gettime() */
+#include <math.h>
 #include "buffer.h"
 #include "error.h"
 #include "options.h"
@@ -44,7 +45,7 @@
 #define MILLION    1000000L
 
 /* Set a threshold for when a compressed buffer is a reasonable candidate for restoration. */
-const int RESTORATION_THRESHOLD = 32;
+const int RESTORATION_THRESHOLD = 8;
 
 
 /* Extern the error codes we'll use. */
@@ -231,16 +232,18 @@ int list__add(List *list, Buffer *buf) {
   int rv = E_OK;
   int i_had_to_wait = 0;
 
-  /* Grab the list lock so we can handle sweeping processes and signaling correctly. */
-  pthread_mutex_lock(&list->lock);
-  while(list->current_raw_size > list->max_raw_size) {
-    i_had_to_wait = 1;
-    pthread_cond_signal(&list->sweeper_condition);
-    pthread_cond_wait(&list->reader_condition, &list->lock);
+  /* Grab the list lock so we can handle sweeping processes and signaling correctly.  Small race will allow exceeding max, but that's ok. */
+  if(list->current_raw_size > list->max_raw_size) {
+    pthread_mutex_lock(&list->lock);
+    while(list->current_raw_size > list->max_raw_size) {
+      i_had_to_wait = 1;
+      pthread_cond_signal(&list->sweeper_condition);
+      pthread_cond_wait(&list->reader_condition, &list->lock);
+    }
+    if(i_had_to_wait == 1)
+      pthread_cond_broadcast(&list->reader_condition);
+    pthread_mutex_unlock(&list->lock);
   }
-  if(i_had_to_wait == 1)
-    pthread_cond_broadcast(&list->reader_condition);
-  pthread_mutex_unlock(&list->lock);
 
   /* Add a read pin to prevent a writer from removing anything from underneath us. */
   list__update_ref(list, 1);
@@ -384,8 +387,7 @@ int list__remove(List *list, bufferid_t id) {
     if(buf->comp_length == 0) {
       list->current_raw_size -= BUFFER_SIZE;
       list->raw_count--;
-    }
-    else {
+    } else {
       list->current_comp_size -= BUFFER_SIZE;
       list->comp_count--;
     }
@@ -558,9 +560,8 @@ int list__update_ref(List *list, int delta) {
  * current size should always be high enough to avoid errors because sweeping shouldn't be called until we're low on memory.
  */
 uint32_t list__sweep(List *list, uint8_t sweep_goal) {
-  // Variables and tracking data.
+  // Variables and tracking data.  We only start the time when we drain readers with list__acquire_write_lock() below.
   struct timespec start, end;
-  clock_gettime(CLOCK_MONOTONIC, &start);
   Buffer *victim = NULL;
   uint32_t bytes_freed = 0;
   uint32_t comp_bytes_added = 0;
@@ -568,7 +569,7 @@ uint32_t list__sweep(List *list, uint8_t sweep_goal) {
   const uint32_t BYTES_NEEDED = list->current_raw_size * sweep_goal / 100;
 
   // Loop forever to free up memory.  Memory checks happen near the end of the loop.  Surround with a zero-check for initial balancing.
-  if(BYTES_NEEDED != 0) {
+  if(BYTES_NEEDED != 0 && list->current_raw_size > list->max_raw_size) {
     while(1) {
       // Scan until we find a buffer to remove.  Popularity is halved until a victim is found.  Skip head matches.
       while(1) {
@@ -594,7 +595,7 @@ uint32_t list__sweep(List *list, uint8_t sweep_goal) {
         list->clock_hand->popularity >>= 1;
       }
       // We only reach this when an unpopular raw victim id is found.  Update space we'll free and start tracking victim.
-      bytes_freed += victim->data_length;
+      bytes_freed += BUFFER_OVERHEAD + victim->data_length;
       list->victims[list->victims_index] = victim;
       list->victims_index++;
       total_victims++;
@@ -609,7 +610,7 @@ uint32_t list__sweep(List *list, uint8_t sweep_goal) {
         }
         pthread_mutex_unlock(&list->jobs_lock);
         for(int i=0; i<list->victims_index; i++) {
-          comp_bytes_added += list->victims[i]->comp_length;
+          comp_bytes_added += BUFFER_OVERHEAD + list->victims[i]->comp_length;
           list->victims[i]->pending_sweep = 0;
           list->victims[i] = NULL;
         }
@@ -626,6 +627,7 @@ uint32_t list__sweep(List *list, uint8_t sweep_goal) {
     list->comp_victims[i]->pending_sweep = 0;
 
   // We freed up enough raw space.  If comp space is too large start freeing up space.  Update some counters under write protection.
+  clock_gettime(CLOCK_MONOTONIC, &start);
   list__acquire_write_lock(list);
   list->compressions += total_victims;
   list->raw_count -= total_victims;
@@ -634,22 +636,26 @@ uint32_t list__sweep(List *list, uint8_t sweep_goal) {
   list->current_comp_size += comp_bytes_added;
   if(list->current_comp_size > list->max_comp_size) {
     for(int i=0; i<list->comp_victims_index && list->current_comp_size > list->max_comp_size; i++) {
+      if(list->comp_victims[i]->comp_length == 0)
+        continue;
       list__remove(list, list->comp_victims[i]->id);
       list->comp_victims[i] = NULL;
     }
-    list->comp_victims_index = 0;
     // If we still haven't freed enough comp space, start clockhand motion again and take more comp victims.
     while(list->current_comp_size > list->max_comp_size) {
       while(1) {
         list->clock_hand = list->clock_hand->next;
-        if (list->clock_hand->popularity == 0 && list->clock_hand != list->head && list->clock_hand->comp_length != 0)
-            list__remove(list, list->clock_hand->id);
+        if(list->clock_hand->popularity == 0 && list->clock_hand != list->head && list->clock_hand->comp_length != 0) {
+          list__remove(list, list->clock_hand->id);
+          break;
+        }
         list->clock_hand->popularity >>= 1;
       }
     }
   }
   // Wrap up and leave.
   clock_gettime(CLOCK_MONOTONIC, &end);
+  list->comp_victims_index = 0;
   list->sweeps++;
   list->sweep_cost += BILLION * (end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec;
   list__release_write_lock(list);
@@ -673,7 +679,6 @@ int list__balance(List *list, uint32_t ratio) {
   list->max_comp_size = opts.max_memory - list->max_raw_size;
 
   // Call list__sweep to clean up any needed raw space and remove any compressed buffers, if necessary.
-  /* Determine the minimum sweep goal we need, then use the larger of the two. */
   const uint8_t MINIMUM_SWEEP_GOAL = list->current_raw_size > list->max_raw_size ? 101 - (100 * list->max_raw_size / list->current_raw_size) : 1;
   if (MINIMUM_SWEEP_GOAL > 99)
     show_error(E_GENERIC, "When trying to balance the lists, sweep goal was incremented to 100+ which would eliminate the entire list.  This is, I believe, a condition that should never happen.");
@@ -769,21 +774,28 @@ void list__compressor_start(Compressor *comp) {
 void list__show_structure(List *list) {
   // List attributes
   /* Size and Counter Members */
-  printf("       raw/comp count: %"PRIu32" / %"PRIu32"\n", list->raw_count, list->comp_count);
-  printf("raw/comp current size: %"PRIu64" / %"PRIu64"\n", list->current_raw_size, list->current_comp_size);
-  printf("    raw/comp max size: %"PRIu64" / %"PRIu64"\n", list->max_raw_size, list->max_comp_size);
+  printf("\n");
+  printf("List Statistics\n");
+  printf("===============\n");
+  printf("Buffer counts   : %'"PRIu32" raw, %'"PRIu32" compressed.\n", list->raw_count, list->comp_count);
+  printf("Current sizes   : %'"PRIu64" bytes raw, %'"PRIu64" bytes compressed.\n", list->current_raw_size, list->current_comp_size);
+  printf("Maximum sizes   : %'"PRIu64" bytes raw, %'"PRIu64" bytes compressed.\n", list->max_raw_size, list->max_comp_size);
   /* Locking, Reference Counters, and Similar Members */
-  printf("            ref_count: %"PRIu32"\n", list->ref_count);
-  printf("      pending_writers: %"PRIu8"\n", list->pending_writers);
+  printf("Reference pins  : %"PRIu32".  This should be 0 at program end.\n", list->ref_count);
+  printf("Pending writers : %"PRIu8".  This should be 0 at program end.\n", list->pending_writers);
   /* Management and Administration Members */
-  printf("           sweep_goal: %"PRIu8"\n", list->sweep_goal);
-  printf("               sweeps: %"PRIu64"\n", list->sweeps);
-  printf("           sweep_cost: %"PRIu64"\n", list->sweep_cost);
+  printf("Sweep goal      : %"PRIu8"%%.\n", list->sweep_goal);
+  printf("Sweeps performed: %'"PRIu64".\n", list->sweeps);
+  printf("Time sweeping   : %'"PRIu64" ns.\n", list->sweep_cost);
   /* Management of Nodes for Skiplist and Buffers */
-  printf("               levels: %"PRIu8"\n", list->levels);
+  printf("Skiplist Levels : %"PRIu8"\n", list->levels);
 
   // Skiplist Index information.
+  printf("\n");
+  printf("Skiplist Statistics\n");
+  printf("===================\n");
   int count = 0, out_of_order = 0, downs_wrong = 0, downs = 0;
+  int count_width = (int)floor(log10(abs(list->raw_count + list->comp_count))) + 1;
   SkiplistNode *slnode = NULL, *sldown = NULL;
   // Step 1:  For each level...
   for(int i=0; i<list->levels; i++) {
@@ -808,7 +820,7 @@ void list__show_structure(List *list) {
       if((slnode->right != NULL) && (slnode->target->id >= slnode->right->target->id))
         out_of_order++;
     }
-    printf("Index %02d:  in order - %s, down pointers correct - %s, count %d (%4.2f%%)\n", i, out_of_order == 0 ? "yes" : "no", downs_wrong == 0 ? "yes" : "no", count, 100 * (double)count/(list->raw_count + list->comp_count));
+    printf("Index %3d:  in order - %-3s |  down pointers correct - %-3s |  nodes in index %*d (%7.4f%%, optimal %7.4f%%)\n", i, out_of_order == 0 ? "yes" : "no", downs_wrong == 0 ? "yes" : "no", count_width, count, 100 * (double)count/(list->raw_count + list->comp_count), 100.0 / pow(2,i+1));
     if(out_of_order != 0) {
       printf("Index was out of order displaying: ");
       slnode = list->indexes[i];

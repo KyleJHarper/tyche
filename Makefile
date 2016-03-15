@@ -24,7 +24,7 @@ build:
 		$(SRCDIR)/io.c      \
 		$(SRCDIR)/tests.c   \
 		$(SRCDIR)/tyche.c   \
-		-lrt
+		-lrt -lm
 	$(CC) $(CFLAGS)     -o $(BINDIR)/hello $(SRCDIR)/hello.c
 	$(CC) $(CFLAGS)     -o $(BINDIR)/sizes $(SRCDIR)/sizes.c
 	$(CC) $(CFLAGS) -O3 -o $(BINDIR)/tyche \
@@ -37,7 +37,7 @@ build:
 		$(SRCDIR)/io.c      \
 		$(SRCDIR)/tests.c   \
 		$(SRCDIR)/tyche.c   \
-		-lrt
+		-lrt -lm
 
 clean:
 	rm -f $(BINDIR)/*

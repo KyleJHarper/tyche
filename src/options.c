@@ -20,13 +20,13 @@
 
 
 /* Definitions to match most of the options. */
-#define MIN_MEMORY                1024000    // 1MB.  Lowest fixed ration is 1%.  Guarantee enough to sweep 1 sample_data buffer.
+#define MIN_MEMORY                1024000    // 1MB,  Lowest fixed ration is 1%.  Guarantee enough to sweep 1 sample_data buffer.
 #define MAX_LOCK_RATIO          UINT8_MAX    // 2^8,  255
 #define MAX_WORKERS            UINT16_MAX    // 2^16, 65535
 #define MAX_DURATION           UINT16_MAX    // 2^16, 65535
 #define MAX_DATASET_MAX        UINT64_MAX    // 2^64, really big...
 #define MAX_PAGE_LIMIT         UINT32_MAX    // 2^32, 4.3 billion
-
+#define MAX_VERBOSITY                   1    // 1,    Future versions of verbosity might be scaled.
 
 
 /* Extern error codes */
@@ -67,11 +67,12 @@ void options__process(int argc, char **argv) {
   opts.extended_test_options = NULL;
   /* Niceness Features */
   opts.quiet = 0;
+  opts.verbosity = 0;
 
   /* Process everything passed from CLI now. */
   int c = 0;
   opterr = 0;
-  while ((c = getopt(argc, argv, "b:Cd:f:hm:n:p:qr:t:w:X:")) != -1) {
+  while ((c = getopt(argc, argv, "b:Cd:f:hm:n:p:qr:t:w:X:v")) != -1) {
     switch (c) {
       case 'b':
         opts.dataset_max = (uint64_t)atoll(optarg);
@@ -107,10 +108,8 @@ void options__process(int argc, char **argv) {
         opts.hit_ratio = (int8_t)atoi(optarg);
         break;
       case 't':
-        if (opts.test != NULL) {
-          fprintf(stderr, "You cannot specify the -t option more than once.\n");
-          exit(E_BAD_CLI);
-        }
+        if (opts.test != NULL)
+          show_error(E_BAD_CLI, "You cannot specify the -t option more than once.");
         opts.test = optarg;
         break;
       case 'w':
@@ -126,15 +125,19 @@ void options__process(int argc, char **argv) {
           exit(E_OK);
         }
         break;
+      case 'v':
+        if(opts.verbosity >= MAX_VERBOSITY)
+          show_error(E_BAD_CLI, "Verbosity is already at maximum value: %d", opts.verbosity);
+        opts.verbosity++;
+        break;
       case '?':
         options__show_help();
         if (optopt == 'b' || optopt == 'd' || optopt == 'f' || optopt == 'm' || optopt == 'n' || optopt == 'p' || optopt == 'r' || optopt == 't' || optopt == 'w' || optopt == 'X')
-          fprintf(stderr, "Option -%c requires an argument.\n", optopt);
-        else if (isprint (optopt))
-          fprintf(stderr, "Unknown option `-%c'.\n", optopt);
-        else
-          fprintf(stderr, "Unknown option character `\\x%x'.\n", optopt);
-        exit(E_BAD_CLI);
+          show_error(E_BAD_CLI, "Option -%c requires an argument.", optopt);
+        if (isprint (optopt))
+          show_error(E_BAD_CLI, "Unknown option `-%c'.", optopt);
+        show_error(E_BAD_CLI, "Unknown option character `\\x%x'.\n", optopt);
+        break;
       default:
         options__show_help();
         exit(E_BAD_CLI);
@@ -216,6 +219,9 @@ void options__show_help() {
   fprintf(stderr, "    %2s   %-10s   %s", "-t", "test_name", "Run an internal test.  Specify 'help' to see available tests.  (For debugging).\n");
   fprintf(stderr, "    %2s   %-10s   %s", "-w", "<number>",  "Number of workers (threads) to use while testing.  Defaults to CPU count.\n");
   fprintf(stderr, "    %2s   %-10s   %s", "-X", "opt1,opt2", "Extended options for tests that require it.  Specify -X 'help' for information.\n");
+  fprintf(stderr, "    %2s   %-10s   %s", "-v", "",          "Increase verbosity.  Current levels:\n");
+  fprintf(stderr, "    %2s   %-10s   %s",   "", "",          "  0) Show normal output (default). \n");
+  fprintf(stderr, "    %2s   %-10s   %s",   "", "",          "  1) Increase update frequency to 0.1s.  Show a list summary at the end.\n");
   fprintf(stderr, "(Note, capital options are usually for advanced testing use only.)\n");
   fprintf(stderr, "\n");
 

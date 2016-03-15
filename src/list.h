@@ -52,7 +52,7 @@ struct compressor {
 
 /* Build the typedef and structure for a List */
 #define SKIPLIST_MAX 32
-#define VICTIM_BATCH_SIZE 1000
+#define VICTIM_BATCH_SIZE 5000
 #define COMPRESSOR_BATCH_SIZE 25
 typedef struct list List;
 struct list {

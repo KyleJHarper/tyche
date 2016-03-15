@@ -127,15 +127,18 @@ int manager__start(Manager *mgr) {
   uint64_t total_acquisitions = mgr->hits + mgr->misses;
   clock_gettime(CLOCK_MONOTONIC, &end);
   mgr->run_duration = (BILLION *(end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec) / MILLION;
+  printf("Tyche Results\n");
+  printf("=============\n");
   printf("Buffer Acquisitions : %'"PRIu64" (%'"PRIu64" hits, %'"PRIu64" misses)\n", total_acquisitions, mgr->hits, mgr->misses);
   printf("Pages in Data Set   : %'"PRIu32" (%'"PRIu64" bytes)\n",opts.page_count, opts.dataset_size);
   printf("Compressions        : %'"PRIu64" compressions\n", mgr->list->compressions);
   printf("Restorations        : %'"PRIu64" restorations\n", mgr->list->restorations);
-  printf("Hit Ratio           : %4.2f%%\n", 100.0 * mgr->hits / total_acquisitions);
-  printf("Fixed Memory Ratio  : %"PRIi8"%% (%"PRIu64" bytes raw, %"PRIu64" bytes compressed)\n", opts.fixed_ratio, mgr->list->max_raw_size, mgr->list->max_comp_size);
+  printf("Hit Ratio           : %5.2f%%\n", 100.0 * mgr->hits / total_acquisitions);
+  printf("Fixed Memory Ratio  : %"PRIi8"%% (%'"PRIu64" bytes raw, %'"PRIu64" bytes compressed)\n", opts.fixed_ratio, mgr->list->max_raw_size, mgr->list->max_comp_size);
   printf("Manager run time    : %.1f sec\n", 1.0 * mgr->run_duration / 1000);
-  printf("Time sweeping       : %"PRIu64" sweeps, %'"PRIu64"\n", mgr->list->sweeps, mgr->list->sweep_cost);
-  list__show_structure(mgr->list);
+  printf("Time sweeping       : %'"PRIu64" sweeps (%'"PRIu64" ns)\n", mgr->list->sweeps, mgr->list->sweep_cost);
+  if(opts.verbosity > 0)
+    list__show_structure(mgr->list);
   return E_OK;
 }
 
@@ -146,7 +149,7 @@ int manager__start(Manager *mgr) {
 void manager__sweeper(Manager *mgr) {
   while(1) {
     pthread_mutex_lock(&mgr->list->lock);
-    while(mgr->list->current_raw_size < mgr->list->max_raw_size && mgr->runnable != 0) {
+    while(mgr->list->current_raw_size < mgr->list->max_raw_size && mgr->list->current_comp_size < mgr->list->max_comp_size && mgr->runnable != 0) {
       pthread_cond_broadcast(&mgr->list->reader_condition);
       pthread_cond_wait(&mgr->list->sweeper_condition, &mgr->list->lock);
     }
@@ -165,7 +168,15 @@ void manager__sweeper(Manager *mgr) {
  */
 void manager__timer(Manager *mgr) {
   /* Create time structures so we can break out after the right duration. */
-  const uint RECHECK_RESOLUTION = 250000;
+  uint RECHECK_RESOLUTION = 250000;
+  switch(opts.verbosity) {
+    case 0:
+      RECHECK_RESOLUTION = 250000;
+      break;
+    case 1:
+      RECHECK_RESOLUTION = 100000;
+      break;
+  }
   uint16_t elapsed = 0;
   uint64_t hits = 0, misses = 0;
   struct timespec start, current;
@@ -184,8 +195,8 @@ void manager__timer(Manager *mgr) {
     clock_gettime(CLOCK_MONOTONIC, &current);
     if(opts.quiet == 1)
       continue;
-    fprintf(stderr, "\r%-90s", "");
-    fprintf(stderr, "\r%"PRIu16" sec ETA.  %'"PRIu32" raw (%'"PRIu32" comp) buffers.  %'"PRIu64" restorations.  %'"PRIu64" compressions.  %'"PRIu64" hits.  %'"PRIu64" misses.", opts.duration - elapsed, mgr->list->raw_count, mgr->list->comp_count, mgr->list->restorations, mgr->list->compressions, hits, misses);
+    fprintf(stderr, "\r%-120s", "                                                                                                                        ");
+    fprintf(stderr, "\r%5"PRIu16" ETA.  Raw %'"PRIu32" (%"PRIu64" MB).  Comp %'"PRIu32" (%"PRIu64" MB).  %'"PRIu64" Comps (%'"PRIu64" Res).  %'"PRIu64" Hits (%'"PRIu64" Miss).", opts.duration - elapsed, mgr->list->raw_count, mgr->list->current_raw_size / MILLION, mgr->list->comp_count, mgr->list->current_comp_size / MILLION, mgr->list->compressions, mgr->list->restorations, hits, misses);
     fflush(stderr);
   }
   if(opts.quiet == 0)

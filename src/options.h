@@ -41,6 +41,7 @@ struct options {
 
   /* Niceness Features */
   uint8_t quiet;                // Should we suppress most output.  0 == Normal, 1 == Quiet.
+  uint8_t verbosity;            // How noisy to be when we're not being quieted.
 };
 
 
