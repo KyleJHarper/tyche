@@ -289,5 +289,6 @@ int manager__destroy(Manager *mgr) {
   // We have to wake up the sweeper so it knows to shut down.
   list__destroy(mgr->list);
   free(mgr->workers);
+  free(mgr);
   return E_OK;
 }

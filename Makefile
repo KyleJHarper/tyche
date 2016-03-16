@@ -25,8 +25,9 @@ build:
 		$(SRCDIR)/tests.c   \
 		$(SRCDIR)/tyche.c   \
 		-lrt -lm
-	$(CC) $(CFLAGS)     -o $(BINDIR)/hello $(SRCDIR)/hello.c
-	$(CC) $(CFLAGS)     -o $(BINDIR)/sizes $(SRCDIR)/sizes.c
+	$(CC) $(CFLAGS) -O3 -o $(BINDIR)/hello $(SRCDIR)/hello.c
+	$(CC) $(CFLAGS) -O3 -o $(BINDIR)/playground $(SRCDIR)/playground.c
+	$(CC) $(CFLAGS) -O3 -o $(BINDIR)/sizes $(SRCDIR)/sizes.c
 	$(CC) $(CFLAGS) -O3 -o $(BINDIR)/tyche \
 		$(SRCDIR)/list.c    \
 		$(SRCDIR)/lz4.c     \

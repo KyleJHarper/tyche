@@ -45,7 +45,7 @@
 #define MILLION    1000000L
 
 /* Set a threshold for when a compressed buffer is a reasonable candidate for restoration. */
-const int RESTORATION_THRESHOLD = 8;
+const int RESTORATION_THRESHOLD = 2;
 
 
 /* Extern the error codes we'll use. */
@@ -99,6 +99,7 @@ List* list__initialize() {
   list->sweeps = 0;
   list->sweep_cost = 0;
   list->restorations = 0;
+  list->compressions = 0;
 
   /* Head Nodes of the List and Skiplist (Index). Make the Buffer list head a dummy buffer. */
   list->head = buffer__initialize(BUFFER_ID_MAX, NULL);
@@ -500,8 +501,8 @@ int list__search(List *list, Buffer **buf, bufferid_t id) {
       pthread_mutex_lock(&list->lock);
       list->raw_count++;
       list->comp_count--;
-      list->current_comp_size -= comp_length;
-      list->current_raw_size += (*buf)->data_length;
+      list->current_comp_size -= (BUFFER_OVERHEAD + comp_length);
+      list->current_raw_size += (BUFFER_OVERHEAD + (*buf)->data_length);
       list->restorations++;
       while(list->current_raw_size > list->max_raw_size) {
         i_had_to_wait = 1;
@@ -567,7 +568,7 @@ uint32_t list__sweep(List *list, uint8_t sweep_goal) {
   uint32_t comp_bytes_added = 0;
   uint32_t total_victims = 0;
   const uint32_t BYTES_NEEDED = list->current_raw_size * sweep_goal / 100;
-
+printf("\nGoing to sweep\n");
   // Loop forever to free up memory.  Memory checks happen near the end of the loop.  Surround with a zero-check for initial balancing.
   if(BYTES_NEEDED != 0 && list->current_raw_size > list->max_raw_size) {
     while(1) {
@@ -625,7 +626,7 @@ uint32_t list__sweep(List *list, uint8_t sweep_goal) {
   // Finally, remove all pending_sweep flags from the compressed victims now that we're done scanning.
   for(int i=0; i<list->comp_victims_index; i++)
     list->comp_victims[i]->pending_sweep = 0;
-
+printf("\nNeed write lock.  Ref count is %u.  Pending writers is %u\n", list->ref_count, list->pending_writers);
   // We freed up enough raw space.  If comp space is too large start freeing up space.  Update some counters under write protection.
   clock_gettime(CLOCK_MONOTONIC, &start);
   list__acquire_write_lock(list);
@@ -656,10 +657,11 @@ uint32_t list__sweep(List *list, uint8_t sweep_goal) {
   // Wrap up and leave.
   clock_gettime(CLOCK_MONOTONIC, &end);
   list->comp_victims_index = 0;
-  list->sweeps++;
+  if(bytes_freed > 0 || comp_bytes_added > 0)
+    list->sweeps++;
   list->sweep_cost += BILLION * (end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec;
   list__release_write_lock(list);
-
+printf("\nDone sweeping\n");
   return bytes_freed;
 }
 
@@ -709,6 +711,7 @@ int list__destroy(List *list) {
   for(int i=0; i<opts.cpu_count; i++)
     pthread_join(list->compressor_threads[i], NULL);
   free(list->compressor_pool);
+  free(list->compressor_threads);
   free(list);
   return E_OK;
 }
@@ -722,7 +725,9 @@ void list__compressor_start(Compressor *comp) {
   Buffer *work_me[COMPRESSOR_BATCH_SIZE];
   int work_me_count = 0;
   int rv = E_OK;
+  pthread_mutex_lock(comp->jobs_lock);
   (*comp->active_compressors)++;
+  pthread_mutex_unlock(comp->jobs_lock);
 
   while(1) {
     // Secure the lock to test the predicate.  If there's no work to do, do some signaling and wait.
@@ -840,4 +845,5 @@ void list__show_structure(List *list) {
     nearest_neighbor = nearest_neighbor->next;
   }
   printf("In order from head: %s\n", out_of_order == 0 ? "yes" : "no");
+  printf("\n");
 }

@@ -227,6 +227,7 @@ int buffer__unblock(Buffer *buf) {
  * The list__migrate function will handle list locking; it will also invoke the buffer__victimize function to drain the buffer of
  * references before attempting to compress its ->data member and move it to the compressed list.  Since the buffer is victimized
  * and list__search is blocked we can be assured no one gets a bad read of ->data.
+ * Caller MUST block (buffer__block/unblock) to drain readers!
  */
 int buffer__compress(Buffer *buf) {
   // Make sure we're supposed to actually be doing work.
@@ -239,10 +240,8 @@ int buffer__compress(Buffer *buf) {
   if (buf == NULL)
     return E_BUFFER_NOT_FOUND;
   int rv = E_OK;
-  if (buf->data == NULL || buf->data_length == 0 || buf->comp_length != 0) {
-    buffer__unlock(buf);
+  if (buf->data == NULL || buf->data_length == 0 || buf->comp_length != 0)
     return E_BUFFER_MISSING_DATA;
-  }
 
   /* Data looks good, time to compress. */
   struct timespec start, end;
@@ -254,7 +253,6 @@ int buffer__compress(Buffer *buf) {
   int compressed_bytes = LZ4_compress_default(buf->data, compressed_data, buf->data_length, max_compressed_size);
   if (compressed_bytes < 1) {
     printf("buffer__compress returned a negative result from LZ4_compress_default: %d\n.", rv);
-    buffer__unlock(buf);
     return E_GENERIC;
   }
 
@@ -269,7 +267,6 @@ int buffer__compress(Buffer *buf) {
   /* At this point we've compressed the raw data and saved it in a tightly allocated section of heap.  Save time and unlock. */
   clock_gettime(CLOCK_MONOTONIC, &end);
   buf->comp_cost += BILLION *(end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec;
-  buffer__unlock(buf);
 
   return E_OK;
 }
@@ -311,7 +308,6 @@ int buffer__decompress(Buffer *buf) {
   rv = LZ4_decompress_safe(buf->data, decompressed_data, buf->comp_length, buf->data_length);
   if (rv < 0) {
     printf("Failed to decompress the data in buffer %d, rv was %d.\n", buf->id, rv);
-    buffer__unlock(buf);
     return E_GENERIC;
   }
 
@@ -325,7 +321,6 @@ int buffer__decompress(Buffer *buf) {
   buf->comp_hits++;
   buf->comp_length = 0;
   buf->comp_cost += BILLION *(end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec;
-  buffer__unlock(buf);
 
   return E_OK;
 }

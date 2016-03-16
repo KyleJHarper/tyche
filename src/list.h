@@ -52,7 +52,7 @@ struct compressor {
 
 /* Build the typedef and structure for a List */
 #define SKIPLIST_MAX 32
-#define VICTIM_BATCH_SIZE 5000
+#define VICTIM_BATCH_SIZE 1000
 #define COMPRESSOR_BATCH_SIZE 25
 typedef struct list List;
 struct list {
@@ -70,7 +70,7 @@ struct list {
   uint8_t lock_depth;                            /* The depth of functions which have locked us, to ensure deeper calls don't release locks. */
   pthread_cond_t writer_condition;               /* The condition variable for writers to wait for when attempting to drain a list of refs. */
   pthread_cond_t reader_condition;               /* The condition variable for readers to wait for when attempting to increment ref count. */
-  pthread_cond_t sweeper_condition;              /* The conditino variable for sweeping signals. */
+  pthread_cond_t sweeper_condition;              /* The condition variable for sweeping signals. */
   uint32_t ref_count;                            /* Number of threads pinning this list (searching it) */
   uint8_t pending_writers;                       /* Value to indicate how many writers are waiting to edit the list. */
 
