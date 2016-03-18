@@ -26,9 +26,11 @@
         Might be.  But it's fast enough to not be a bottleneck and prove the point I'm trying to make with compression.
 3. Niceness & Bug Fixes
      a) Update ALLLLLL the documentation in the source files.
-     b) When there isn't enough space in comp max_size for a single sweep, it hangs (100% cpu, not deadlock).
-     c) Very first sweep of a run can deadlock... why?
      d) Debug logging is probably a good idea for Managers and Workers.
+     e) Extra verbosity options.  Display restorations/sec, acq/sec, etc.
+     f) Skiplist output should show delta for SkiplistNode % (optimal - actual).
 4. Single list.
      f) Allow buffer preferencing (% to consider high-usage) and the associated weight (how many times to hit)
      h) Finish manger__timer() status printing.  Still a tad long... trim it down.
+     i) Can replacing uint8_t flags with bitwise fields reduce memory and/or increase speed with cache locality?
+     j) Can we malloc the entire buffer space up-front and use a custom allocator to completely avoid malloc()?  Freelist.

@@ -1,7 +1,7 @@
 # Hooray, a make file.
 
 CC     = gcc
-CFLAGS += -Wall -std=gnu99 -pthread
+CFLAGS += -Wall -Wextra -std=gnu99 -pthread
 
 SRCDIR = src
 OBJDIR = obj

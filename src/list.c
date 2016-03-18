@@ -238,7 +238,7 @@ int list__add(List *list, Buffer *buf) {
     pthread_mutex_lock(&list->lock);
     while(list->current_raw_size > list->max_raw_size) {
       i_had_to_wait = 1;
-      pthread_cond_signal(&list->sweeper_condition);
+      pthread_cond_broadcast(&list->sweeper_condition);  //Could be spurious.
       pthread_cond_wait(&list->reader_condition, &list->lock);
     }
     if(i_had_to_wait == 1)
@@ -490,7 +490,8 @@ int list__search(List *list, Buffer **buf, bufferid_t id) {
       buffer__lock(*buf);
       buffer__update_ref(*buf, -1);
       buffer__unlock(*buf);
-      buffer__block(*buf);
+      if (buffer__block(*buf) == E_BUFFER_IS_VICTIMIZED)
+        show_error(E_GENERIC, "I am trying to block a victimized buffer.\n");
       if (buffer__decompress(*buf) != E_OK)
         show_error(E_GENERIC, "A buffer that deserved restoration failed to decompress properly.");
       buffer__unblock(*buf);
@@ -568,7 +569,7 @@ uint32_t list__sweep(List *list, uint8_t sweep_goal) {
   uint32_t comp_bytes_added = 0;
   uint32_t total_victims = 0;
   const uint32_t BYTES_NEEDED = list->current_raw_size * sweep_goal / 100;
-printf("\nGoing to sweep\n");
+
   // Loop forever to free up memory.  Memory checks happen near the end of the loop.  Surround with a zero-check for initial balancing.
   if(BYTES_NEEDED != 0 && list->current_raw_size > list->max_raw_size) {
     while(1) {
@@ -626,7 +627,7 @@ printf("\nGoing to sweep\n");
   // Finally, remove all pending_sweep flags from the compressed victims now that we're done scanning.
   for(int i=0; i<list->comp_victims_index; i++)
     list->comp_victims[i]->pending_sweep = 0;
-printf("\nNeed write lock.  Ref count is %u.  Pending writers is %u\n", list->ref_count, list->pending_writers);
+
   // We freed up enough raw space.  If comp space is too large start freeing up space.  Update some counters under write protection.
   clock_gettime(CLOCK_MONOTONIC, &start);
   list__acquire_write_lock(list);
@@ -661,7 +662,7 @@ printf("\nNeed write lock.  Ref count is %u.  Pending writers is %u\n", list->re
     list->sweeps++;
   list->sweep_cost += BILLION * (end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec;
   list__release_write_lock(list);
-printf("\nDone sweeping\n");
+
   return bytes_freed;
 }
 
@@ -761,7 +762,11 @@ void list__compressor_start(Compressor *comp) {
     pthread_mutex_unlock(comp->jobs_lock);
     for(int i = 0; i < work_me_count; i++) {
       rv = E_OK;
-      buffer__block(work_me[i]);
+      rv = buffer__block(work_me[i]);
+      if(rv == E_BUFFER_IS_VICTIMIZED) {
+        buffer__unlock(work_me[i]);
+        continue;
+      }
       rv = buffer__compress(work_me[i]);
       buffer__unblock(work_me[i]);
       if(rv != E_OK)

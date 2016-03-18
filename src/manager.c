@@ -114,8 +114,9 @@ int manager__start(Manager *mgr) {
   for(int i=0; i<opts.workers; i++)
     pthread_create(&workers[i], NULL, (void *) &manager__spawn_worker, mgr);
   pthread_join(pt_timer, NULL);
-  for(int i=0; i<opts.workers; i++)
+  for(int i=0; i<opts.workers; i++) {
     pthread_join(workers[i], NULL);
+  }
 
   /* Stop the sweeper.  It requires being woken up. */
   pthread_mutex_lock(&mgr->list->lock);
@@ -232,6 +233,7 @@ void manager__spawn_worker(Manager *mgr) {
     /* Go find buffers to play with!  If the one we need doesn't exist, get it and add it. */
     id_to_get = rand() % opts.page_count;
     rv = list__search(mgr->list, &buf, id_to_get);
+
     if(rv == E_OK)
       mgr->workers[id].hits++;
     if(rv == E_BUFFER_NOT_FOUND) {
@@ -263,6 +265,7 @@ void manager__spawn_worker(Manager *mgr) {
   pthread_mutex_unlock(&mgr->lock);
 
   // All done.
+printf("(%u) Worker is done and shutting down.\n", id);
   pthread_exit(0);
 }
 

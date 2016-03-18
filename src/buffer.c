@@ -153,8 +153,13 @@ int buffer__update_ref(Buffer *buf, int delta) {
     return E_BUFFER_IS_VICTIMIZED;
 
   // Check to see if new refs are supposed to be blocked.  If so, wait.
-  while (delta > 0 && buf->is_blocked > 0)
+  int i_had_to_wait = 0;
+  while (delta > 0 && buf->is_blocked > 0) {
+    pthread_cond_broadcast(&buf->condition);
     pthread_cond_wait(&buf->condition, &buf->lock);
+  }
+  if (i_had_to_wait != 0)
+    pthread_cond_broadcast(&buf->condition);
 
   // At this point we're safe to modify the ref_count.  When decrementing, check to see if we need to broadcast to anyone.
   buf->ref_count += delta;
@@ -198,7 +203,10 @@ int buffer__victimize(Buffer *buf) {
  * The buffer will REMAIN LOCKED since only an unblock() from this same thread should ever resume normal flow.
  */
 int buffer__block(Buffer *buf) {
-  buffer__lock(buf);
+  // Lock the buffer.  It might be victimized, so check for that and let caller know.
+  int rv = buffer__lock(buf);
+  if (rv != E_OK)
+    return rv;
   buf->is_blocked = 1;
   while(buf->ref_count != 0) {
     pthread_cond_broadcast(&buf->condition);
