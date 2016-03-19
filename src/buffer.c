@@ -155,6 +155,7 @@ int buffer__update_ref(Buffer *buf, int delta) {
   // Check to see if new refs are supposed to be blocked.  If so, wait.
   int i_had_to_wait = 0;
   while (delta > 0 && buf->is_blocked > 0) {
+    i_had_to_wait = 1;
     pthread_cond_broadcast(&buf->condition);
     pthread_cond_wait(&buf->condition, &buf->lock);
   }

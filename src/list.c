@@ -189,8 +189,10 @@ int list__acquire_write_lock(List *list) {
     show_error(E_GENERIC, "A new lock chain is being established but someone else left the list with a non-zero depth.  This is fatal.");
   list->pending_writers++;
   /* Begin a predicate check while under the protection of the mutex.  Block if the predicate remains true. */
-  while(list->ref_count != 0)
+  while(list->ref_count != 0) {
+    pthread_cond_broadcast(&list->reader_condition);
     pthread_cond_wait(&list->writer_condition, &list->lock);
+  }
   /* We now have the lock again and our predicate is guaranteed protected (it respects the list lock). */
   list->pending_writers--;
   /* Set ourself to the lock owner in case future paths function calls try to ensure this thread has the list locked. */
@@ -507,7 +509,7 @@ int list__search(List *list, Buffer **buf, bufferid_t id) {
       list->restorations++;
       while(list->current_raw_size > list->max_raw_size) {
         i_had_to_wait = 1;
-        pthread_cond_signal(&list->sweeper_condition);
+        pthread_cond_broadcast(&list->sweeper_condition);
         pthread_cond_wait(&list->reader_condition, &list->lock);
       }
       if(i_had_to_wait == 1)
@@ -533,21 +535,22 @@ int list__update_ref(List *list, int delta) {
   /* Lock the list and check pending writers.  If non-zero and we're incrementing, wait on the reader condition. */
   int i_had_to_wait = 0;
   pthread_mutex_lock(&list->lock);
-  if (delta > 0 && opts.workers > list->pending_writers) {
+  if (delta > 0 && list->pending_writers > 0) {
     while(list->pending_writers > 0) {
       i_had_to_wait = 1;
+      pthread_cond_broadcast(&list->writer_condition);
       pthread_cond_wait(&list->reader_condition, &list->lock);
     }
   }
   list->ref_count += delta;
 
-  /* When writers are waiting and we are decrementing, we need to broadcast to the writer condition that it's safe to proceed. */
-  if (delta < 0 && list->pending_writers != 0 && list->ref_count == 0)
-    pthread_cond_broadcast(&list->writer_condition);
-
   /* If we were forced to wait, others may have been too.  Call the broadcast again (once per waiter) so others will wake up. */
   if (i_had_to_wait > 0)
     pthread_cond_broadcast(&list->reader_condition);
+
+  /* When writers are waiting and we are decrementing, we need to broadcast to the writer condition that it's safe to proceed. */
+  if (delta < 0 && list->pending_writers != 0 && list->ref_count == 0)
+    pthread_cond_broadcast(&list->writer_condition);
 
   /* Release the lock, which will also finally unblock any threads we woke up with broadcast above.  Then leave happy. */
   pthread_mutex_unlock(&list->lock);
