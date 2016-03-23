@@ -126,7 +126,8 @@ int main() {
   printf("Size of Buffer->victimized                    : %5zu Bytes\n", sizeof((Buffer *)0)->victimized);
   printf("Size of Buffer->is_ephemeral                  : %5zu Bytes\n", sizeof((Buffer *)0)->is_ephemeral);
   printf("Size of Buffer->lock                          : %5zu Bytes\n", sizeof((Buffer *)0)->lock);
-  printf("Size of Buffer->condition                     : %5zu Bytes\n", sizeof((Buffer *)0)->condition);
+  printf("Size of Buffer->reader_cond                   : %5zu Bytes\n", sizeof((Buffer *)0)->reader_cond);
+  printf("Size of Buffer->writer_cond                   : %5zu Bytes\n", sizeof((Buffer *)0)->writer_cond);
   /* Cost values for each buffer when pulled from disk or compressed/decompressed. */
   printf("Size of Buffer->comp_cost                     : %5zu Bytes\n", sizeof((Buffer *)0)->comp_cost);
   printf("Size of Buffer->io_cost                       : %5zu Bytes\n", sizeof((Buffer *)0)->io_cost);
@@ -153,7 +154,7 @@ int main() {
 
   printf("\n\n%10s%10s\n", "PAGE_SIZE", "Overhead");
   float size = 0.0;
-  for (int i=64; i<=65536; i*=2) {
+  for (int i=1024; i<=65536; i*=2) {
     size = (100.0f * sizeof(Buffer)) / (sizeof(Buffer) + i);
     printf("%10i%9.3f%%\n", i, size);
   }

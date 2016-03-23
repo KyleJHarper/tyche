@@ -35,7 +35,7 @@ void io__get_pages(char ***pages) {
   PageFilespec *head = NULL;
   PageFilespec *current = NULL;
   PageFilespec *next = NULL;
-  int i = 0;
+  uint32_t i = 0;
 
   // Start the recursive scan.
   io__scan_for_pages(opts.page_directory, &head);

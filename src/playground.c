@@ -8,7 +8,7 @@
 #include <stdio.h>
 #include <pthread.h>
 
-int main(int argc, char **argv) {
+int main() {
   pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
   pthread_mutex_lock(&lock);
   printf("Lock 1\n");

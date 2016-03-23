@@ -49,7 +49,7 @@ int main(int argc, char **argv) {
 
   /* Clean up and send final notice. */
   manager__destroy(mgr);
-  for(int i=0; i<opts.page_count; i++)
+  for(uint32_t i=0; i<opts.page_count; i++)
     free(pages[i]);
   free(pages);
   printf("Tyche finished, shutting down.\n");

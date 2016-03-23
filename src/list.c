@@ -189,10 +189,8 @@ int list__acquire_write_lock(List *list) {
     show_error(E_GENERIC, "A new lock chain is being established but someone else left the list with a non-zero depth.  This is fatal.");
   list->pending_writers++;
   /* Begin a predicate check while under the protection of the mutex.  Block if the predicate remains true. */
-  while(list->ref_count != 0) {
-    pthread_cond_broadcast(&list->reader_condition);
+  while(list->ref_count != 0)
     pthread_cond_wait(&list->writer_condition, &list->lock);
-  }
   /* We now have the lock again and our predicate is guaranteed protected (it respects the list lock). */
   list->pending_writers--;
   /* Set ourself to the lock owner in case future paths function calls try to ensure this thread has the list locked. */
@@ -212,12 +210,10 @@ int list__release_write_lock(List *list) {
   if (list->lock_depth != 0)
     return E_OK;
 
-  /* Determine if we need to notify other writers, or just the readers. */
-  if(list->pending_writers > 0) {
-    pthread_cond_broadcast(&list->writer_condition);
-  } else {
+  /* Determine if we need to notify the readers, avoids spurious wake ups. */
+  if(list->pending_writers == 0)
     pthread_cond_broadcast(&list->reader_condition);
-  }
+
   /* Remove ourself as the lock owner so another can take our place.  Don't have to... just NULL-ing for safety. */
   list->lock_owner = 0;
   /* Release the lock now that the proper broadcast is out there.  Releasing AFTER a broadcast is supported and safe. */
@@ -233,18 +229,14 @@ int list__release_write_lock(List *list) {
 int list__add(List *list, Buffer *buf) {
   /* Initialize a few basic values. */
   int rv = E_OK;
-  int i_had_to_wait = 0;
 
   /* Grab the list lock so we can handle sweeping processes and signaling correctly.  Small race will allow exceeding max, but that's ok. */
   if(list->current_raw_size > list->max_raw_size) {
     pthread_mutex_lock(&list->lock);
     while(list->current_raw_size > list->max_raw_size) {
-      i_had_to_wait = 1;
-      pthread_cond_broadcast(&list->sweeper_condition);  //Could be spurious.
+      pthread_cond_broadcast(&list->sweeper_condition);
       pthread_cond_wait(&list->reader_condition, &list->lock);
     }
-    if(i_had_to_wait == 1)
-      pthread_cond_broadcast(&list->reader_condition);
     pthread_mutex_unlock(&list->lock);
   }
 
@@ -422,6 +414,16 @@ int list__remove(List *list, bufferid_t id) {
  * search it.  When successfully found, we increment ref_count.
  */
 int list__search(List *list, Buffer **buf, bufferid_t id) {
+  /* Since searching can cause restorations and ultimately exceed max size, check for it.  This is a dirty read but OK. */
+  if(list->current_raw_size > list->max_raw_size) {
+    pthread_mutex_lock(&list->lock);
+    while(list->current_raw_size > list->max_raw_size) {
+      pthread_cond_broadcast(&list->sweeper_condition);
+      pthread_cond_wait(&list->reader_condition, &list->lock);
+    }
+    pthread_mutex_unlock(&list->lock);
+  }
+
   /* Update the ref count so we can begin searching. */
   list__update_ref(list, 1);
 
@@ -468,9 +470,6 @@ int list__search(List *list, Buffer **buf, bufferid_t id) {
     }
   }
 
-  /* Regardless of whether we found it we need to remove our pin on the list's ref count because we're done searching it. */
-  list__update_ref(list, -1);
-
   /* If the buffer was found and is compressed, we need to send a decompressed copy or perform a restoration on it. */
   if(rv == E_OK && (*buf)->comp_length != 0) {
     if((*buf)->popularity < RESTORATION_THRESHOLD) {
@@ -486,9 +485,8 @@ int list__search(List *list, Buffer **buf, bufferid_t id) {
         show_error(E_GENERIC, "A buffer received a non-OK return code when being decompressed.");
       *buf = copy;
     } else {
-      // This buffer warrants full restoration to the raw list.  Hooray for it!  Removing our pin and block for protection.
+      // This buffer warrants full restoration to the raw list.  Hooray for it!  Remove our pin and block for protection.  Safe due to list pin.
       uint16_t comp_length = (*buf)->comp_length;
-      int i_had_to_wait = 0;
       buffer__lock(*buf);
       buffer__update_ref(*buf, -1);
       buffer__unlock(*buf);
@@ -497,7 +495,7 @@ int list__search(List *list, Buffer **buf, bufferid_t id) {
       if (buffer__decompress(*buf) != E_OK)
         show_error(E_GENERIC, "A buffer that deserved restoration failed to decompress properly.");
       buffer__unblock(*buf);
-      // Now add our pin back and update some counters.
+      // Restore our pin and update counters for the list now.
       buffer__lock(*buf);
       buffer__update_ref(*buf, 1);
       buffer__unlock(*buf);
@@ -507,16 +505,12 @@ int list__search(List *list, Buffer **buf, bufferid_t id) {
       list->current_comp_size -= (BUFFER_OVERHEAD + comp_length);
       list->current_raw_size += (BUFFER_OVERHEAD + (*buf)->data_length);
       list->restorations++;
-      while(list->current_raw_size > list->max_raw_size) {
-        i_had_to_wait = 1;
-        pthread_cond_broadcast(&list->sweeper_condition);
-        pthread_cond_wait(&list->reader_condition, &list->lock);
-      }
-      if(i_had_to_wait == 1)
-        pthread_cond_broadcast(&list->reader_condition);
       pthread_mutex_unlock(&list->lock);
     }
   }
+
+  /* Regardless of whether we found it we need to remove our pin on the list's ref count because we're done searching it. */
+  list__update_ref(list, -1);
 
   return rv;
 }
@@ -533,20 +527,12 @@ int list__update_ref(List *list, int delta) {
     return E_OK;
 
   /* Lock the list and check pending writers.  If non-zero and we're incrementing, wait on the reader condition. */
-  int i_had_to_wait = 0;
   pthread_mutex_lock(&list->lock);
   if (delta > 0 && list->pending_writers > 0) {
-    while(list->pending_writers > 0) {
-      i_had_to_wait = 1;
-      pthread_cond_broadcast(&list->writer_condition);
+    while(list->pending_writers > 0)
       pthread_cond_wait(&list->reader_condition, &list->lock);
-    }
   }
   list->ref_count += delta;
-
-  /* If we were forced to wait, others may have been too.  Call the broadcast again (once per waiter) so others will wake up. */
-  if (i_had_to_wait > 0)
-    pthread_cond_broadcast(&list->reader_condition);
 
   /* When writers are waiting and we are decrementing, we need to broadcast to the writer condition that it's safe to proceed. */
   if (delta < 0 && list->pending_writers != 0 && list->ref_count == 0)

@@ -32,7 +32,8 @@ const Buffer BUFFER_INITIALIZER = {
   .victimized = 0,
   .is_ephemeral = 0,
   .lock = PTHREAD_MUTEX_INITIALIZER,
-  .condition = PTHREAD_COND_INITIALIZER,
+  .reader_cond = PTHREAD_COND_INITIALIZER,
+  .writer_cond = PTHREAD_COND_INITIALIZER,
   /* Cost values for each buffer when pulled from disk or compressed/decompressed. */
   .comp_cost = 0,
   .io_cost = 0,
@@ -54,6 +55,9 @@ extern const int E_GENERIC;
 extern const int E_BUFFER_NOT_FOUND;
 extern const int E_BUFFER_IS_VICTIMIZED;
 extern const int E_BUFFER_MISSING_DATA;
+extern const int E_BUFFER_ALREADY_COMPRESSED;
+extern const int E_BUFFER_ALREADY_DECOMPRESSED;
+
 
 /* Store the overhead of a Buffer for others to use for calculations */
 const int BUFFER_OVERHEAD = sizeof(Buffer);
@@ -153,21 +157,13 @@ int buffer__update_ref(Buffer *buf, int delta) {
     return E_BUFFER_IS_VICTIMIZED;
 
   // Check to see if new refs are supposed to be blocked.  If so, wait.
-  int i_had_to_wait = 0;
-  while (delta > 0 && buf->is_blocked > 0) {
-    i_had_to_wait = 1;
-    pthread_cond_broadcast(&buf->condition);
-    pthread_cond_wait(&buf->condition, &buf->lock);
-  }
-  if (i_had_to_wait != 0)
-    pthread_cond_broadcast(&buf->condition);
+  while (delta > 0 && buf->is_blocked > 0)
+    pthread_cond_wait(&buf->reader_cond, &buf->lock);
 
   // At this point we're safe to modify the ref_count.  When decrementing, check to see if we need to broadcast to anyone.
   buf->ref_count += delta;
-  if (buf->is_blocked != 0 && buf->ref_count == 0)
-    pthread_cond_broadcast(&buf->condition);
-  if (buf->victimized != 0 && buf->ref_count == 0)
-    pthread_cond_broadcast(&buf->condition);
+  if ((buf->is_blocked != 0 || buf->victimized != 0) && buf->ref_count == 0)
+    pthread_cond_broadcast(&buf->writer_cond);
 
   // If we're incrementing we need to update popularity too.
   if (delta > 0 && buf->popularity < MAX_POPULARITY)
@@ -189,18 +185,16 @@ int buffer__victimize(Buffer *buf) {
   if (rv > 0 && rv != E_BUFFER_IS_VICTIMIZED)
     return rv;
   buf->victimized = 1;
-  while(buf->ref_count != 0) {
-    pthread_cond_broadcast(&buf->condition);
-    pthread_cond_wait(&buf->condition, &buf->lock);
-  }
+  while(buf->ref_count != 0)
+    pthread_cond_wait(&buf->writer_cond, &buf->lock);
   return E_OK;
 }
 
 
 /* buffer__block
- * Similar to buffer__victimize().  The main difference is this will simply block the caller until ref_count hits 0, upon which
- * it will continue on while holding the lock to prevent others from doing anything else.  See buffer__update_ref() for how it
- * works together.
+ * Similar to buffer__victimize().  The main difference is this will simply block the caller until ref_count hits zero, upon which
+ * it will continue on while holding the lock to prevent others from doing anything else.  See buffer__update_ref() for how it works
+ * together.
  * The buffer will REMAIN LOCKED since only an unblock() from this same thread should ever resume normal flow.
  */
 int buffer__block(Buffer *buf) {
@@ -209,10 +203,8 @@ int buffer__block(Buffer *buf) {
   if (rv != E_OK)
     return rv;
   buf->is_blocked = 1;
-  while(buf->ref_count != 0) {
-    pthread_cond_broadcast(&buf->condition);
-    pthread_cond_wait(&buf->condition, &buf->lock);
-  }
+  while(buf->ref_count != 0)
+    pthread_cond_wait(&buf->writer_cond, &buf->lock);
   return E_OK;
 }
 
@@ -223,7 +215,7 @@ int buffer__block(Buffer *buf) {
 int buffer__unblock(Buffer *buf) {
   // We don't need to do any checking because a block call previously has already protected us.  We just need to signal later.
   buf->is_blocked = 0;
-  pthread_cond_broadcast(&buf->condition);
+  pthread_cond_broadcast(&buf->reader_cond);
   buffer__unlock(buf);
   return E_OK;
 }
@@ -249,8 +241,10 @@ int buffer__compress(Buffer *buf) {
   if (buf == NULL)
     return E_BUFFER_NOT_FOUND;
   int rv = E_OK;
-  if (buf->data == NULL || buf->data_length == 0 || buf->comp_length != 0)
+  if (buf->data == NULL || buf->data_length == 0)
     return E_BUFFER_MISSING_DATA;
+  if (buf->comp_length != 0)
+    return E_BUFFER_ALREADY_COMPRESSED;
 
   /* Data looks good, time to compress. */
   struct timespec start, end;
@@ -298,15 +292,15 @@ int buffer__decompress(Buffer *buf) {
   }
 
   /* Make sure we have a valid buffer with valid data element. */
+  int rv = E_OK;
   if (buf == NULL)
     return E_BUFFER_NOT_FOUND;
-  int rv = E_OK;
   if (buf->data == NULL)
     return E_BUFFER_MISSING_DATA;
   if (buf->data_length == 0)
     return E_BUFFER_MISSING_DATA;
   if (buf->comp_length == 0)
-    return E_OK;
+    return E_BUFFER_ALREADY_DECOMPRESSED;
 
   /* Data looks good, time to decompress.  Lock the buffer for safety. */
   struct timespec start, end;
@@ -349,7 +343,7 @@ int buffer__copy(Buffer *src, Buffer *dst) {
   dst->popularity   = src->popularity;
   dst->is_ephemeral = src->is_ephemeral;
   dst->victimized   = src->victimized;
-  // The lock and condition do not need to be linked.
+  // The lock and conditions do not need to be linked.
 
   /* Cost values for each buffer when pulled from disk or compressed/decompressed. */
   dst->comp_cost = src->comp_cost;

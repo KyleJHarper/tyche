@@ -155,8 +155,10 @@ void manager__sweeper(Manager *mgr) {
       pthread_cond_wait(&mgr->list->sweeper_condition, &mgr->list->lock);
     }
     pthread_mutex_unlock(&mgr->list->lock);
-    if(mgr->runnable == 0)
+    if(mgr->runnable == 0) {
+      pthread_cond_broadcast(&mgr->list->reader_condition);
       break;
+    }
     list__sweep(mgr->list, mgr->list->sweep_goal);
   }
 

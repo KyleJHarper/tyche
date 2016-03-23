@@ -176,18 +176,18 @@ void tests__synchronized_readwrite(List *list) {
 
   // Start worker threads which will try to read data at the same time.
   pthread_t workers[rwopts.worker_count];
-  for (int i=0; i<rwopts.worker_count; i++)
+  for (uint32_t i=0; i<rwopts.worker_count; i++)
     pthread_create(&workers[i], NULL, (void *) &tests__read, &rwopts);
 
   // Start up a chaos monkeys for insanity.
   pthread_t chaos_monkeys[rwopts.chaos_monkeys];
-  for (int i=0; i<rwopts.chaos_monkeys; i++)
+  for (uint32_t i=0; i<rwopts.chaos_monkeys; i++)
     pthread_create(&chaos_monkeys[i], NULL, (void *) &tests__chaos, &rwopts);
 
   // Wait for them to finish.
-  for (int i=0; i<rwopts.worker_count; i++)
+  for (uint32_t i=0; i<rwopts.worker_count; i++)
     pthread_join(workers[i], NULL);
-  for (int i=0; i<rwopts.chaos_monkeys; i++)
+  for (uint32_t i=0; i<rwopts.chaos_monkeys; i++)
     pthread_join(chaos_monkeys[i], NULL);
 
   int has_failures = 0;
@@ -217,7 +217,7 @@ void tests__read(ReadWriteOpts *rwopts) {
   int rv = 0;
   bufferid_t id_to_get = 0;
   Buffer *selected = NULL;
-  for (int i=0; i<rwopts->reads_per_worker; i++) {
+  for (uint32_t i=0; i<rwopts->reads_per_worker; i++) {
     for(;;) {
       id_to_get = rand() % rwopts->list_count;
       rv = list__search(rwopts->list, &selected, id_to_get);
@@ -267,7 +267,7 @@ void tests__elements(List *list) {
   Buffer *buf = NULL;
   int rv = E_OK;
   int id = 0;
-  int element_count = 5000;
+  uint32_t element_count = 5000;
   if(opts.extended_test_options != NULL && strcmp(opts.extended_test_options, "") != 0) {
     printf("Extended options were found; updating test values with options specified: %s\n", opts.extended_test_options);
     char *token = NULL;
@@ -327,7 +327,7 @@ void tests__elements(List *list) {
  * the page_count.
  */
 void tests__io(char **pages) {
-  int id_to_get = 128;
+  bufferid_t id_to_get = 128;
   while (id_to_get >= opts.page_count && id_to_get != 0)
     id_to_get >>= 1;
   if (id_to_get == 0)
