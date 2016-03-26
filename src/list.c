@@ -550,14 +550,14 @@ int list__update_ref(List *list, int delta) {
  * Note:  We attempt to free a percentage of ->current_size, NOT ->max_size!  There are pros/cons to both; in normal usage the
  * current size should always be high enough to avoid errors because sweeping shouldn't be called until we're low on memory.
  */
-uint32_t list__sweep(List *list, uint8_t sweep_goal) {
+uint64_t list__sweep(List *list, uint8_t sweep_goal) {
   // Variables and tracking data.  We only start the time when we drain readers with list__acquire_write_lock() below.
   struct timespec start, end;
   Buffer *victim = NULL;
-  uint32_t bytes_freed = 0;
-  uint32_t comp_bytes_added = 0;
+  uint64_t bytes_freed = 0;
+  uint64_t comp_bytes_added = 0;
   uint32_t total_victims = 0;
-  const uint32_t BYTES_NEEDED = list->current_raw_size * sweep_goal / 100;
+  const uint64_t BYTES_NEEDED = (list->current_raw_size > list->max_raw_size ? list->current_raw_size - list->max_raw_size : 0) + (list->max_raw_size * sweep_goal / 100);
 
   // Loop forever to free up memory.  Memory checks happen near the end of the loop.  Surround with a zero-check for initial balancing.
   if(BYTES_NEEDED != 0 && list->current_raw_size > list->max_raw_size) {
@@ -793,7 +793,7 @@ void list__show_structure(List *list) {
   printf("\n");
   printf("Skiplist Statistics\n");
   printf("===================\n");
-  int count = 0, out_of_order = 0, downs_wrong = 0, downs = 0;
+  int count = 0, out_of_order = 0, downs_wrong = 0, downs = 0, non_zero_refs = 0;
   int count_width = (int)floor(log10(abs(list->raw_count + list->comp_count))) + 1;
   SkiplistNode *slnode = NULL, *sldown = NULL;
   // Step 1:  For each level...
@@ -836,8 +836,11 @@ void list__show_structure(List *list) {
   while(nearest_neighbor->next != list->head) {
     if(nearest_neighbor->id >= nearest_neighbor->next->id)
       out_of_order++;
+    if(nearest_neighbor->ref_count != 0)
+      non_zero_refs++;
     nearest_neighbor = nearest_neighbor->next;
   }
   printf("In order from head: %s\n", out_of_order == 0 ? "yes" : "no");
+  printf("Buffers with non-zero ref counts: %d\n", non_zero_refs);
   printf("\n");
 }

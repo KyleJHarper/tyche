@@ -28,12 +28,12 @@ const Buffer BUFFER_INITIALIZER = {
   .ref_count = 0,
   .pending_sweep = 0,
   .popularity = 0,
-  .is_blocked = 0,
   .victimized = 0,
   .is_ephemeral = 0,
   .lock = PTHREAD_MUTEX_INITIALIZER,
   .reader_cond = PTHREAD_COND_INITIALIZER,
   .writer_cond = PTHREAD_COND_INITIALIZER,
+  .pending_writers = 0,
   /* Cost values for each buffer when pulled from disk or compressed/decompressed. */
   .comp_cost = 0,
   .io_cost = 0,
@@ -157,12 +157,12 @@ int buffer__update_ref(Buffer *buf, int delta) {
     return E_BUFFER_IS_VICTIMIZED;
 
   // Check to see if new refs are supposed to be blocked.  If so, wait.
-  while (delta > 0 && buf->is_blocked > 0)
+  while (delta > 0 && buf->pending_writers != 0)
     pthread_cond_wait(&buf->reader_cond, &buf->lock);
 
   // At this point we're safe to modify the ref_count.  When decrementing, check to see if we need to broadcast to anyone.
   buf->ref_count += delta;
-  if ((buf->is_blocked != 0 || buf->victimized != 0) && buf->ref_count == 0)
+  if ((buf->pending_writers != 0 || buf->victimized != 0) && buf->ref_count == 0)
     pthread_cond_broadcast(&buf->writer_cond);
 
   // If we're incrementing we need to update popularity too.
@@ -202,7 +202,7 @@ int buffer__block(Buffer *buf) {
   int rv = buffer__lock(buf);
   if (rv != E_OK)
     return rv;
-  buf->is_blocked = 1;
+  buf->pending_writers++;
   while(buf->ref_count != 0)
     pthread_cond_wait(&buf->writer_cond, &buf->lock);
   return E_OK;
@@ -210,12 +210,14 @@ int buffer__block(Buffer *buf) {
 
 
 /* buffer__unblock
- * Removes the blocking status from the buffer and starts a cascade of signals to others.
+ * Removes the blocking status from the buffer and starts a cascade of signals to others if pending_writers is 0.
+ * Caller MUST have this buffer locked from buffer__block() already!
  */
 int buffer__unblock(Buffer *buf) {
   // We don't need to do any checking because a block call previously has already protected us.  We just need to signal later.
-  buf->is_blocked = 0;
-  pthread_cond_broadcast(&buf->reader_cond);
+  buf->pending_writers--;
+  if(buf->pending_writers == 0)
+    pthread_cond_broadcast(&buf->reader_cond);
   buffer__unlock(buf);
   return E_OK;
 }
@@ -343,7 +345,7 @@ int buffer__copy(Buffer *src, Buffer *dst) {
   dst->popularity   = src->popularity;
   dst->is_ephemeral = src->is_ephemeral;
   dst->victimized   = src->victimized;
-  // The lock and conditions do not need to be linked.
+  // The lock and conditions do not need to be linked.  Nor do pending writers.
 
   /* Cost values for each buffer when pulled from disk or compressed/decompressed. */
   dst->comp_cost = src->comp_cost;

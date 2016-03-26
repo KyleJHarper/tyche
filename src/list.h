@@ -111,7 +111,7 @@ int list__update_ref(List *list, int delta);
 int list__search(List *list, Buffer **buf, bufferid_t id);
 int list__acquire_write_lock(List *list);
 int list__release_write_lock(List *list);
-uint32_t list__sweep(List *list, uint8_t sweep_goal);
+uint64_t list__sweep(List *list, uint8_t sweep_goal);
 int list__balance(List *list, uint32_t ratio);
 int list__destroy(List *list);
 void list__compressor_start(Compressor *comp);

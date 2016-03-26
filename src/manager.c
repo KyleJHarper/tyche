@@ -21,9 +21,11 @@
 #include "tests.h"
 
 
-/* We need to know what one billion is for clock timing. */
-#define BILLION 1000000000L
-#define MILLION    1000000L
+/* We need to know what one billion is for clock timing and others are for pretty output. */
+#define TRILLION 1000000000000L
+#define BILLION     1000000000L
+#define MILLION        1000000L
+#define THOUSAND          1000L
 
 /* Specify the default raw ratio to start with. */
 #define INITIAL_RAW_RATIO   80    // 80%
@@ -162,6 +164,10 @@ void manager__sweeper(Manager *mgr) {
     list__sweep(mgr->list, mgr->list->sweep_goal);
   }
 
+  // Perform a final sweep.  This is to solve the edge case where a reader (list__add or list__search) is stuck waiting because its
+  // last wake-up failed the predicate because others add/restores pushed it over the limit again.  Ergo, they're hung at shutdown.
+  list__sweep(mgr->list, mgr->list->sweep_goal);
+
   return;
 }
 
@@ -181,7 +187,9 @@ void manager__timer(Manager *mgr) {
       break;
   }
   uint16_t elapsed = 0;
-  uint64_t hits = 0, misses = 0;
+  uint64_t total_hits = 0, total_misses = 0;
+  double hits = 0.0, misses = 0.0, compressions = 0.0, restorations = 0.0;
+  char hits_unit = '\0', misses_unit = '\0', compressions_unit = '\0', restorations_unit = '\0';
   struct timespec start, current;
   clock_gettime(CLOCK_MONOTONIC, &start);
   clock_gettime(CLOCK_MONOTONIC, &current);
@@ -189,17 +197,22 @@ void manager__timer(Manager *mgr) {
   while(opts.duration > elapsed) {
     usleep(RECHECK_RESOLUTION);
     elapsed = (uint16_t)(current.tv_sec - start.tv_sec);
-    hits = 0;
-    misses = 0;
+    total_hits = 0;
+    total_misses = 0;
     for(workerid_t i = 0; i<opts.workers; i++) {
-      misses += mgr->workers[i].misses;
-      hits += mgr->workers[i].hits;
+      total_hits += mgr->workers[i].hits;
+      total_misses += mgr->workers[i].misses;
     }
     clock_gettime(CLOCK_MONOTONIC, &current);
     if(opts.quiet == 1)
       continue;
+    // Derive several values to make pretty output.
+    manager__abbreviate_number(total_hits, &hits, &hits_unit);
+    manager__abbreviate_number(total_misses, &misses, &misses_unit);
+    manager__abbreviate_number(mgr->list->compressions, &compressions, &compressions_unit);
+    manager__abbreviate_number(mgr->list->restorations, &restorations, &restorations_unit);
     fprintf(stderr, "\r%-120s", "                                                                                                                        ");
-    fprintf(stderr, "\r%5"PRIu16" ETA.  Raw %'"PRIu32" (%"PRIu64" MB).  Comp %'"PRIu32" (%"PRIu64" MB).  %'"PRIu64" Comps (%'"PRIu64" Res).  %'"PRIu64" Hits (%'"PRIu64" Miss).", opts.duration - elapsed, mgr->list->raw_count, mgr->list->current_raw_size / MILLION, mgr->list->comp_count, mgr->list->current_comp_size / MILLION, mgr->list->compressions, mgr->list->restorations, hits, misses);
+    fprintf(stderr, "\r%5"PRIu16" ETA.  Raw %'"PRIu32" (%"PRIu64" MB).  Comp %'"PRIu32" (%"PRIu64" MB).  %'.1f%c Comps (%'.1f%c Res).  %'.1f%c Hits (%'.1f%c Miss).", opts.duration - elapsed, mgr->list->raw_count, mgr->list->current_raw_size / MILLION, mgr->list->comp_count, mgr->list->current_comp_size / MILLION, compressions, compressions_unit, restorations, restorations_unit, hits, hits_unit, misses, misses_unit);
     fflush(stderr);
   }
   if(opts.quiet == 0)
@@ -208,6 +221,39 @@ void manager__timer(Manager *mgr) {
   /* Flag the manager is no longer runnable, which will stop all workers. */
   mgr->runnable = 0;
   pthread_exit(0);
+}
+
+
+/* manager__abbreviate_number
+ * Takes a given number and shortens it to an abbreviated form and sets the unit.
+ */
+void manager__abbreviate_number(uint64_t source_number, double *short_number, char *unit) {
+  char *no_unit = "";
+  char *k_unit = "K";
+  char *m_unit = "M";
+  char *b_unit = "B";
+  char *t_unit = "T";
+  if(source_number <= THOUSAND) {
+    *short_number = 1.0 * source_number;
+    strcpy(unit, no_unit);
+  }
+  if(source_number > THOUSAND) {
+    *short_number = 1.0 * source_number / THOUSAND;
+    strcpy(unit, k_unit);
+  }
+  if(source_number > MILLION) {
+    *short_number = 1.0 * source_number / MILLION;
+    strcpy(unit, m_unit);
+  }
+  if(source_number > BILLION) {
+    *short_number = 1.0 * source_number / BILLION;
+    strcpy(unit, b_unit);
+  }
+  if(source_number > TRILLION) {
+    *short_number = 1.0 * source_number / TRILLION;
+    strcpy(unit, t_unit);
+  }
+  return;
 }
 
 
@@ -267,7 +313,6 @@ void manager__spawn_worker(Manager *mgr) {
   pthread_mutex_unlock(&mgr->lock);
 
   // All done.
-printf("(%u) Worker is done and shutting down.\n", id);
   pthread_exit(0);
 }
 

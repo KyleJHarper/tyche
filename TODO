@@ -27,7 +27,7 @@
 3. Niceness & Bug Fixes
      a) Update ALLLLLL the documentation in the source files.
      d) Debug logging is probably a good idea for Managers and Workers.
-     e) Extra verbosity options.  Display restorations/sec, acq/sec, etc.
+     e) Extra verbosity options.  Display restorations/sec, acq/sec, workers, cpus, etc.
      f) Skiplist output should show delta for SkiplistNode % (optimal - actual).
 4. Single list.
      f) Allow buffer preferencing (% to consider high-usage) and the associated weight (how many times to hit)
