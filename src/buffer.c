@@ -297,9 +297,7 @@ int buffer__decompress(Buffer *buf) {
   int rv = E_OK;
   if (buf == NULL)
     return E_BUFFER_NOT_FOUND;
-  if (buf->data == NULL)
-    return E_BUFFER_MISSING_DATA;
-  if (buf->data_length == 0)
+  if (buf->data == NULL || buf->data_length == 0)
     return E_BUFFER_MISSING_DATA;
   if (buf->comp_length == 0)
     return E_BUFFER_ALREADY_DECOMPRESSED;

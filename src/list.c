@@ -54,6 +54,7 @@ extern const int E_GENERIC;
 extern const int E_BUFFER_NOT_FOUND;
 extern const int E_BUFFER_IS_VICTIMIZED;
 extern const int E_BUFFER_ALREADY_EXISTS;
+extern const int E_BUFFER_ALREADY_DECOMPRESSED;
 
 /* We need some information from the buffer */
 extern const int BUFFER_OVERHEAD;
@@ -486,14 +487,16 @@ int list__search(List *list, Buffer **buf, bufferid_t id) {
       *buf = copy;
     } else {
       // This buffer warrants full restoration to the raw list.  Hooray for it!  Remove our pin and block for protection.  Safe due to list pin.
+      int decompress_rv = E_OK;
       uint16_t comp_length = (*buf)->comp_length;
       buffer__lock(*buf);
       buffer__update_ref(*buf, -1);
       buffer__unlock(*buf);
       if (buffer__block(*buf) == E_BUFFER_IS_VICTIMIZED)
         show_error(E_GENERIC, "I am trying to block a victimized buffer.\n");
-      if (buffer__decompress(*buf) != E_OK)
-        show_error(E_GENERIC, "A buffer that deserved restoration failed to decompress properly.");
+      decompress_rv = buffer__decompress(*buf);
+      if (decompress_rv != E_OK && decompress_rv != E_BUFFER_ALREADY_DECOMPRESSED)
+        show_error(decompress_rv, "A buffer that deserved restoration failed to decompress properly.  rv was %d.", decompress_rv);
       buffer__unblock(*buf);
       // Restore our pin and update counters for the list now.
       buffer__lock(*buf);

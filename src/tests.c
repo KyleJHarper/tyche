@@ -27,7 +27,6 @@
 
 extern const int E_OK;
 extern const int E_BAD_CLI;
-extern const int E_BUFFER_POOFED;
 extern const int E_BUFFER_NOT_FOUND;
 extern const int E_BUFFER_IS_VICTIMIZED;
 extern const int E_GENERIC;
@@ -223,7 +222,7 @@ void tests__read(ReadWriteOpts *rwopts) {
       rv = list__search(rwopts->list, &selected, id_to_get);
       if (rv == E_OK)
         break;
-      if (rv == E_BUFFER_NOT_FOUND || rv == E_BUFFER_POOFED || E_BUFFER_IS_VICTIMIZED)
+      if (rv == E_BUFFER_NOT_FOUND || rv == E_BUFFER_IS_VICTIMIZED)
         continue;
       printf("We should never hit this (rv is %d).\n", rv);
     }

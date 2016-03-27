@@ -29,8 +29,8 @@
      d) Debug logging is probably a good idea for Managers and Workers.
      e) Extra verbosity options.  Display restorations/sec, acq/sec, workers, cpus, etc.
      f) Skiplist output should show delta for SkiplistNode % (optimal - actual).
+     g) Update error_codes.
 4. Single list.
      f) Allow buffer preferencing (% to consider high-usage) and the associated weight (how many times to hit)
      h) Finish manger__timer() status printing.  Still a tad long... trim it down.
      i) Can replacing uint8_t flags with bitwise fields reduce memory and/or increase speed with cache locality?
-     j) Can we malloc the entire buffer space up-front and use a custom allocator to completely avoid malloc()?  Freelist.
