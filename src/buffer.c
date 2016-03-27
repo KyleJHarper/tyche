@@ -59,7 +59,7 @@ extern const int E_BUFFER_ALREADY_COMPRESSED;
 extern const int E_BUFFER_ALREADY_DECOMPRESSED;
 
 
-/* Store the overhead of a Buffer for others to use for calculations */
+/* Store the overhead of a Buffer for others to use for calculations.  Note this doesn't count the SkipListNode (24 bytes), probabilistically. */
 const int BUFFER_OVERHEAD = sizeof(Buffer);
 
 

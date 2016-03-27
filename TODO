@@ -16,6 +16,7 @@
           buffers in a list and that is going to be expensive.  Maybe the list should keep an array of aggregates and
           iterate through them to determine how to tune the ratios and call list__balance.
           (Note:  This would save 10 bytes per buffer, which is great.)
+     h) Allow buffer preferencing (% to consider high-usage) and the associated weight (how many times to hit)
 2. FAQ
      a) Why no size_t?  (Because I want to ensure minium sizes in almost all cases)
      b) Why so much uint/uintX_t?  Because I usually need to accommodate the given size and negative numbers don't exist.
@@ -24,13 +25,12 @@
      f) Why lz4?  Partly it's compression speed+efficiency, but mostly it's decompression speed.
      g) Your page replacement is sub-optimal compared to <some_other_strategy>!
         Might be.  But it's fast enough to not be a bottleneck and prove the point I'm trying to make with compression.
+     h) Your program uses more memory than -m allows.
+        Yes, for workers, managers, compressors, etc.  -m is for buffer space.  The only exception is 24 bytes per buffer
+        (probabilistically) for a SkipListNode per buffer; but I can live with this.
 3. Niceness & Bug Fixes
      a) Update ALLLLLL the documentation in the source files.
      d) Debug logging is probably a good idea for Managers and Workers.
      e) Extra verbosity options.  Display restorations/sec, acq/sec, workers, cpus, etc.
      f) Skiplist output should show delta for SkiplistNode % (optimal - actual).
      g) Update error_codes.
-4. Single list.
-     f) Allow buffer preferencing (% to consider high-usage) and the associated weight (how many times to hit)
-     h) Finish manger__timer() status printing.  Still a tad long... trim it down.
-     i) Can replacing uint8_t flags with bitwise fields reduce memory and/or increase speed with cache locality?

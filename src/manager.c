@@ -132,10 +132,10 @@ int manager__start(Manager *mgr) {
   mgr->run_duration = (BILLION *(end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec) / MILLION;
   printf("Tyche Results\n");
   printf("=============\n");
-  printf("Buffer Acquisitions : %'"PRIu64" (%'"PRIu64" hits, %'"PRIu64" misses)\n", total_acquisitions, mgr->hits, mgr->misses);
+  printf("Buffer Acquisitions : %'"PRIu64" (%'.f per sec).  %'"PRIu64" hits.  %'"PRIu64" misses.\n", total_acquisitions, total_acquisitions / (1.0 * mgr->run_duration / 1000), mgr->hits, mgr->misses);
   printf("Pages in Data Set   : %'"PRIu32" (%'"PRIu64" bytes)\n",opts.page_count, opts.dataset_size);
-  printf("Compressions        : %'"PRIu64" compressions\n", mgr->list->compressions);
-  printf("Restorations        : %'"PRIu64" restorations\n", mgr->list->restorations);
+  printf("Compressions        : %'"PRIu64" compressions (%'.f per sec)\n", mgr->list->compressions, mgr->list->compressions / (1.0 * mgr->run_duration / 1000));
+  printf("Restorations        : %'"PRIu64" restorations (%'.f per sec)\n", mgr->list->restorations, mgr->list->restorations / (1.0 * mgr->run_duration / 1000));
   printf("Hit Ratio           : %5.2f%%\n", 100.0 * mgr->hits / total_acquisitions);
   printf("Fixed Memory Ratio  : %"PRIi8"%% (%'"PRIu64" bytes raw, %'"PRIu64" bytes compressed)\n", opts.fixed_ratio, mgr->list->max_raw_size, mgr->list->max_comp_size);
   printf("Manager run time    : %.1f sec\n", 1.0 * mgr->run_duration / 1000);
@@ -269,9 +269,7 @@ void manager__spawn_worker(Manager *mgr) {
   mgr->workers[id].id = id;
   mgr->workers[id].hits = 0;
   mgr->workers[id].misses = 0;
-
-  /* While srand should affect all threads per POSIX, call it per-thread anyway since each thread uses list__* functions.  For skiplist. */
-  srand((uint)(time(NULL)));
+  unsigned int seed = time(NULL) + 1;
 
   /* Begin the main loop for grabbing buffers. */
   Buffer *buf = NULL;
@@ -279,7 +277,7 @@ void manager__spawn_worker(Manager *mgr) {
   int rv = 0;
   while(mgr->runnable != 0) {
     /* Go find buffers to play with!  If the one we need doesn't exist, get it and add it. */
-    id_to_get = rand() % opts.page_count;
+    id_to_get = rand_r(&seed) % opts.page_count;
     rv = list__search(mgr->list, &buf, id_to_get);
 
     if(rv == E_OK)

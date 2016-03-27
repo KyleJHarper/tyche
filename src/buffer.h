@@ -31,10 +31,10 @@ struct buffer {
   popularity_t popularity;     /* Rapidly decaying counter used for victim selection with clock sweep.  Ceiling of MAX_POPULARITY. */
   uint8_t victimized;          /* If the buffer has been victimized this is set non-zero.  Prevents incrementing of ref_count. */
   uint8_t is_ephemeral;        /* Is this buffer part of a list, or an ephemeral copy the caller needs to remove? */
+  uint8_t pending_writers;     /* The number of writers (usually blockers) trying to work on the buffer. */
   pthread_mutex_t lock;        /* The primary locking element for individual buffer protection. */
   pthread_cond_t reader_cond;  /* The condition for readers to wait upon. */
   pthread_cond_t writer_cond;  /* The condition for writers to wait upon. */
-  uint8_t pending_writers;     /* The number of writers (usually blockers) trying to work on the buffer. */
 
   /* Cost values for each buffer when pulled from disk or compressed/decompressed. */
   uint32_t comp_cost;          /* Time spent, in ns, to compress and decompress a page.  Using clock_gettime(3) */

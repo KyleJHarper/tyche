@@ -44,8 +44,8 @@
 #define BILLION 1000000000L
 #define MILLION    1000000L
 
-/* Set a threshold for when a compressed buffer is a reasonable candidate for restoration. */
-const int RESTORATION_THRESHOLD = 2;
+/* Set a threshold for when a compressed buffer is a reasonable candidate for restoration.  Magic number. */
+const int RESTORATION_THRESHOLD = 6;
 
 
 /* Extern the error codes we'll use. */
@@ -788,7 +788,7 @@ void list__show_structure(List *list) {
   /* Management and Administration Members */
   printf("Sweep goal      : %"PRIu8"%%.\n", list->sweep_goal);
   printf("Sweeps performed: %'"PRIu64".\n", list->sweeps);
-  printf("Time sweeping   : %'"PRIu64" ns.\n", list->sweep_cost);
+  printf("Time sweeping   : %'"PRIu64" ns.  (Cannot search during this time.  More == bad)\n", list->sweep_cost);
   /* Management of Nodes for Skiplist and Buffers */
   printf("Skiplist Levels : %"PRIu8"\n", list->levels);
 
@@ -798,6 +798,7 @@ void list__show_structure(List *list) {
   printf("===================\n");
   int count = 0, out_of_order = 0, downs_wrong = 0, downs = 0, non_zero_refs = 0;
   int count_width = (int)floor(log10(abs(list->raw_count + list->comp_count))) + 1;
+  int total_skiplistnodes = 0;
   SkiplistNode *slnode = NULL, *sldown = NULL;
   // Step 1:  For each level...
   for(int i=0; i<list->levels; i++) {
@@ -809,6 +810,7 @@ void list__show_structure(List *list) {
     while(slnode->right != NULL) {
       downs = 0;
       sldown = slnode;
+      total_skiplistnodes++;
       // Step 3:  For each slnode looking downward...
       while(sldown->down != NULL) {
         if(sldown->target->id == sldown->down->target->id)
@@ -822,7 +824,7 @@ void list__show_structure(List *list) {
       if((slnode->right != NULL) && (slnode->target->id >= slnode->right->target->id))
         out_of_order++;
     }
-    printf("Index %3d:  in order - %-3s |  down pointers correct - %-3s |  nodes in index %*d (%7.4f%%, optimal %7.4f%%)\n", i, out_of_order == 0 ? "yes" : "no", downs_wrong == 0 ? "yes" : "no", count_width, count, 100 * (double)count/(list->raw_count + list->comp_count), 100.0 / pow(2,i+1));
+    printf("Index %2d:  in order - %-3s |  down pointers ok - %-3s |  nodes %*d (%7.4f%%, optimal %7.4f%%, delta %8.4f%%)\n", i, out_of_order == 0 ? "yes" : "no", downs_wrong == 0 ? "yes" : "no", count_width, count, 100 * (double)count/(list->raw_count + list->comp_count), 100.0 / pow(2,i+1), (100 * (double)count/(list->raw_count + list->comp_count)) - (100.0 / pow(2,i+1)));
     if(out_of_order != 0) {
       printf("Index was out of order displaying: ");
       slnode = list->indexes[i];
@@ -843,7 +845,8 @@ void list__show_structure(List *list) {
       non_zero_refs++;
     nearest_neighbor = nearest_neighbor->next;
   }
-  printf("In order from head: %s\n", out_of_order == 0 ? "yes" : "no");
-  printf("Buffers with non-zero ref counts: %d\n", non_zero_refs);
+  printf("Total number of SkiplistNodes   : %d (%7.4f%% coverage, optimal %8.4f%%, delta %.4f%%)\n", total_skiplistnodes, 100.0 * total_skiplistnodes / (list->raw_count + list->comp_count), 100.0, 100.0 * total_skiplistnodes / (list->raw_count + list->comp_count) - 100.0);
+  printf("Buffers in order from head      : %s\n", out_of_order == 0 ? "yes" : "no");
+  printf("Buffers with non-zero ref counts: %d (should be 0)\n", non_zero_refs);
   printf("\n");
 }
