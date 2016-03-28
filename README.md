@@ -8,6 +8,11 @@ This will be open-source (as will the ACCRS theory) and free but I am still goin
 ====
 Latest Changelog Entries
 
+**[2016-03-27]**
+*Released version 0.0.10 which changed list associations by merging everything into a single list and relying on buffer attributes for distinguishing compressed vs raw.  Performance of the list has gone up by many factors (4-10x).*
+
+*The last area of performance (short of architectural redesign) is improving cache hits in the CPU.  Specifically locality and keeping similar data (e.g.: all the SkiplistNodes of a given level) in the same consecutive pages.*
+
 **[2016-03-08]**
 *Released version 0.0.9 which added a threshold before list restoration is allowed for a victimized (compressed) buffer.  Lowers contention dramatically and helps provide a balance.  See VERSIONS.history for more.*
 

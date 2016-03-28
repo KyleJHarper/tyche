@@ -1,5 +1,12 @@
 Contains a simple note for each tagged release.  We will try to follow SEMVER.  Be aware, all 0.x.y releases are developmental and are NOT guaranteed compatible according to SEMVER.  Major version 0 should go away after major release 1... as will this notice probably.
 
+0.0.10 (2016-03-27)
+- Switched from a raw and comp list to a single list, allowing the comp_length to determine if a buffer is compressed or not.  The caller is notified of this by having a buffer__copy() made, decompresed, and is_ephemeral sent back.
+- Lowered the restoration threshold (magic number) to 6 which seemed to be a better case scenario.  In truth, this needs better research and testing.
+- Created a buffer__block/unblock() function-set using 2 conditions which allows anyone to safely block and edit a buffer.  This, combined with the use of a single list, means restoration and compression (sweeping) is still read-safe!  Only the removal of buffers (which only happens in to comp victims) means we get MUCH more reader time for searching.  CPU recruitment and scaling is much higher.
+- Did a huuuugge amount of profiling and debugging of performance.  The hottest spot (98%+) is down to a single line in list__search() on the Skiplist scanning, which is perfect.
+- Due to needing a second condition variable, buffer overhead is up to approximately 184 bytes (x86-64).  FYI.
+
 0.0.9 (2016-03-08)
 - Short release to address a theory I had about the fairness of restoration.  See points below.
 - Changed list__search to only call list__restore when a RESTORATION_THRESHOLD (32) is met.  This is a magic number just like popularity is, so it may need tuning later.  If the threshold isn't met, we simply make a copy of the buffer and set its is_ephemeral flag to true.
