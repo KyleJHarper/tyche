@@ -13,6 +13,8 @@ Latest Changelog Entries
 
 *The last area of performance (short of architectural redesign) is improving cache hits in the CPU.  Specifically locality and keeping similar data (e.g.: all the SkiplistNodes of a given level) in the same consecutive pages.*
 
+*Also released version 0.0.11 which simply added a buffer_id to SkiplistNode.  This prevents a tremendous amount of dereference when scanning the indexes.*
+
 **[2016-03-08]**
 *Released version 0.0.9 which added a threshold before list restoration is allowed for a victimized (compressed) buffer.  Lowers contention dramatically and helps provide a balance.  See VERSIONS.history for more.*
 
