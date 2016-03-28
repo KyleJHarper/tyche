@@ -109,15 +109,7 @@ List* list__initialize() {
   list->levels = 1;
   SkiplistNode *slnode = NULL;
   for(int i=0; i<SKIPLIST_MAX; i++) {
-    slnode = (SkiplistNode *)malloc(sizeof(SkiplistNode));
-    if(slnode == NULL)
-      show_error(E_GENERIC, "Failed to allocate memory for an slnode for list initialization.  This is fatal.");
-    // The skiplist index heads should always target the list head buffer.
-    slnode->target = list->head;
-    // The right pointer (next) is always NULL starting off.
-    slnode->right = NULL;
-    // Set the down pointer to NULL to start.  If we're above level 0, point to the next lower level.
-    slnode->down = NULL;
+    slnode = list__initialize_skiplistnode(list->head);
     if(i != 0)
       slnode->down = list->indexes[i-1];
     // Assign it to the correct index.
@@ -168,6 +160,7 @@ SkiplistNode* list__initialize_skiplistnode(Buffer *buf) {
   slnode->down = NULL;
   slnode->right = NULL;
   slnode->target = buf;
+  slnode->buffer_id = buf->id;
   return slnode;
 }
 
@@ -262,15 +255,15 @@ int list__add(List *list, Buffer *buf) {
   for(int i = list->levels; i >= 0; i--) {
     for(;;) {
       // Scan forward until we are as close as we can get.
-      while(slstack[i]->right != NULL && slstack[i]->right->target->id <= buf->id)
+      while(slstack[i]->right != NULL && slstack[i]->right->buffer_id <= buf->id)
         slstack[i] = slstack[i]->right;
       // Lock the buffer pointed to (if we haven't already) to effectively lock this SkiplistNode so we can test it.
-      if(slstack[i]->target->id != last_lock_id)
+      if(slstack[i]->buffer_id != last_lock_id)
         buffer__lock(slstack[i]->target);
       // If right is NULL or the ->right member is still bigger, we're as far over as we can go and should have a lock.
-      if(slstack[i]->right == NULL || slstack[i]->right->target->id > buf->id) {
-        if(slstack[i]->target->id != last_lock_id) {
-          last_lock_id = slstack[i]->target->id;
+      if(slstack[i]->right == NULL || slstack[i]->right->buffer_id > buf->id) {
+        if(slstack[i]->buffer_id != last_lock_id) {
+          last_lock_id = slstack[i]->buffer_id;
           locked_ids_index++;
           locked_buffers[locked_ids_index] = slstack[i]->target;
         }
@@ -280,7 +273,7 @@ int list__add(List *list, Buffer *buf) {
       buffer__unlock(slstack[i]->target);
     }
     // If the buffer already exists, flag it with rv.  We'll release any locks we acquired before we leave.
-    if(slstack[i]->target->id == buf->id) {
+    if(slstack[i]->buffer_id == buf->id) {
       rv = E_BUFFER_ALREADY_EXISTS;
       break;
     }
@@ -355,13 +348,13 @@ int list__remove(List *list, bufferid_t id) {
   int levels = 0;
   for(int i = list->levels - 1; i >= 0; i--) {
     // Shift right until the ->right target ID is too high.  Do NOT land on matches!  We don't have ->left pointers.
-    while(slstack[i]->right != NULL && slstack[i]->right->target->id < id)
+    while(slstack[i]->right != NULL && slstack[i]->right->buffer_id < id)
       slstack[i] = slstack[i]->right;
     // Set the next slstack index to the ->down member of the most-forward position thus far.  Skip if we're at 0.
     if(i != 0)
       slstack[i-1] = slstack[i]->down;
     // If ->right exists and its id matches increment levels so we can modify the skiplist levels later.
-    if(slstack[i]->right != NULL && slstack[i]->right->target->id == id)
+    if(slstack[i]->right != NULL && slstack[i]->right->buffer_id == id)
       levels++;
   }
 
@@ -433,12 +426,12 @@ int list__search(List *list, Buffer **buf, bufferid_t id) {
   SkiplistNode *slnode = list->indexes[list->levels];
   while(rv == E_BUFFER_NOT_FOUND) {
     // Move right until we can't go farther.  Try to let the system know to prefetch this, as this is the hottest spot in the code.
-    while(slnode->right != NULL && slnode->right->target->id <= id) {
+    while(slnode->right != NULL && slnode->right->buffer_id <= id) {
       slnode = slnode->right;
       __builtin_prefetch(slnode->right, 0, 1);
     }
     // If the node matches, we're done!  Try to update the ref and assign everything appropriately.
-    if(slnode->target->id == id) {
+    if(slnode->buffer_id == id) {
       rv = buffer__lock(slnode->target);
       if(rv == E_OK) {
         *buf = slnode->target;
@@ -815,7 +808,7 @@ void list__show_structure(List *list) {
       total_skiplistnodes++;
       // Step 3:  For each slnode looking downward...
       while(sldown->down != NULL) {
-        if(sldown->target->id == sldown->down->target->id)
+        if(sldown->buffer_id == sldown->down->buffer_id)
           downs++;
         sldown = sldown->down;
       }
@@ -823,7 +816,7 @@ void list__show_structure(List *list) {
         downs_wrong++;
       slnode = slnode->right;
       count++;
-      if((slnode->right != NULL) && (slnode->target->id >= slnode->right->target->id))
+      if((slnode->right != NULL) && (slnode->buffer_id >= slnode->right->buffer_id))
         out_of_order++;
     }
     printf("Index %2d:  in order - %-3s |  down pointers ok - %-3s |  nodes %*d (%7.4f%%, optimal %7.4f%%, delta %8.4f%%)\n", i, out_of_order == 0 ? "yes" : "no", downs_wrong == 0 ? "yes" : "no", count_width, count, 100 * (double)count/(list->raw_count + list->comp_count), 100.0 / pow(2,i+1), (100 * (double)count/(list->raw_count + list->comp_count)) - (100.0 / pow(2,i+1)));
@@ -832,7 +825,7 @@ void list__show_structure(List *list) {
       slnode = list->indexes[i];
       while(slnode->right != NULL) {
         slnode = slnode->right;
-        printf(" %"PRIu32, slnode->target->id);
+        printf(" %"PRIu32, slnode->buffer_id);
       }
       printf("\n");
     }

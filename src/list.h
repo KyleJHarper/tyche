@@ -27,11 +27,12 @@
 typedef struct skiplistnode SkiplistNode;
 struct skiplistnode {
   /* Directions for Traversal.  Left-To-Right Mentality. */
-  SkiplistNode *right;  /* The next highest node in the skiplist graph. */
-  SkiplistNode *down;   /* The next more-granular node in the skiplist graph. */
+  SkiplistNode *right;   /* The next highest node in the skiplist graph. */
+  SkiplistNode *down;    /* The next more-granular node in the skiplist graph. */
 
   /* Buffer Reference to the List Item Itself */
-  Buffer *target;       /* The buffer this node points to.  Always NULL when *up exists. */
+  Buffer *target;        /* The buffer this node points to.  Always NULL when *up exists. */
+  bufferid_t buffer_id;  /* The ID of the buffer we're pointing to.  Saves a dereference when scanning. */
 };
 
 
