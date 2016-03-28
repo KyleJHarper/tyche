@@ -34,3 +34,7 @@
      e) Extra verbosity options.  Display restorations/sec, acq/sec, workers, cpus, etc.
      f) Skiplist output should show delta for SkiplistNode % (optimal - actual).
      g) Update error_codes.
+4. Cache Locality and Performance
+     a) Can we store the buffer's ID in the SkiplistNode, sacraficing 8 bytes each but saving a dereference of ->target
+        when trying to scan forward?
+     b) Can we allocate all the space for a Skiplist level at once to ensure they're in as few pages as possible?

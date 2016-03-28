@@ -269,7 +269,7 @@ void manager__spawn_worker(Manager *mgr) {
   mgr->workers[id].id = id;
   mgr->workers[id].hits = 0;
   mgr->workers[id].misses = 0;
-  unsigned int seed = time(NULL) + 1;
+  unsigned int seed = time(NULL) + id;
 
   /* Begin the main loop for grabbing buffers. */
   Buffer *buf = NULL;

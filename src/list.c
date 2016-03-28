@@ -432,9 +432,11 @@ int list__search(List *list, Buffer **buf, bufferid_t id) {
   int rv = E_BUFFER_NOT_FOUND;
   SkiplistNode *slnode = list->indexes[list->levels];
   while(rv == E_BUFFER_NOT_FOUND) {
-    // Move right until we can't go farther.
-    while(slnode->right != NULL && slnode->right->target->id <= id)
+    // Move right until we can't go farther.  Try to let the system know to prefetch this, as this is the hottest spot in the code.
+    while(slnode->right != NULL && slnode->right->target->id <= id) {
       slnode = slnode->right;
+      __builtin_prefetch(slnode->right, 0, 1);
+    }
     // If the node matches, we're done!  Try to update the ref and assign everything appropriately.
     if(slnode->target->id == id) {
       rv = buffer__lock(slnode->target);
