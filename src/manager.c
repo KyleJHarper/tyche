@@ -140,6 +140,7 @@ int manager__start(Manager *mgr) {
   printf("Fixed Memory Ratio  : %"PRIi8"%% (%'"PRIu64" bytes raw, %'"PRIu64" bytes compressed)\n", opts.fixed_ratio, mgr->list->max_raw_size, mgr->list->max_comp_size);
   printf("Manager run time    : %.1f sec\n", 1.0 * mgr->run_duration / 1000);
   printf("Time sweeping       : %'"PRIu64" sweeps (%'"PRIu64" ns)\n", mgr->list->sweeps, mgr->list->sweep_cost);
+  printf("Threads & Workers   : %"PRIu16" CPUs.  %"PRIu16" Workers.", opts.cpu_count, opts.workers);
   if(opts.verbosity > 0)
     list__show_structure(mgr->list);
   return E_OK;

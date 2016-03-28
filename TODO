@@ -26,15 +26,7 @@
      g) Your page replacement is sub-optimal compared to <some_other_strategy>!
         Might be.  But it's fast enough to not be a bottleneck and prove the point I'm trying to make with compression.
      h) Your program uses more memory than -m allows.
-        Yes, for workers, managers, compressors, etc.  -m is for buffer space.  The only exception is 24 bytes per buffer
+        Yes, for workers, managers, compressors, etc.  -m is for buffer space.  The only exception is 32 bytes per buffer
         (probabilistically) for a SkipListNode per buffer; but I can live with this.
 3. Niceness & Bug Fixes
      a) Update ALLLLLL the documentation in the source files.
-     d) Debug logging is probably a good idea for Managers and Workers.
-     e) Extra verbosity options.  Display restorations/sec, acq/sec, workers, cpus, etc.
-     f) Skiplist output should show delta for SkiplistNode % (optimal - actual).
-     g) Update error_codes.
-4. Cache Locality and Performance
-     a) Can we store the buffer's ID in the SkiplistNode, sacraficing 8 bytes each but saving a dereference of ->target
-        when trying to scan forward?
-     b) Can we allocate all the space for a Skiplist level at once to ensure they're in as few pages as possible?
