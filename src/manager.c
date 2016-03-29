@@ -6,6 +6,7 @@
  * Description: Wheeeee
  */
 
+#include <jemalloc/jemalloc.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>

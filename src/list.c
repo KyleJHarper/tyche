@@ -21,6 +21,7 @@
  */
 
 /* Include necessary headers here. */
+#include <jemalloc/jemalloc.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>

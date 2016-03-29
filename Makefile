@@ -6,6 +6,7 @@ CFLAGS += -Wall -Wextra -std=gnu99 -pthread
 SRCDIR = src
 OBJDIR = obj
 BINDIR = bin
+JEMALLOC_DIR = /usr/local/lib
 
 SOURCES  := $(wildcard $(SRCDIR)/*.c)
 INCLUDES := $(wildcard $(SRCDIR)/*.h)
@@ -24,7 +25,7 @@ build:
 		$(SRCDIR)/io.c      \
 		$(SRCDIR)/tests.c   \
 		$(SRCDIR)/tyche.c   \
-		-lrt -lm
+		-L$(JEMALLOC_DIR) -Wl,-rpath,${JEMALLOC_DIR}/ -ljemalloc -lrt -lm
 	$(CC) $(CFLAGS) -O3 -o $(BINDIR)/hello $(SRCDIR)/hello.c
 	$(CC) $(CFLAGS) -O3 -o $(BINDIR)/playground $(SRCDIR)/playground.c
 	$(CC) $(CFLAGS) -O3 -o $(BINDIR)/sizes $(SRCDIR)/sizes.c
@@ -38,7 +39,7 @@ build:
 		$(SRCDIR)/io.c      \
 		$(SRCDIR)/tests.c   \
 		$(SRCDIR)/tyche.c   \
-		-lrt -lm
+		-L$(JEMALLOC_DIR) -Wl,-rpath,${JEMALLOC_DIR}/ -ljemalloc -lrt -lm
 
 clean:
 	rm -f $(BINDIR)/*

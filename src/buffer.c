@@ -6,6 +6,7 @@
  */
 
 /* Include Headers */
+#include <jemalloc/jemalloc.h>
 #include <stdio.h>
 #include <pthread.h>
 #include <stdint.h>
