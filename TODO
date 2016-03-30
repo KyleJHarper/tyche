@@ -32,3 +32,4 @@
         I know, but header guards make life happy.  If someone would like to fix it and submit a PR, go ahead.
 3. Niceness & Bug Fixes
      a) Update ALLLLLL the documentation in the source files.
+     d) The list__add function is allowing out-of-order insertion somehow.  Fix it.  (Skiplists are out of order).

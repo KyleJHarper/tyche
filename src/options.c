@@ -26,7 +26,7 @@
 #define MAX_DURATION           UINT16_MAX    // 2^16, 65535
 #define MAX_DATASET_MAX        UINT64_MAX    // 2^64, really big...
 #define MAX_PAGE_LIMIT         UINT32_MAX    // 2^32, 4.3 billion
-#define MAX_VERBOSITY                   1    // 1,    Future versions of verbosity might be scaled.
+#define MAX_VERBOSITY                   2    // 2,    Future versions of verbosity might be scaled higher.
 
 
 /* Extern error codes */
@@ -219,9 +219,10 @@ void options__show_help() {
   fprintf(stderr, "    %2s   %-10s   %s", "-t", "test_name", "Run an internal test.  Specify 'help' to see available tests.  (For debugging).\n");
   fprintf(stderr, "    %2s   %-10s   %s", "-w", "<number>",  "Number of workers (threads) to use while testing.  Defaults to CPU count.\n");
   fprintf(stderr, "    %2s   %-10s   %s", "-X", "opt1,opt2", "Extended options for tests that require it.  Specify -X 'help' for information.\n");
-  fprintf(stderr, "    %2s   %-10s   %s", "-v", "",          "Increase verbosity.  Current levels:\n");
-  fprintf(stderr, "    %2s   %-10s   %s",   "", "",          "  0) Show normal output (default). \n");
+  fprintf(stderr, "    %2s   %-10s   %s", "-v", "",          "Increase verbosity.  Repeat to increment level.  Current levels:\n");
+  fprintf(stderr, "    %2s   %-10s   %s",   "", "",          "  0) Show normal output (default).  Update frequency is 0.25s. \n");
   fprintf(stderr, "    %2s   %-10s   %s",   "", "",          "  1) Increase update frequency to 0.1s.  Show a list summary at the end.\n");
+  fprintf(stderr, "    %2s   %-10s   %s",   "", "",          "  2) Increase update frequency to 0.01s.  Show list summary.  Display ENTIRE list structure!\n");
   fprintf(stderr, "(Note, capital options are usually for advanced testing use only.)\n");
   fprintf(stderr, "\n");
 

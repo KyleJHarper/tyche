@@ -141,9 +141,11 @@ int manager__start(Manager *mgr) {
   printf("Fixed Memory Ratio  : %"PRIi8"%% (%'"PRIu64" bytes raw, %'"PRIu64" bytes compressed)\n", opts.fixed_ratio, mgr->list->max_raw_size, mgr->list->max_comp_size);
   printf("Manager run time    : %.1f sec\n", 1.0 * mgr->run_duration / 1000);
   printf("Time sweeping       : %'"PRIu64" sweeps (%'"PRIu64" ns)\n", mgr->list->sweeps, mgr->list->sweep_cost);
-  printf("Threads & Workers   : %"PRIu16" CPUs.  %"PRIu16" Workers.", opts.cpu_count, opts.workers);
+  printf("Threads & Workers   : %"PRIu16" CPUs.  %"PRIu16" Workers.\n", opts.cpu_count, opts.workers);
   if(opts.verbosity > 0)
     list__show_structure(mgr->list);
+  if(opts.verbosity > 1)
+    list__dump_structure(mgr->list);
   return E_OK;
 }
 
@@ -186,6 +188,9 @@ void manager__timer(Manager *mgr) {
       break;
     case 1:
       RECHECK_RESOLUTION = 100000;
+      break;
+    case 2:
+      RECHECK_RESOLUTION =  10000;
       break;
   }
   uint16_t elapsed = 0;
@@ -295,6 +300,10 @@ void manager__spawn_worker(Manager *mgr) {
         buffer__destroy(buf);
         buf = NULL;
         continue;
+      }
+      if(rv == E_OK) {
+        if(buf->next->id <= buf->id)
+          show_error(E_GENERIC, "Nope.  buf->next->id (%u) is less than or equal to mine (%u).", buf->next->id, buf->id);
       }
     }
     /* Now we should have a valid buffer.  Hooray.  Mission accomplished. */

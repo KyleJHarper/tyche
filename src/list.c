@@ -361,7 +361,7 @@ int list__remove(List *list, bufferid_t id) {
 
   /* Set up the nearest neighbor from slstack[0] and start removing nodes and the buffer. */
   Buffer *nearest_neighbor = slstack[0]->target;
-  while(nearest_neighbor->next != NULL && nearest_neighbor->next->id < id)
+  while(nearest_neighbor->next != list->head && nearest_neighbor->next->id < id)
     nearest_neighbor = nearest_neighbor->next;
   // We should be close-as-can-be.  If ->next matches, victimize and remove it.  Otherwise we're still E_BUFFER_NOT_FOUND.
   if(nearest_neighbor->next->id == id) {
@@ -387,15 +387,17 @@ int list__remove(List *list, bufferid_t id) {
   }
 
   /* Remove the Skiplist Nodes that were found at various levels. */
-  SkiplistNode *slnode = NULL;
-  for(int i = levels - 1; i >= 0; i--) {
-    // Each of these levels was already found to have the node, so ->right->right has to exist or at least be NULL.
-    slnode = slstack[i]->right;
-    slstack[i]->right = slstack[i]->right->right;
-    free(slnode);
-    // If the list's skip-index at this level is empty, drop the list levels height.
-    if(list->indexes[i]->right == NULL)
-      list->levels--;
+  if(rv == E_OK) {
+    SkiplistNode *slnode = NULL;
+    for(int i = levels - 1; i >= 0; i--) {
+      // Each of these levels was already found to have the node, so ->right->right has to exist or at least be NULL.
+      slnode = slstack[i]->right;
+      slstack[i]->right = slstack[i]->right->right;
+      free(slnode);
+      // If the list's skip-index at this level is empty, drop the list levels height.
+      if(list->indexes[i]->right == NULL)
+        list->levels--;
+    }
   }
 
   /* Let go of the write lock we acquired. */
@@ -685,8 +687,12 @@ int list__balance(List *list, uint32_t ratio) {
  * Frees the data held by a list.
  */
 int list__destroy(List *list) {
-  while(list->head->next != list->head)
-    list__remove(list, list->head->next->id);
+  int rv = E_OK;
+  while(list->head->next != list->head) {
+    rv = list__remove(list, list->head->next->id);
+    if(rv != E_OK)
+      show_error(rv, "Failed to remove buffer %"PRIu32" when destroying the list.", list->head->next->id);
+  }
   list__remove(list, list->head->id);
   for(int i=0; i<SKIPLIST_MAX; i++)
     free(list->indexes[i]);
@@ -789,11 +795,17 @@ void list__show_structure(List *list) {
   printf("Skiplist Levels : %"PRIu8"\n", list->levels);
 
   // Skiplist Index information.
+  char *header_format    = "| %-5s | %-8s | %-11s | %-9s | %-44s |\n";
+  char *row_format       = "| %5d | %8s | %11s | %9s | %'9d  (%7.4f%% : %7.4f%% : %8.4f%%) |\n";
+  char *header_separator = "+-------------------------------------------------------------------------------------------+\n";
   printf("\n");
   printf("Skiplist Statistics\n");
   printf("===================\n");
-  int count = 0, out_of_order = 0, downs_wrong = 0, downs = 0, non_zero_refs = 0;
-  int count_width = (int)floor(log10(abs(list->raw_count + list->comp_count))) + 1;
+  printf("%s", header_separator);
+  printf(header_format, "", "", "Down", "Target", "[Node Statistics]");
+  printf(header_format, "Index", "In Order", "Pointers OK", "IDs Match", "Count      (Coverage :  Optimal :     Delta)");
+  printf("%s", header_separator);
+  int count = 0, out_of_order = 0, downs_wrong = 0, downs = 0, non_zero_refs = 0, target_ids_wrong;
   int total_skiplistnodes = 0;
   SkiplistNode *slnode = NULL, *sldown = NULL;
   // Step 1:  For each level...
@@ -801,12 +813,15 @@ void list__show_structure(List *list) {
     count = 0;
     out_of_order = 0;
     downs_wrong = 0;
+    target_ids_wrong = 0;
     slnode = list->indexes[i];
     // Step 2:  For each slnode moving rightward...
     while(slnode->right != NULL) {
       downs = 0;
       sldown = slnode;
       total_skiplistnodes++;
+      if(slnode->buffer_id != slnode->target->id)
+        target_ids_wrong++;
       // Step 3:  For each slnode looking downward...
       while(sldown->down != NULL) {
         if(sldown->buffer_id == sldown->down->buffer_id)
@@ -820,7 +835,7 @@ void list__show_structure(List *list) {
       if((slnode->right != NULL) && (slnode->buffer_id >= slnode->right->buffer_id))
         out_of_order++;
     }
-    printf("Index %2d:  in order - %-3s |  down pointers ok - %-3s |  nodes %*d (%7.4f%%, optimal %7.4f%%, delta %8.4f%%)\n", i, out_of_order == 0 ? "yes" : "no", downs_wrong == 0 ? "yes" : "no", count_width, count, 100 * (double)count/(list->raw_count + list->comp_count), 100.0 / pow(2,i+1), (100 * (double)count/(list->raw_count + list->comp_count)) - (100.0 / pow(2,i+1)));
+    printf(row_format, i, out_of_order == 0 ? "yes" : "no", downs_wrong == 0 ? "yes" : "no", target_ids_wrong == 0 ? "yes" : "no", count, 100 * (double)count/(list->raw_count + list->comp_count), 100.0 / pow(2,i+1), (100 * (double)count/(list->raw_count + list->comp_count)) - (100.0 / pow(2,i+1)));
     if(out_of_order != 0) {
       printf("Index was out of order displaying: ");
       slnode = list->indexes[i];
@@ -831,18 +846,68 @@ void list__show_structure(List *list) {
       printf("\n");
     }
   }
+  printf("%s", header_separator);
   printf("Indexes %02d - %02d are all 0 / 0.0%%\n", list->levels, SKIPLIST_MAX);
   out_of_order = 0;
-  Buffer *nearest_neighbor = list->head->next;
+  Buffer *nearest_neighbor = list->head;
   while(nearest_neighbor->next != list->head) {
+    nearest_neighbor = nearest_neighbor->next;
     if(nearest_neighbor->id >= nearest_neighbor->next->id)
       out_of_order++;
     if(nearest_neighbor->ref_count != 0)
       non_zero_refs++;
-    nearest_neighbor = nearest_neighbor->next;
   }
   printf("Total number of SkiplistNodes   : %d (%7.4f%% coverage, optimal %8.4f%%, delta %.4f%%)\n", total_skiplistnodes, 100.0 * total_skiplistnodes / (list->raw_count + list->comp_count), 100.0, 100.0 * total_skiplistnodes / (list->raw_count + list->comp_count) - 100.0);
   printf("Buffers in order from head      : %s\n", out_of_order == 0 ? "yes" : "no");
   printf("Buffers with non-zero ref counts: %d (should be 0)\n", non_zero_refs);
   printf("\n");
+}
+
+
+/* list__dump_structure
+ * Dumps the entire structure of the list specified.  Starts with Skiplist Nodes and then prints the buffers.
+ */
+void list__dump_structure(List *list) {
+  SkiplistNode *slnode = NULL;
+  const int MAX_ENTRIES = 50;
+  int entries = 0, segment = 1;
+  printf("\n");
+  printf("Skiplist Structure Dump\n");
+  printf("=======================\n");
+  printf("Format is|   Index#-Segment: ...\n");
+  printf("Example  |   0-0001: 2 3 5 18 29 ...(%d entries per segment, for readability)\n", MAX_ENTRIES);
+  for(int i=0; i<list->levels; i++) {
+    slnode = list->indexes[i];
+    entries = MAX_ENTRIES;
+    segment = 1;
+    while(slnode->right != NULL) {
+      slnode = slnode->right;
+      entries++;
+      if(entries >= MAX_ENTRIES) {
+        printf("\n%02d-%07d:", i, segment);
+        entries = 1;
+        segment++;
+      }
+      printf(" %"PRIu32, slnode->buffer_id);
+    }
+    printf("\n");
+  }
+
+  printf("\nBuffer list dump:");
+  Buffer *current = list->head;
+  entries = MAX_ENTRIES;
+  segment = 1;
+  while(current->next != list->head) {
+    current = current->next;
+    entries++;
+    if(entries >= MAX_ENTRIES) {
+      printf("\nBuffers-%07d:", segment);
+      entries = 1;
+      segment++;
+    }
+    printf(" %"PRIu32, current->id);
+  }
+  printf("\n");
+
+  return;
 }

@@ -117,5 +117,6 @@ int list__balance(List *list, uint32_t ratio);
 int list__destroy(List *list);
 void list__compressor_start(Compressor *comp);
 void list__show_structure(List *list);
+void list__dump_structure(List *list);
 
 #endif /* SRC_LIST_H_ */
