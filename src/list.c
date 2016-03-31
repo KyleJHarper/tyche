@@ -247,7 +247,7 @@ int list__add(List *list, Buffer *buf) {
   // until we have the whole chain.  Since scanning always down-and-forward we're safe.
   SkiplistNode *slstack[SKIPLIST_MAX];
   Buffer *locked_buffers[SKIPLIST_MAX];
-  bufferid_t last_lock_id = BUFFER_ID_MAX;
+  bufferid_t last_lock_id = BUFFER_ID_MAX - 1;
   int locked_ids_index = -1;
   for(int i = 0; i < SKIPLIST_MAX; i++)
     slstack[i] = list->indexes[i];
