@@ -2,7 +2,7 @@
  * hello.c
  *
  *  Created on: Jun 18, 2015
- *      Author: administrator
+ *      Author: Kyle Harper
  */
 
 #include <stdio.h>

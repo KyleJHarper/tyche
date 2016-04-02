@@ -3,21 +3,9 @@
  *
  *  Created on: Jun 19, 2015
  *      Author: Kyle Harper
- * Description: Builds the buffer lists and functions for them.  We use circular lists (doubly-linked) mostly because:
- *                1.  They make implementing clock sweep easy (no checking head/tail).
- *                2.  We can traverse forward and backward, making random node removal possibly without scanning the whole list.
- *                3.  We can lock the buffers in-front of and behind a given buffer to allow more efficient concurrency with list
- *                    manipulation.
- *                    (Note: we don't actually do this to keep concurrency/locking simpler for this test program.)
+ * Description: Builds the buffer lists and functions for them.
  *
- *              Clock sweep is the method this implementation uses for victim selection in the raw buffer list.  Combined with the
- *              'popularity' attribute we get approximate LRU with better performance.  This is similar to how Postgresql handles
- *              it.  In our implementation we decay faster by bit-shifting rather than decrementing a counter.  I'm not sure this
- *              improves anything but meh.
- *
- *              FIFO is the method this implementation uses for eviction from the compressed buffer list, because frankly nothing
- *              else makes sense; the buffer was already found to be dis-used and victimized.  If a compressed cache-hit doesn't
- *              save the buffer in time, it's dead.
+ *              Clock sweep is the method this implementation uses for victim selection in the raw buffer list.
  */
 
 /* Include necessary headers here. */
@@ -218,8 +206,9 @@ int list__release_write_lock(List *list) {
 
 
 /* list__add
- * Adds a node to the list specified.  Buffer must be created by caller.  We will lock the list here so insertion is guaranteed
- * to be sort-ordered.  We will also fail safely if the buffer already exists because we don't want duplicates.
+ * Adds a node to the list specified.  Buffer must be created by caller.  We use localized (buffer) locking to aid with insertion
+ * performance, but it's a minor improvement.  The real benefit is that readers can continue searching (list__search()) while this
+ * function is running.
  */
 int list__add(List *list, Buffer *buf) {
   /* Initialize a few basic values. */
@@ -253,7 +242,7 @@ int list__add(List *list, Buffer *buf) {
     slstack[i] = list->indexes[i];
 
   // Traverse the list to find the ideal location at each level.  Since we're searching, use list->levels as the start height.
-  for(int i = list->levels; i >= 0; i--) {
+  for(int i = list->levels - 1; i >= 0; i--) {
     for(;;) {
       // Scan forward until we are as close as we can get.
       while(slstack[i]->right != NULL && slstack[i]->right->buffer_id <= buf->id)
@@ -333,7 +322,7 @@ int list__add(List *list, Buffer *buf) {
 /* list__remove
  * Removes the buffer from the list's pool while respecting the list lock and readers.  Caller must grab and pass buffer_id before
  * unlocking its reference to the buffer; this way we can rely on finding the ID even if the buffer is removed by another thread.
- * Note: this function is not responsible for managing list sizes or HCRS logic.  It just removes buffers.
+ * Note: this function is not responsible for managing list max_sizes or HCRS logic.  It just removes buffers.
  */
 int list__remove(List *list, bufferid_t id) {
   /* Get a write lock, which guarantees flushing all readers first. */
@@ -519,8 +508,7 @@ int list__search(List *list, Buffer **buf, bufferid_t id) {
 
 /* list__update_ref
  * Edits the reference count of threads currently pinning the list.  Pinning happens for searching the list.  Delta should only be
- * 1 or -1, ever.  Also note: writer operations (list__add, list__remove) do *not* call this.  Unlike buffer__update_ref we will
- * lock the list for the caller since list-poofing isn't a reality like buffer poofing.
+ * 1 or -1, ever.
  */
 int list__update_ref(List *list, int delta) {
   /* Do we own the lock as a writer?  If so, we don't need to mess with reference counting.  Avoids deadlocking. */
@@ -546,8 +534,7 @@ int list__update_ref(List *list, int delta) {
 
 
 /* list__sweep
- * Attempts to run the sweep algorithm on the list to find space to free up.  Only a raw list should ever call this.  Removal of
- * compressed buffers is handled by list__pop().
+ * Attempts to run the sweep algorithm on the list to find space to free up.
  * Note:  We attempt to free a percentage of ->current_size, NOT ->max_size!  There are pros/cons to both; in normal usage the
  * current size should always be high enough to avoid errors because sweeping shouldn't be called until we're low on memory.
  */
@@ -773,7 +760,7 @@ void list__compressor_start(Compressor *comp) {
 
 
 /* tests__list_structure
- * Spits out a bunch of information about a list.  Mostly for debugging.  Might delete later.
+ * Spits out a bunch of information about a list.  Mostly for debugging.
  */
 void list__show_structure(List *list) {
   // List attributes

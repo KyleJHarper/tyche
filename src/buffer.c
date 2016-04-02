@@ -66,7 +66,6 @@ const int BUFFER_OVERHEAD = sizeof(Buffer);
 
 
 
-/* Functions */
 /* buffer__initialize
  * Creates a new buffer, simply put.  We have to create a new buffer (with a new pointer) and return its address because we NULL
  * out existing buffers' pointers when we remove them from their pools.  The *page_filespec is the path to the file (page) we're
@@ -114,7 +113,7 @@ int buffer__destroy(Buffer *buf) {
   if (buf == NULL)
     return E_OK;
   if (buf->victimized == 0 && buf->is_ephemeral == 0)
-    show_error(E_GENERIC, "The buffer__destroy() function was called with a non-victimized buffer.  This isn't allowed.");
+    show_error(E_GENERIC, "The buffer__destroy() function was called with a buffer that is neither ephemeral or victimized.  This isn't allowed.");
 
   /* Free the members which are pointers to other data locations. */
   free(buf->data);
@@ -127,8 +126,9 @@ int buffer__destroy(Buffer *buf) {
   return E_OK;
 }
 
+
 /* buffer__lock
- * Simply locks the ->lock (mutex) of the buffer for times when atomicity matter.
+ * Simply locks the ->lock (mutex) of the buffer for times when atomicity matter.  Always checks for victimization, that's it.
  */
 int buffer__lock(Buffer *buf) {
   pthread_mutex_lock(&buf->lock);
@@ -140,7 +140,7 @@ int buffer__lock(Buffer *buf) {
 
 
 /* buffer__unlock
- * Unlocks the ->lock element (mutex) for the given buffer.
+ * Unlocks the ->lock element (mutex) for the given buffer.  Compiler will likely inline, but we might add complexity later.
  */
 void buffer__unlock(Buffer *buf) {
   pthread_mutex_unlock(&buf->lock);
@@ -149,8 +149,8 @@ void buffer__unlock(Buffer *buf) {
 
 /* buffer__update_ref
  * Updates a buffer's ref_count.  This will only ever be +1 or -1.  Caller MUST lock the buffer to handle victimization properly.
- *   +1) When adding, only list__search can be the caller which maintains proper list-locking to prevent buffer *poofing*.
- *   -1) Anyone is safe to remove their own ref because victimization blocks, preventing *poofing*.
+ *   +1) Adds a pin so the buffer can't be removed or modified.  Blocks if a modification operation is underway.
+ *   -1) Anyone can remove their pin.  Upon 0 we notify pending operators (writers).
  */
 int buffer__update_ref(Buffer *buf, int delta) {
   // Check to see if the buffer is victimized, if so we can't add new pins.
@@ -196,7 +196,7 @@ int buffer__victimize(Buffer *buf) {
  * Similar to buffer__victimize().  The main difference is this will simply block the caller until ref_count hits zero, upon which
  * it will continue on while holding the lock to prevent others from doing anything else.  See buffer__update_ref() for how it works
  * together.
- * The buffer will REMAIN LOCKED since only an unblock() from this same thread should ever resume normal flow.
+ * The buffer will REMAIN LOCKED since only a buffer__unblock() from this same thread should ever resume normal flow.
  */
 int buffer__block(Buffer *buf) {
   // Lock the buffer.  It might be victimized, so check for that and let caller know.
@@ -227,10 +227,8 @@ int buffer__unblock(Buffer *buf) {
 /* buffer__compress
  * Compresses the buffer's ->data element.  This is done with lz4 from https://github.com/Cyan4973/lz4
  * Whatever is in ->data will be obliterated without any checking (free()'d).
- * Compression only happens when a buffer is found to be useless and is prime for victimization and moved to the compressed list.
- * The list__migrate function will handle list locking; it will also invoke the buffer__victimize function to drain the buffer of
- * references before attempting to compress its ->data member and move it to the compressed list.  Since the buffer is victimized
- * and list__search is blocked we can be assured no one gets a bad read of ->data.
+ * The data_length will remain intact because LZ4 needs it for safety (and a future malloc), and we set comp_length to allow us to
+ * modify the size(s) in the list accurately.  See buffer__decompress() for the counterpart to this.
  * Caller MUST block (buffer__block/unblock) to drain readers!
  */
 int buffer__compress(Buffer *buf) {
@@ -280,11 +278,7 @@ int buffer__compress(Buffer *buf) {
 
 /* buffer__decompress
  * Decompresses the buffer's ->data element.  This is done with lz4 from https://github.com/Cyan4973/lz4
- * The only way a buffer can be decompressed is if a list__search on an uncompressed list fails and the buffer is found in the
- * compressed list.  When this happens, list__migrate is invoked to handle list locking which prevents 2 threads from reaching this
- * this function at the same time.  The resident buffer__lock(buf) should protect the buffer itself from anyone who might be trying
- * to lock it for whatever reason.  Since no one is reading ->data (it's compressed) and we don't care about dirty reads from race
- * conditions with this buffer's other members, we don't need to victimize or drain it of refs.
+ * This sets comp_length back to 0 which signals that the buffer is no longer in a compressed state.
  * Caller MUST block (buffer__block/unblock) to drain readers!
  */
 int buffer__decompress(Buffer *buf) {

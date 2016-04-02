@@ -2,7 +2,8 @@
  * error_codes.h
  *
  *  Created on: Jun 25, 2015
- *      Author: Codes are shared amongst the entire program.  They should extern them as-needed.
+ *      Author: Kyle Harper
+ * Description: Codes are shared amongst the entire program.  They should extern them as-needed.
  */
 
 #ifndef SRC_ERROR_CODES_H_

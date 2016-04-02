@@ -3,7 +3,7 @@
  *
  *  Created on: Dec 8, 2015
  *      Author: Kyle Harper
- * Description: Wheeeee
+ * Description: See manager.h
  */
 
 #include <jemalloc/jemalloc.h>
