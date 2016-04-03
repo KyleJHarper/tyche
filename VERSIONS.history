@@ -1,5 +1,13 @@
 Contains a simple note for each tagged release.  We will try to follow SEMVER.  Be aware, all 0.x.y releases are developmental and are NOT guaranteed compatible according to SEMVER.  Major version 0 should go away after major release 1... as will this notice probably.
 
+0.0.12 (2016-04-02)
+- After further testing, jemalloc is now a requirement of tyche.  It's just too good (20-30% boost).
+- Fixed an out-of-order problem in parallelized list__add().  We weren't locking ->head, cuz I'm an idiot.
+- Updated source documentation (comments).
+- Removed some disused functions.
+- Updated status output for normal and -v output.
+- Added a second level of verbosity which will dump the entire list structure... yikes.
+
 0.0.11 (2016-03-27)
 - Added buffer_id to the SkiplistNode to prevent a dereference of ->target just to get the target's ID.  Helped quite a bit.
 - Opted to forgo further cache optimizations (e.g.: custom allocators or switching skiplist indexes to arrays and/or partitioning them to keep them in similar memory pages, et cetera).

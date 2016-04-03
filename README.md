@@ -8,6 +8,13 @@ This will be open-source (as will the ACCRS theory) and free but I am still goin
 ====
 Latest Changelog Entries
 
+**[2016-04-02]**
+*Released version 0.0.12 (0.0.11 exists, but I immediately thought of more things to test so I didn't update README for it).  There are a few minor changes, but the big ones are memory optimization.*
+
+*First, jemalloc is now a requirement.  It was literally a drop-in replacement that resulted in 20-40% better performance across the board.  The glibc ptmalloc is fantastic, but this was simply better.  The end.*
+
+*The other changes attempt to tell the hardware how to prefetch when navigating the list.  Modern hardware can do this but signalling it seems to help it make better choices.  I also added a ->buffer_id to the SkiplistNode structure.  This results in an additional 8 bytes (4 for the bufferid_t, 4 padding) per node but prevents a dereference for each node (->buffer_id vs ->target->id).*
+
 **[2016-03-27]**
 *Released version 0.0.10 which changed list associations by merging everything into a single list and relying on buffer attributes for distinguishing compressed vs raw.  Performance of the list has gone up by many factors (4-10x).*
 
