@@ -30,5 +30,3 @@
         (probabilistically) for a SkipListNode per buffer; but I can live with this.
      i) Your headers are insane!
         I know, but header guards make life happy.  If someone would like to fix it and submit a PR, go ahead.
-3. Niceness & Bug Fixes
-     a) Update ALLLLLL the documentation in the source files.
