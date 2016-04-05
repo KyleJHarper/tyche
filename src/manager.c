@@ -242,23 +242,23 @@ void manager__abbreviate_number(uint64_t source_number, double *short_number, ch
   char *t_unit = "T";
   if(source_number <= THOUSAND) {
     *short_number = 1.0 * source_number;
-    strcpy(unit, no_unit);
+    strncpy(unit, no_unit, 1);
   }
   if(source_number > THOUSAND) {
     *short_number = 1.0 * source_number / THOUSAND;
-    strcpy(unit, k_unit);
+    strncpy(unit, k_unit, 1);
   }
   if(source_number > MILLION) {
     *short_number = 1.0 * source_number / MILLION;
-    strcpy(unit, m_unit);
+    strncpy(unit, m_unit, 1);
   }
   if(source_number > BILLION) {
     *short_number = 1.0 * source_number / BILLION;
-    strcpy(unit, b_unit);
+    strncpy(unit, b_unit, 1);
   }
   if(source_number > TRILLION) {
     *short_number = 1.0 * source_number / TRILLION;
-    strcpy(unit, t_unit);
+    strncpy(unit, t_unit, 1);
   }
   return;
 }
