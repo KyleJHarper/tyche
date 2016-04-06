@@ -106,10 +106,10 @@ struct list {
 /* Function prototypes.  Not required, but whatever. */
 List* list__initialize();
 SkiplistNode* list__initialize_skiplistnode(Buffer *buf);
-int list__add(List *list, Buffer *buf);
+int list__add(List *list, Buffer *buf, uint8_t caller_has_list_pin);
 int list__remove(List *list, bufferid_t id);
 int list__update_ref(List *list, int delta);
-int list__search(List *list, Buffer **buf, bufferid_t id);
+int list__search(List *list, Buffer **buf, bufferid_t id, uint8_t caller_has_list_pin);
 int list__acquire_write_lock(List *list);
 int list__release_write_lock(List *list);
 uint64_t list__sweep(List *list, uint8_t sweep_goal);

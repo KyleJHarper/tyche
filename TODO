@@ -30,6 +30,3 @@
         (probabilistically) for a SkipListNode per buffer; but I can live with this.
      i) Your headers are insane!
         I know, but header guards make life happy.  If someone would like to fix it and submit a PR, go ahead.
-3. Memory cap?
-     a) Am I saturating my system bus for memory?  Seems to be a ceiling.
-     b) Can we change readers to pin once and check for pending_writers?

@@ -16,9 +16,9 @@ typedef uint32_t workerid_t;
 typedef struct worker Worker;
 struct worker {
   /* ID & Tracking */
-  workerid_t id;      // ID of the worker.
-  uint64_t misses;    // Count of buffer misses for the life of this worker.
-  uint64_t hits;      // Count of buffer hits for the life of this worker.
+  workerid_t id;         // ID of the worker.
+  uint64_t misses;       // Count of buffer misses for the life of this worker.
+  uint64_t hits;         // Count of buffer hits for the life of this worker.
 };
 
 /* Build the manager struct. */

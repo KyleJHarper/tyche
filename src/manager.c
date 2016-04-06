@@ -219,7 +219,7 @@ void manager__timer(Manager *mgr) {
     manager__abbreviate_number(mgr->list->compressions, &compressions, &compressions_unit);
     manager__abbreviate_number(mgr->list->restorations, &restorations, &restorations_unit);
     fprintf(stderr, "\r%-120s", "                                                                                                                        ");
-    fprintf(stderr, "\r%5"PRIu16" ETA.  Raw %'"PRIu32" (%"PRIu64" MB).  Comp %'"PRIu32" (%"PRIu64" MB).  %'.1f%c Comps (%'.1f%c Res).  %'.1f%c Hits (%'.1f%c Miss).", opts.duration - elapsed, mgr->list->raw_count, mgr->list->current_raw_size / MILLION, mgr->list->comp_count, mgr->list->current_comp_size / MILLION, compressions, compressions_unit, restorations, restorations_unit, hits, hits_unit, misses, misses_unit);
+    fprintf(stderr, "\r%5"PRIu16" ETA.  Raw %'"PRIu32" (%"PRIu64" MB).  Comp %'"PRIu32" (%"PRIu64" MB).  %'.2f%c Comps (%'.2f%c Res).  %'.2f%c Hits (%'.2f%c Miss).", opts.duration - elapsed, mgr->list->raw_count, mgr->list->current_raw_size / MILLION, mgr->list->comp_count, mgr->list->current_comp_size / MILLION, compressions, compressions_unit, restorations, restorations_unit, hits, hits_unit, misses, misses_unit);
     fflush(stderr);
   }
   if(opts.quiet == 0)
@@ -277,15 +277,22 @@ void manager__spawn_worker(Manager *mgr) {
   mgr->workers[id].hits = 0;
   mgr->workers[id].misses = 0;
   unsigned int seed = time(NULL) + id;
+  uint8_t has_list_pin = 0;
 
   /* Begin the main loop for grabbing buffers. */
   Buffer *buf = NULL;
   bufferid_t id_to_get = 0;
   int rv = 0;
   while(mgr->runnable != 0) {
+    /* Callers can provide their own list pins before calling read operations.  Do so here to reduce lock contention. */
+    if(has_list_pin == 0) {
+      list__update_ref(mgr->list, 1);
+      has_list_pin = 1;
+    }
+
     /* Go find buffers to play with!  If the one we need doesn't exist, get it and add it. */
     id_to_get = rand_r(&seed) % opts.page_count;
-    rv = list__search(mgr->list, &buf, id_to_get);
+    rv = list__search(mgr->list, &buf, id_to_get, has_list_pin);
 
     if(rv == E_OK)
       mgr->workers[id].hits++;
@@ -293,7 +300,7 @@ void manager__spawn_worker(Manager *mgr) {
       mgr->workers[id].misses++;
       buf = buffer__initialize(id_to_get, mgr->pages[id_to_get]);
       buffer__update_ref(buf, 1);
-      rv = list__add(mgr->list, buf);
+      rv = list__add(mgr->list, buf, has_list_pin);
       if (rv == E_BUFFER_ALREADY_EXISTS) {
         // Someone beat us to it.  Just free it and loop around for something else.
         buf->is_ephemeral = 1;
@@ -313,13 +320,23 @@ void manager__spawn_worker(Manager *mgr) {
     if(buf->is_ephemeral == 1)
       buffer__destroy(buf);
     buf = NULL;
+
+    /* Release the list pin if there are pending writers.  This is a dirty read/race but that's ok for an extra loop */
+    if(mgr->list->pending_writers != 0) {
+      list__update_ref(mgr->list, -1);
+      has_list_pin = 0;
+    }
   }
 
-  // We ran out of time.  Let's update the manager with our statistics before we quit.
+  // We ran out of time.  Let's update the manager with our statistics before we quit.  Then release our pin.
   pthread_mutex_lock(&mgr->lock);
   mgr->hits += mgr->workers[id].hits;
   mgr->misses += mgr->workers[id].misses;
   pthread_mutex_unlock(&mgr->lock);
+  if(has_list_pin != 0) {
+    list__update_ref(mgr->list, -1);
+    has_list_pin = 0;
+  }
 
   // All done.
   pthread_exit(0);

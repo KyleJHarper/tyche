@@ -33,8 +33,10 @@
 #define BILLION 1000000000L
 #define MILLION    1000000L
 
-/* Set a threshold for when a compressed buffer is a reasonable candidate for restoration.  Magic number. */
-const int RESTORATION_THRESHOLD = 6;
+/* Set a threshold for when a compressed buffer is a reasonable candidate for restoration.  Magic number.  However, in testing
+ * this value seems reasonable; it doesn't reduce performance by much and allows popular buffers to enter raw space which could
+ * have profound performance implications in a real-world situation.  So we'll leave it for edification if nothing else. */
+const int RESTORATION_THRESHOLD = 16;
 
 
 /* Extern the error codes we'll use. */
@@ -210,22 +212,29 @@ int list__release_write_lock(List *list) {
  * performance, but it's a minor improvement.  The real benefit is that readers can continue searching (list__search()) while this
  * function is running.
  */
-int list__add(List *list, Buffer *buf) {
+int list__add(List *list, Buffer *buf, uint8_t caller_has_list_pin) {
   /* Initialize a few basic values. */
   int rv = E_OK;
 
   /* Grab the list lock so we can handle sweeping processes and signaling correctly.  Small race will allow exceeding max, but that's ok. */
   if(list->current_raw_size > list->max_raw_size) {
+    // We're about to wake up the sweeper, which means we need to remove this threads list pin if the caller has one.
+    if(caller_has_list_pin != 0)
+      list__update_ref(list, -1);
     pthread_mutex_lock(&list->lock);
     while(list->current_raw_size > list->max_raw_size) {
       pthread_cond_broadcast(&list->sweeper_condition);
       pthread_cond_wait(&list->reader_condition, &list->lock);
     }
     pthread_mutex_unlock(&list->lock);
+    // Now put this threads list pin back in place, making the caller never-aware it lost it's pin; if applicable.
+    if(caller_has_list_pin != 0)
+      list__update_ref(list, 1);
   }
 
-  /* Add a read pin to prevent a writer from removing anything from underneath us. */
-  list__update_ref(list, 1);
+  // Add a list pin if the caller didn't provide one.
+  if(caller_has_list_pin == 0)
+    list__update_ref(list, 1);
 
   // Decide how many levels we're willing to set the node upon.
   int levels = 0;
@@ -300,10 +309,13 @@ int list__add(List *list, Buffer *buf) {
       slstack[i]->right->down = slstack[i-1]->right;
   }
 
-  // Unlock any buffers we locked along the way.  Then remove our reference pin from the list.
+  // Unlock any buffers we locked along the way.
   for(int i = locked_ids_index; i >= 0; i--)
     buffer__unlock(locked_buffers[i]);
-  list__update_ref(list, -1);
+
+  // Remove the list pin we set if the caller didn't provide one.
+  if(caller_has_list_pin == 0)
+    list__update_ref(list, -1);
 
   // If everything worked, grab the list lock whenever it's available and increment counters.
   if (rv == E_OK) {
@@ -397,21 +409,28 @@ int list__remove(List *list, bufferid_t id) {
 
 /* list__search
  * Searches for a buffer in the list specified so it can be sent back as a double pointer.  We need to pin the list so we can
- * search it.  When successfully found, we increment ref_count.
+ * search it.  When successfully found, we increment ref_count.  Caller MUST get a list pin first!
  */
-int list__search(List *list, Buffer **buf, bufferid_t id) {
+int list__search(List *list, Buffer **buf, bufferid_t id, uint8_t caller_has_list_pin) {
   /* Since searching can cause restorations and ultimately exceed max size, check for it.  This is a dirty read but OK. */
   if(list->current_raw_size > list->max_raw_size) {
+    // We're about to wake up the sweeper, which means we need to remove this threads list pin if the caller has one.
+    if(caller_has_list_pin != 0)
+      list__update_ref(list, -1);
     pthread_mutex_lock(&list->lock);
     while(list->current_raw_size > list->max_raw_size) {
       pthread_cond_broadcast(&list->sweeper_condition);
       pthread_cond_wait(&list->reader_condition, &list->lock);
     }
     pthread_mutex_unlock(&list->lock);
+    // Now put this threads list pin back in place, making the caller never-aware it lost it's pin; if applicable.
+    if(caller_has_list_pin != 0)
+      list__update_ref(list, 1);
   }
 
-  /* Update the ref count so we can begin searching. */
-  list__update_ref(list, 1);
+  /* If the caller doesn't provide a list pin, add one. */
+  if(caller_has_list_pin == 0)
+    list__update_ref(list, 1);
 
   /* Begin searching the list at the highest level's index head. */
   int rv = E_BUFFER_NOT_FOUND;
@@ -499,8 +518,9 @@ int list__search(List *list, Buffer **buf, bufferid_t id) {
     }
   }
 
-  /* Regardless of whether we found it we need to remove our pin on the list's ref count because we're done searching it. */
-  list__update_ref(list, -1);
+  /* If the caller didn't provide a pin, remove the one we set above. */
+  if(caller_has_list_pin == 0)
+    list__update_ref(list, -1);
 
   return rv;
 }
@@ -508,7 +528,7 @@ int list__search(List *list, Buffer **buf, bufferid_t id) {
 
 /* list__update_ref
  * Edits the reference count of threads currently pinning the list.  Pinning happens for searching the list.  Delta should only be
- * 1 or -1, ever.
+ * 1 or -1, ever.  Typically a worker should call this once and then respect (dirty-read) pending_writers.
  */
 int list__update_ref(List *list, int delta) {
   /* Do we own the lock as a writer?  If so, we don't need to mess with reference counting.  Avoids deadlocking. */

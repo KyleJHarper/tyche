@@ -170,7 +170,7 @@ void tests__synchronized_readwrite(List *list) {
     temp->data = malloc(strlen(sample_data) + 1);
     strcpy(temp->data, sample_data);
     temp->data_length = strlen(temp->data) + 1;
-    list__add(list, temp);
+    list__add(list, temp, 0);
   }
 
   // Start worker threads which will try to read data at the same time.
@@ -219,7 +219,7 @@ void tests__read(ReadWriteOpts *rwopts) {
   for (uint32_t i=0; i<rwopts->reads_per_worker; i++) {
     for(;;) {
       id_to_get = rand() % rwopts->list_count;
-      rv = list__search(rwopts->list, &selected, id_to_get);
+      rv = list__search(rwopts->list, &selected, id_to_get, 0);
       if (rv == E_OK)
         break;
       if (rv == E_BUFFER_NOT_FOUND || rv == E_BUFFER_IS_VICTIMIZED)
@@ -245,7 +245,7 @@ void tests__chaos(ReadWriteOpts *rwopts) {
   // Loop through and remove stuff until we reach LIST_FLOOR.  This predicate cannot be (reasonably) made safe.
   while(rwopts->list->raw_count >= rwopts->list_floor) {
     id_to_remove = rand() % rwopts->list_count;
-    rv = list__search(rwopts->list, &temp, id_to_remove);
+    rv = list__search(rwopts->list, &temp, id_to_remove, 0);
     if (rv == E_BUFFER_NOT_FOUND)
       continue;
     // List search gave us a ref_count, need to decrement ourself.
@@ -282,11 +282,11 @@ void tests__elements(List *list) {
   // Add all the buffers.
   printf("Step 1.  Adding %d dummy buffers to the list in with random IDs.\n", element_count);
   buf = buffer__initialize(1, NULL);
-  list__add(list, buf);
+  list__add(list, buf, 0);
   while(list->raw_count < element_count) {
     id = rand() % (element_count * 10);
     buf = buffer__initialize(id, NULL);
-    rv = list__add(list, buf);
+    rv = list__add(list, buf, 0);
     if (rv != E_OK)
       free(buf);
   }
@@ -298,7 +298,7 @@ void tests__elements(List *list) {
   // Search for an item just to prove it works.
   printf("\nStep 3.  Searching for a buffer, just to prove it works.\n");
   buf = NULL;
-  rv = list__search(list, &buf, 1);
+  rv = list__search(list, &buf, 1, 0);
   if (rv != E_OK)
     show_error(E_GENERIC, "Failed to search for a buffer which should have existed.  rv was %d\n", rv);
   printf("Got the buffer, it's ref count is %"PRIu16".\n", buf->ref_count);
@@ -468,7 +468,7 @@ void tests__move_buffers(List *list, char **pages) {
   list->max_raw_size = total_bytes + (1024 * 1024);
   for (uint i = 0; i < opts.page_count; i++) {
     buf = buffer__initialize(i, pages[i]);
-    list__add(list, buf);
+    list__add(list, buf, 0);
   }
   if (total_bytes != list->current_raw_size)
     show_error(E_GENERIC, "Calculated a total size of %d, and raw_list->current_size is %"PRIu64"\n", total_bytes, list->current_raw_size);
@@ -484,7 +484,7 @@ void tests__move_buffers(List *list, char **pages) {
   for (uint i = 0; i < opts.page_count; i++) {
     buf = buffer__initialize(i, pages[i]);
     buf->popularity = MAX_POPULARITY/(i+1);
-    list__add(list, buf);
+    list__add(list, buf, 0);
   }
   printf("All done.  Raw list has %d buffers using %"PRIu64" bytes.  Comp list has %d buffers using %"PRIu64" bytes.\n", list->raw_count, list->current_raw_size, list->comp_count, list->current_comp_size);
   while(list->head->next != list->head)
@@ -498,7 +498,7 @@ void tests__move_buffers(List *list, char **pages) {
   for (uint i = 0; i < opts.page_count; i++) {
     buf = buffer__initialize(i, pages[i]);
     buf->popularity = MAX_POPULARITY/(i+1);
-    list__add(list, buf);
+    list__add(list, buf, 0);
   }
   printf("All done.  Raw list has %d buffers using %"PRIu64" bytes.  Comp list has %d buffers using %"PRIu64" bytes.\n", list->raw_count, list->current_raw_size, list->comp_count, list->current_comp_size);
   while(list->head->next != list->head)
@@ -511,7 +511,7 @@ void tests__move_buffers(List *list, char **pages) {
   for (uint i = 0; i < opts.page_count; i++) {
     buf = buffer__initialize(i, pages[i]);
     buf->popularity = MAX_POPULARITY/(i+1);
-    list__add(list, buf);
+    list__add(list, buf, 0);
   }
   // Find a buffer that was compressed and list__search it until it's restored.
   Buffer *test4_buf = list->head->next;
@@ -521,7 +521,7 @@ void tests__move_buffers(List *list, char **pages) {
   int i=0;
   while(i<=RESTORATION_THRESHOLD*2) {
     i++;
-    list__search(list, &test4_buf, test4_id);
+    list__search(list, &test4_buf, test4_id, 0);
     buffer__lock(test4_buf);
     buffer__update_ref(test4_buf, -1);
     buffer__unlock(test4_buf);
