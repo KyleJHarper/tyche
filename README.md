@@ -8,6 +8,9 @@ This will be open-source (as will the ACCRS theory) and free but I am still goin
 ====
 Latest Changelog Entries
 
+**[2016-04-05]**
+*Released version 0.0.13 which utilizes a caller-provided list pin which avoids a ton of lock contention.  This allows greater scaling across multple cores/cpus.  Also made a minor tweak to RESTORATION_THRESHOLD.*
+
 **[2016-04-02]**
 *Released version 0.0.12 (0.0.11 exists, but I immediately thought of more things to test so I didn't update README for it).  There are a few minor changes, but the big ones are memory optimization.*
 
