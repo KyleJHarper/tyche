@@ -36,7 +36,7 @@
 /* Set a threshold for when a compressed buffer is a reasonable candidate for restoration.  Magic number.  However, in testing
  * this value seems reasonable; it doesn't reduce performance by much and allows popular buffers to enter raw space which could
  * have profound performance implications in a real-world situation.  So we'll leave it for edification if nothing else. */
-const int RESTORATION_THRESHOLD = 16;
+const int RESTORATION_THRESHOLD = 8;
 
 
 /* Extern the error codes we'll use. */
