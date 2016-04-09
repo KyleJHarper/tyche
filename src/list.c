@@ -812,7 +812,7 @@ void list__show_structure(List *list) {
   printf(header_format, "", "", "Down", "Target", "[Node Statistics]");
   printf(header_format, "Index", "In Order", "Pointers OK", "IDs Match", "Count      (Coverage :  Optimal :     Delta)");
   printf("%s", header_separator);
-  int count = 0, out_of_order = 0, downs_wrong = 0, downs = 0, non_zero_refs = 0, target_ids_wrong;
+  int count = 0, out_of_order = 0, downs_wrong = 0, downs = 0, non_zero_refs = 0, target_ids_wrong = 0, pending_sweeps = 0;
   int total_skiplistnodes = 0;
   SkiplistNode *slnode = NULL, *sldown = NULL;
   // Step 1:  For each level...
@@ -863,10 +863,13 @@ void list__show_structure(List *list) {
       out_of_order++;
     if(nearest_neighbor->ref_count != 0)
       non_zero_refs++;
+    if(nearest_neighbor->pending_sweep != 0)
+      pending_sweeps++;
   }
   printf("Total number of SkiplistNodes   : %d (%7.4f%% coverage, optimal %8.4f%%, delta %.4f%%)\n", total_skiplistnodes, 100.0 * total_skiplistnodes / (list->raw_count + list->comp_count), 100.0, 100.0 * total_skiplistnodes / (list->raw_count + list->comp_count) - 100.0);
   printf("Buffers in order from head      : %s\n", out_of_order == 0 ? "yes" : "no");
   printf("Buffers with non-zero ref counts: %d (should be 0)\n", non_zero_refs);
+  printf("Buffers pending sweeps          : %d (should be 0)\n", pending_sweeps);
   printf("\n");
 }
 

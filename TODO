@@ -30,3 +30,4 @@
         (probabilistically) for a SkipListNode per buffer; but I can live with this.
      i) Your headers are insane!
         I know, but header guards make life happy.  If someone would like to fix it and submit a PR, go ahead.
+3. Fix bug where list pins are being released at the end of tyche.  Due to changes in 0.0.13.

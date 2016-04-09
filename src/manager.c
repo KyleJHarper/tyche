@@ -45,7 +45,7 @@ extern const int E_BUFFER_ALREADY_EXISTS;
 workerid_t next_worker_id = 0;
 pthread_mutex_t next_worker_id_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-
+List *tmp;
 
 /* manager__initialize
  * Builds a manager, plain and simple.
@@ -76,6 +76,7 @@ Manager* manager__initialize(managerid_t id, char **pages) {
   if (list == NULL)
     show_error(E_GENERIC, "Couldn't create the list for manager "PRIu8".  This is fatal.", id);
   mgr->list = list;
+  tmp = mgr->list;
 
   /* Set the memory sizes for both lists. */
   list__balance(list, opts.fixed_ratio > 0 ? opts.fixed_ratio : INITIAL_RAW_RATIO);
@@ -307,10 +308,6 @@ void manager__spawn_worker(Manager *mgr) {
         buffer__destroy(buf);
         buf = NULL;
         continue;
-      }
-      if(rv == E_OK) {
-        if(buf->next->id <= buf->id)
-          show_error(E_GENERIC, "Nope.  buf->next->id (%u) is less than or equal to mine (%u).", buf->next->id, buf->id);
       }
     }
     /* Now we should have a valid buffer.  Hooray.  Mission accomplished. */
