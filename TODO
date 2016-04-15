@@ -30,4 +30,8 @@
         (probabilistically) for a SkipListNode per buffer; but I can live with this.
      i) Your headers are insane!
         I know, but header guards make life happy.  If someone would like to fix it and submit a PR, go ahead.
-3. Fix bug where list pins are being released at the end of tyche.  Due to changes in 0.0.13.
+3. Compression options
+     a) See if there are any resources we can define ahead of time and reuse to save overhead. (cRess, dRess)
+     b) Add support for gzip and selecting a compressor via an option.
+     c) See if xz support can be added easily.  It looks too complex to be effectual in this implementation.
+     d) Either allow '-f 100' properly, or just have it set -C.  Update show_help() accordingly.
