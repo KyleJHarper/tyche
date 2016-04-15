@@ -1,0 +1,10 @@
+First and Foremost
+My wife for nodding and pretending to understand/care about my rantings.
+
+Yann Collet et. al - LZ4
+For providing the supremely fast and easy-to-use lz4.c/lz4.h suite.
+https://github.com/Cyan4973/lz4
+
+Jean-loup Gailly and Mark Adler - ZLIB
+For providing such a *spiffy* library for easy deflate compression utility.
+

@@ -15,12 +15,17 @@
 #include <string.h>   /* for memcpy() */
 #include "error.h"
 #include "buffer.h"
-#include "lz4.h"
+#include "lz4/lz4.h"
+#include "zlib/zlib.h"
 #include "options.h"
 
 
 /* Extern the global options. */
 extern Options opts;
+
+/* We use the compressor IDs in this file. */
+extern const int LZ4_COMPRESSOR_ID;
+extern const int ZLIB_COMPRESSOR_ID;
 
 /* Create a buffer initializer to help save time. */
 const Buffer BUFFER_INITIALIZER = {
@@ -225,10 +230,10 @@ int buffer__unblock(Buffer *buf) {
 
 
 /* buffer__compress
- * Compresses the buffer's ->data element.  This is done with lz4 from https://github.com/Cyan4973/lz4
+ * Compresses the buffer's ->data element.
  * Whatever is in ->data will be obliterated without any checking (free()'d).
- * The data_length will remain intact because LZ4 needs it for safety (and a future malloc), and we set comp_length to allow us to
- * modify the size(s) in the list accurately.  See buffer__decompress() for the counterpart to this.
+ * The data_length will remain intact because the compressor needs it for safety (and a future malloc), and we set comp_length to
+ * allow us to modify the size(s) in the list accurately.  See buffer__decompress() for the counterpart to this.
  * Caller MUST block (buffer__block/unblock) to drain readers!
  */
 int buffer__compress(Buffer *buf) {
@@ -249,26 +254,45 @@ int buffer__compress(Buffer *buf) {
 
   /* Data looks good, time to compress. */
   struct timespec start, end;
+  void *compressed_data = NULL;
   clock_gettime(CLOCK_MONOTONIC, &start);
-  int max_compressed_size = LZ4_compressBound(buf->data_length);
-  void *compressed_data = (void *)malloc(max_compressed_size);
-  if (compressed_data == NULL)
-    show_error(E_GENERIC, "Failed to allocate memory during buffer__compress() operation for compressed_data pointer.");
-  int compressed_bytes = LZ4_compress_default(buf->data, compressed_data, buf->data_length, max_compressed_size);
-  if (compressed_bytes < 1) {
-    printf("buffer__compress returned a negative result from LZ4_compress_default: %d\n.", rv);
-    return E_GENERIC;
+  // -- Using LZ4
+  if(opts.compressor_id == LZ4_COMPRESSOR_ID) {
+    int max_compressed_size = LZ4_compressBound(buf->data_length);
+    compressed_data = (void *)malloc(max_compressed_size);
+    if (compressed_data == NULL)
+      show_error(E_GENERIC, "Failed to allocate memory during buffer__compress() operation for compressed_data pointer.");
+    rv = LZ4_compress_default(buf->data, compressed_data, buf->data_length, max_compressed_size);
+    if (rv < 1) {
+      printf("buffer__compress returned a negative result from LZ4_compress_default: %d\n.", rv);
+      return E_GENERIC;
+    }
+    // LZ4 returns the compressed size in the rv itself, assign it here.
+    buf->comp_length = rv;
+  }
+  // -- Using Zlib
+  if(opts.compressor_id == ZLIB_COMPRESSOR_ID) {
+    uLongf max_compressed_size = compressBound(buf->data_length);
+    compressed_data = (void *)malloc(max_compressed_size);
+    if (compressed_data == NULL)
+      show_error(E_GENERIC, "Failed to allocate memory during buffer__compress() operation for compressed_data pointer.");
+    rv = compress2(compressed_data, &max_compressed_size, buf->data, buf->data_length, opts.zlib_level);
+    if (rv != Z_OK) {
+      printf("buffer__compress returned an error from zlib's compress2: %d\n.", rv);
+      return E_GENERIC;
+    }
+    // Zlib returns the compressed length in max_compressed_size; so assign it here.
+    buf->comp_length = max_compressed_size;
   }
 
   /* Now free buf->data and modify the pointer to look at *compressed_data.  We cannot simply assign the pointer address of
    * compressed_data to buf->data because it'll waste space.  We need to malloc on the heap, memcpy data, and then free. */
   free(buf->data);
-  buf->comp_length = compressed_bytes;
   buf->data = (void *)malloc(buf->comp_length);
   memcpy(buf->data, compressed_data, buf->comp_length);
   free(compressed_data);
 
-  /* At this point we've compressed the raw data and saved it in a tightly allocated section of heap.  Save time and unlock. */
+  /* At this point we've compressed the raw data and saved it in a tightly allocated section of heap. */
   clock_gettime(CLOCK_MONOTONIC, &end);
   buf->comp_cost += BILLION *(end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec;
 
@@ -277,7 +301,7 @@ int buffer__compress(Buffer *buf) {
 
 
 /* buffer__decompress
- * Decompresses the buffer's ->data element.  This is done with lz4 from https://github.com/Cyan4973/lz4
+ * Decompresses the buffer's ->data element.
  * This sets comp_length back to 0 which signals that the buffer is no longer in a compressed state.
  * Caller MUST block (buffer__block/unblock) to drain readers!
  */
@@ -303,10 +327,22 @@ int buffer__decompress(Buffer *buf) {
   void *decompressed_data = (void *)malloc(buf->data_length);
   if (decompressed_data == NULL)
     show_error(E_GENERIC, "Failed to allocate memory for buffer__decompress() for the decompressed_data pointer.");
-  rv = LZ4_decompress_safe(buf->data, decompressed_data, buf->comp_length, buf->data_length);
-  if (rv < 0) {
-    printf("Failed to decompress the data in buffer %d, rv was %d.\n", buf->id, rv);
-    return E_GENERIC;
+  // -- Use LZ4
+  if(opts.compressor_id == LZ4_COMPRESSOR_ID) {
+    rv = LZ4_decompress_safe(buf->data, decompressed_data, buf->comp_length, buf->data_length);
+    if (rv < 0) {
+      printf("Failed to decompress the data in buffer %d, rv was %d.\n", buf->id, rv);
+      return E_GENERIC;
+    }
+  }
+  // -- Use Zlib
+  if(opts.compressor_id == ZLIB_COMPRESSOR_ID) {
+    uLongf data_length = buf->data_length;
+    rv = uncompress(decompressed_data, &data_length, buf->data, buf->comp_length);
+    if (rv < 0 || data_length != buf->data_length) {
+      printf("Failed to decompress the data in buffer %d with zlib, rv was %d.\n", buf->id, rv);
+      return E_GENERIC;
+    }
   }
 
   /* Now free buf->data of it's compressed information and modify the pointer to look at *decompressed_data now. We can avoid using

@@ -17,7 +17,7 @@
 #include "buffer.h"
 #include "options.h"
 #include "tests.h"
-#include "lz4.h"
+#include "lz4/lz4.h"
 #include "error.h"
 
 

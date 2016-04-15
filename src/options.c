@@ -37,6 +37,10 @@ extern const int E_BAD_CLI;
 /* Make the options stuct shared. */
 extern Options opts;
 
+/* Define the compressor functions.  This should probably be an enum. */
+const int LZ4_COMPRESSOR_ID  = 1;
+const int ZLIB_COMPRESSOR_ID = 2;
+
 
 
 
@@ -62,6 +66,8 @@ void options__process(int argc, char **argv) {
   /* Tyche Management */
   opts.duration = 5;
   opts.hit_ratio = -1;
+  opts.compressor_id = LZ4_COMPRESSOR_ID;
+  opts.zlib_level = 1;
   /* Run Test? */
   opts.test = NULL;
   opts.extended_test_options = NULL;
@@ -72,10 +78,18 @@ void options__process(int argc, char **argv) {
   /* Process everything passed from CLI now. */
   int c = 0;
   opterr = 0;
-  while ((c = getopt(argc, argv, "b:Cd:f:hm:n:p:qr:t:w:X:v")) != -1) {
+  while ((c = getopt(argc, argv, "b:c:Cd:f:hm:n:p:qr:t:w:X:v")) != -1) {
     switch (c) {
       case 'b':
         opts.dataset_max = (uint64_t)atoll(optarg);
+        break;
+      case 'c':
+        if(strcmp(optarg, "lz4") != 0 && strcmp(optarg, "zlib") != 0)
+          show_error(E_BAD_CLI, "You must specify either 'lz4' or 'zlib' for compression (-c), not: %s", optarg);
+        if(strcmp(optarg, "lz4") == 0)
+          opts.compressor_id = LZ4_COMPRESSOR_ID;
+        if(strcmp(optarg, "zlib") == 0)
+          opts.compressor_id = ZLIB_COMPRESSOR_ID;
         break;
       case 'C':
         opts.disable_compression = 1;
@@ -132,7 +146,7 @@ void options__process(int argc, char **argv) {
         break;
       case '?':
         options__show_help();
-        if (optopt == 'b' || optopt == 'd' || optopt == 'f' || optopt == 'm' || optopt == 'n' || optopt == 'p' || optopt == 'r' || optopt == 't' || optopt == 'w' || optopt == 'X')
+        if (optopt == 'b' || optopt == 'c' || optopt == 'd' || optopt == 'f' || optopt == 'm' || optopt == 'n' || optopt == 'p' || optopt == 'r' || optopt == 't' || optopt == 'w' || optopt == 'X')
           show_error(E_BAD_CLI, "Option -%c requires an argument.", optopt);
         if (isprint (optopt))
           show_error(E_BAD_CLI, "Unknown option `-%c'.", optopt);
@@ -207,6 +221,7 @@ void options__show_help() {
   fprintf(stderr, "\n");
   fprintf(stderr, "  Options:\n");
   fprintf(stderr, "    %2s   %-10s   %s", "-b", "<number>",  "Maximum number of bytes to use from the data pages.  Default: unlimited.\n");
+  fprintf(stderr, "    %2s   %-10s   %s", "-c", "lz4,zlib",  "Which compressor to use: defaults to lz4.\n");
   fprintf(stderr, "    %2s   %-10s   %s", "-C", "",          "Disable compression steps (for testing list management speeds).\n");
   fprintf(stderr, "    %2s   %-10s   %s", "-d", "<number>",  "Duration to run tyche, in seconds (+/- 1 sec).  Default: 5 sec\n");
   fprintf(stderr, "    %2s   %-10s   %s", "-f", "1 - 100",   "Fixed ratio.  Percentage RAM guaranteed for the raw buffer list.  Default: disabled (-1)\n");
