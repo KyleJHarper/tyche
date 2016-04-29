@@ -8,6 +8,9 @@ This will be open-source and free but I am still going to enforce the Apache 2.0
 ====
 Latest Changelog Entries
 
+**[2016-04-28]**
+*Released version 0.0.14 which simply adds support for zlib.  The user may now send -c 'lz4' or -c 'zlib' as desired.  This is mostly for my own personal thesis testing.*
+
 **[2016-04-05]**
 *Released version 0.0.13 which utilizes a caller-provided list pin which avoids a ton of lock contention.  This allows greater scaling across multple cores/cpus.  Also made a minor tweak to RESTORATION_THRESHOLD.*
 

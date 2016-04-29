@@ -7,4 +7,10 @@ https://github.com/Cyan4973/lz4
 
 Jean-loup Gailly and Mark Adler - ZLIB
 For providing such a *spiffy* library for easy deflate compression utility.
+http://www.zlib.net/
+
+Igor Pavlov - LZMA
+For providing the LZMA SDK, even though I was too lazy to implement it so far...
+http://www.7-zip.org/
+http://www.7-zip.org/sdk.html
 
