@@ -42,8 +42,6 @@ const int LZ4_COMPRESSOR_ID  = 1;
 const int ZLIB_COMPRESSOR_ID = 2;
 
 
-
-
 /* options__process
  * A snippet from main() to get all the options sent via CLI, then verifies them.
  */
@@ -216,28 +214,28 @@ void options__show_help() {
   fprintf(stderr, "tyche - Example Program for the Adaptive Compressed Cache Replacement Strategy (ACCRS)\n");
   fprintf(stderr, "        This is an implementation of ACCRS and is NOT intended as a tool or API!\n");
   fprintf(stderr, "\n");
-  fprintf(stderr, "  Usage: tyche <-p pages_directory> <-m memory_size> [-bdfhlmnpqrtwX]\n");
+  fprintf(stderr, "  Usage: tyche <-p pages_directory> <-m memory_size> [-bcCdfhmnpqrtwXv]\n");
   fprintf(stderr, "     ex: tyche -d /data/pages/8k -m 10000000\n");
   fprintf(stderr, "\n");
   fprintf(stderr, "  Options:\n");
-  fprintf(stderr, "    %2s   %-10s   %s", "-b", "<number>",  "Maximum number of bytes to use from the data pages.  Default: unlimited.\n");
-  fprintf(stderr, "    %2s   %-10s   %s", "-c", "lz4,zlib",  "Which compressor to use: defaults to lz4.\n");
-  fprintf(stderr, "    %2s   %-10s   %s", "-C", "",          "Disable compression steps (for testing list management speeds).\n");
-  fprintf(stderr, "    %2s   %-10s   %s", "-d", "<number>",  "Duration to run tyche, in seconds (+/- 1 sec).  Default: 5 sec\n");
-  fprintf(stderr, "    %2s   %-10s   %s", "-f", "1 - 100",   "Fixed ratio.  Percentage RAM guaranteed for the raw buffer list.  Default: disabled (-1)\n");
-  fprintf(stderr, "    %2s   %-10s   %s", "-h", "",          "Show this help.\n");
-  fprintf(stderr, "    %2s   %-10s   %s", "-m", "<number>",  "Maximum number of bytes (RAM) to use for all buffers.  Default: 10 MB.\n");
-  fprintf(stderr, "    %2s   %-10s   %s", "-n", "<number>",  "Maximum number of pages to use from the sample data pages.  Default: unlimited.\n");
-  fprintf(stderr, "    %2s   %-10s   %s", "-p", "/some/dir", "The directory to scan for pages of sample data.  Default: ./sample_data.\n");
-  fprintf(stderr, "    %2s   %-10s   %s", "-q", "",          "Suppress most output, namely tracking/status.  Default: false.\n");
-  fprintf(stderr, "    %2s   %-10s   %s", "-r", "1 - 100",   "Hit Ratio to ensure as a minimum (by searching raw list when too low).  Default: disabled (-1)\n");
-  fprintf(stderr, "    %2s   %-10s   %s", "-t", "test_name", "Run an internal test.  Specify 'help' to see available tests.  (For debugging).\n");
-  fprintf(stderr, "    %2s   %-10s   %s", "-w", "<number>",  "Number of workers (threads) to use while testing.  Defaults to CPU count.\n");
-  fprintf(stderr, "    %2s   %-10s   %s", "-X", "opt1,opt2", "Extended options for tests that require it.  Specify -X 'help' for information.\n");
-  fprintf(stderr, "    %2s   %-10s   %s", "-v", "",          "Increase verbosity.  Repeat to increment level.  Current levels:\n");
-  fprintf(stderr, "    %2s   %-10s   %s",   "", "",          "  0) Show normal output (default).  Update frequency is 0.25s. \n");
-  fprintf(stderr, "    %2s   %-10s   %s",   "", "",          "  1) Increase update frequency to 0.1s.  Show a list summary at the end.\n");
-  fprintf(stderr, "    %2s   %-10s   %s",   "", "",          "  2) Increase update frequency to 0.01s.  Show list summary.  Display ENTIRE list structure!\n");
+  fprintf(stderr, "    %2s   %-10s   %s", "-b", "<number>",   "Maximum number of bytes to use from the data pages.  Default: unlimited.\n");
+  fprintf(stderr, "    %2s   %-10s   %s", "-c", "lz4,zlib",   "Which compressor to use: defaults to lz4.\n");
+  fprintf(stderr, "    %2s   %-10s   %s", "-C", "",           "Disable compression steps (for testing list management speeds).\n");
+  fprintf(stderr, "    %2s   %-10s   %s", "-d", "<number>",   "Duration to run tyche, in seconds (+/- 1 sec).  Default: 5 sec\n");
+  fprintf(stderr, "    %2s   %-10s   %s", "-f", "1 - 100",    "Fixed ratio.  Percentage RAM guaranteed for the raw buffer list.  Default: disabled (-1)\n");
+  fprintf(stderr, "    %2s   %-10s   %s", "-h", "",           "Show this help.\n");
+  fprintf(stderr, "    %2s   %-10s   %s", "-m", "<number>",   "Maximum number of bytes (RAM) to use for all buffers.  Default: 10 MB.\n");
+  fprintf(stderr, "    %2s   %-10s   %s", "-n", "<number>",   "Maximum number of pages to use from the sample data pages.  Default: unlimited.\n");
+  fprintf(stderr, "    %2s   %-10s   %s", "-p", "/some/dir",  "The directory to scan for pages of sample data.  Default: ./sample_data.\n");
+  fprintf(stderr, "    %2s   %-10s   %s", "-q", "",           "Suppress most output, namely tracking/status.  Default: false.\n");
+  fprintf(stderr, "    %2s   %-10s   %s", "-r", "1 - 100",    "Hit Ratio to ensure as a minimum (by searching raw list when too low).  Default: disabled (-1)\n");
+  fprintf(stderr, "    %2s   %-10s   %s", "-t", "test_name",  "Run an internal test.  Specify 'help' to see available tests.  (For debugging).\n");
+  fprintf(stderr, "    %2s   %-10s   %s", "-w", "<number>",   "Number of workers (threads) to use while testing.  Defaults to CPU count.\n");
+  fprintf(stderr, "    %2s   %-10s   %s", "-X", "opt1,opt2",  "Extended options for tests that require it.  Specify -X 'help' for information.\n");
+  fprintf(stderr, "    %2s   %-10s   %s", "-v", "",           "Increase verbosity.  Repeat to increment level.  Current levels:\n");
+  fprintf(stderr, "    %2s   %-10s   %s",   "", "",           "  0) Show normal output (default).  Update frequency is 0.25s. \n");
+  fprintf(stderr, "    %2s   %-10s   %s",   "", "",           "  1) Increase update frequency to 0.1s.  Show a list summary at the end.\n");
+  fprintf(stderr, "    %2s   %-10s   %s",   "", "",           "  2) Increase update frequency to 0.01s.  Show list summary.  Display ENTIRE list structure!\n");
   fprintf(stderr, "(Note, capital options are usually for advanced testing use only.)\n");
   fprintf(stderr, "\n");
 

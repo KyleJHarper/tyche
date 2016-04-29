@@ -27,6 +27,7 @@ extern Options opts;
 extern const int LZ4_COMPRESSOR_ID;
 extern const int ZLIB_COMPRESSOR_ID;
 
+
 /* Create a buffer initializer to help save time. */
 const Buffer BUFFER_INITIALIZER = {
   /* Attributes for typical buffer organization and management. */

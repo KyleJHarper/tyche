@@ -3,7 +3,7 @@ Tyche - Example Project for an Adaptive Compressed-Cache Replacement Strategy (A
 
 The tyche project is actually just an implementation of the currently-theoretical Adaptive Compressed-Cache Replacement Strategy (still in private development).
 
-This will be open-source (as will the ACCRS theory) and free but I am still going to enforce the Apache 2.0 software license to it for now, as well as retain copyright on the theory.
+This will be open-source and free but I am still going to enforce the Apache 2.0 software license to it for now, as well as retain copyright on the documentation of the theory.
 
 ====
 Latest Changelog Entries
