@@ -68,6 +68,6 @@ for level in $(seq 1 1 ${compressors[$1]}) ; do
                ;;
     esac
   done
-  comp_size=$(du -BM --si ${comp} | grep -oP '^[0-9]+')
+  comp_size=$(du -B KB ${comp} | grep -oP '^[0-9]+')
   echo "${comp_size}  ${ct} ${dt}"
 done
