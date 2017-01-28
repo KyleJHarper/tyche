@@ -35,7 +35,7 @@ struct options {
   uint16_t duration;            // Amount of time for each worker to run, in seconds (s).
   int8_t hit_ratio;             // Minimum hit ratio to attain when testing.
   int compressor_id;            // The ID of the compressor to use for buffer__compress/decompress.
-  int zlib_level;               // The level of zlib to use (1-9).  Future option.  For now, always 1.
+  int compressor_level;         // The level of zlib/zstd to use (1-9).  Future option.  For now, always 1.
 
   /* Run Test? */
   char *test;                   // Name of a test to run.
