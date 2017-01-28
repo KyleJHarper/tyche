@@ -6,6 +6,7 @@ src='/tmp/ram_drive/source'
 comp='/tmp/ram_drive/compressed'
 decomp='/tmp/ram_drive/decompressed'
 start=''
+log='/home/kyle/Desktop/in_case.log'
 
 
 declare -A compressors=([gzip]=9 [bzip2]=9 [xz]=9 [lzop]=9 [lz4]=9 [zstd]=19)
@@ -14,7 +15,7 @@ declare -A compressors=([gzip]=9 [bzip2]=9 [xz]=9 [lzop]=9 [lz4]=9 [zstd]=19)
 [ -z "${1}" ] && echo "You messed up.  Send the right args." && exit 1
 
 # -- Run compression/decompression.
-echo "Starting tests for ${1}"
+echo "Starting tests for ${1} @ $(date +'%F %R')" | tee -a "${log}"
 for level in $(seq 1 1 ${compressors[$1]}) ; do
   # Reset vars and run tests.
   ct=''
@@ -49,7 +50,7 @@ for level in $(seq 1 1 ${compressors[$1]}) ; do
                lzop -${level} ${src} -o ${comp}
                [ ${t} -gt 0 ] && ct+=" $(( ($(date +'%s%N') - ${start}) / 1000000 ))"
                start=$(date +'%s%N')
-               lzop ${comp} -o ${decomp}
+               lzop -d ${comp} -o ${decomp}
                [ ${t} -gt 0 ] && dt+=" $(( ($(date +'%s%N') - ${start}) / 1000000 ))"
                ;;
       'xz')    start=$(date +'%s%N')
@@ -68,6 +69,6 @@ for level in $(seq 1 1 ${compressors[$1]}) ; do
                ;;
     esac
   done
-  comp_size=$(du -B KB ${comp} | grep -oP '^[0-9]+')
-  echo "${comp_size}  ${ct} ${dt}"
+  comp_size=$(bc <<<"scale=1; $(du -B KB ${comp} | grep -oP '^[0-9]+') / 1000 * 1.0" )
+  echo "${comp_size}  ${ct} ${dt}" | tee -a "${log}"
 done
