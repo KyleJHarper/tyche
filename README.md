@@ -5,8 +5,13 @@ The tyche project is actually just an implementation of the currently-theoretica
 
 This will be open-source and free but I am still going to enforce the Apache 2.0 software license to it for now, as well as retain copyright on the documentation of the theory.
 
+**NOTE** Tyche is purpose-built for __benchmarking__ in a controlled environment!  A separate project is underway for an API.
+
 ====
 Latest Changelog Entries
+
+**[2017-01-28]**
+*Released version 0.0.15 which adds support for zstd.  The user may now send -c 'zstd' in addition to 'lz4' or 'zlib'.*
 
 **[2016-04-28]**
 *Released version 0.0.14 which simply adds support for zlib.  The user may now send -c 'lz4' or -c 'zlib' as desired.  This is mostly for my own personal thesis testing.*
