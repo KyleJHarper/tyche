@@ -19,12 +19,12 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
-#include "error_codes.h"
 #include "error.h"
 #include "list.h"
 #include "io.h"
 #include "options.h"
 #include "manager.h"
+#include "globals.h"
 #include "tyche.h"
 
 /* Make the options stuct shared. */

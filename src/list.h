@@ -48,6 +48,8 @@ struct compressor {
   Buffer **victims;                    /* Link to the array of victims. */
   uint16_t *victims_index;             /* Link to the victims index to track the next-available position. */
   uint16_t *victims_compressor_index;  /* Link to the next-available Buffer to check for compressing in *victims[]. */
+  int compressor_id;                   /* The ID of the compressor we're supposed to use. */
+  int compressor_level;                /* The level to send the compressor, only supported by zlib and zstd right now. */
 };
 
 
@@ -100,11 +102,14 @@ struct list {
   uint16_t active_compressors;                   /* The number of compressors currently doing work. */
   pthread_t *compressor_threads;                 /* A pool of threads for each compressor to run within. */
   Compressor *compressor_pool;                   /* A pool of workers for buffer compression when sweeping. */
+  int compressor_id;                             /* The ID of the compressor we're supposed to use. */
+  int compressor_level;                          /* The level to send the compressor, only supported by zlib and zstd right now. */
+  int compressor_count;                          /* The number of compressors to run from the list. */
 };
 
 
 /* Function prototypes.  Not required, but whatever. */
-List* list__initialize();
+List* list__initialize(int compressor_count, int compressor_id, int compressor_level);
 SkiplistNode* list__initialize_skiplistnode(Buffer *buf);
 int list__add(List *list, Buffer *buf, uint8_t caller_has_list_pin);
 int list__remove(List *list, bufferid_t id);
@@ -113,7 +118,7 @@ int list__search(List *list, Buffer **buf, bufferid_t id, uint8_t caller_has_lis
 int list__acquire_write_lock(List *list);
 int list__release_write_lock(List *list);
 uint64_t list__sweep(List *list, uint8_t sweep_goal);
-int list__balance(List *list, uint32_t ratio);
+int list__balance(List *list, uint32_t ratio, uint64_t max_memory);
 int list__destroy(List *list);
 void list__compressor_start(Compressor *comp);
 void list__show_structure(List *list);

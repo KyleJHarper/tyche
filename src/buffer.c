@@ -18,13 +18,10 @@
 #include "lz4/lz4.h"
 #include "zlib/zlib.h"
 #include "zstd/zstd.h"
-#include "options.h"
 
-
-/* Extern the global options. */
-extern Options opts;
 
 /* We use the compressor IDs in this file. */
+extern const int NO_COMPRESSOR_ID;
 extern const int LZ4_COMPRESSOR_ID;
 extern const int ZLIB_COMPRESSOR_ID;
 extern const int ZSTD_COMPRESSOR_ID;
@@ -239,9 +236,9 @@ int buffer__unblock(Buffer *buf) {
  * allow us to modify the size(s) in the list accurately.  See buffer__decompress() for the counterpart to this.
  * Caller MUST block (buffer__block/unblock) to drain readers!
  */
-int buffer__compress(Buffer *buf) {
-  // Make sure we're supposed to actually be doing work.
-  if(opts.disable_compression != 0) {
+int buffer__compress(Buffer *buf, int compressor_id, int compressor_level) {
+  // Make sure we're supposed to be here.
+  if(compressor_id == NO_COMPRESSOR_ID) {
     buf->comp_length = buf->data_length;
     return E_OK;
   }
@@ -260,7 +257,7 @@ int buffer__compress(Buffer *buf) {
   void *compressed_data = NULL;
   clock_gettime(CLOCK_MONOTONIC, &start);
   // -- Using LZ4
-  if(opts.compressor_id == LZ4_COMPRESSOR_ID) {
+  if(compressor_id == LZ4_COMPRESSOR_ID) {
     int max_compressed_size = LZ4_compressBound(buf->data_length);
     compressed_data = (void *)malloc(max_compressed_size);
     if (compressed_data == NULL)
@@ -274,12 +271,12 @@ int buffer__compress(Buffer *buf) {
     buf->comp_length = rv;
   }
   // -- Using Zlib
-  if(opts.compressor_id == ZLIB_COMPRESSOR_ID) {
+  if(compressor_id == ZLIB_COMPRESSOR_ID) {
     uLongf max_compressed_size = compressBound(buf->data_length);
     compressed_data = (void *)malloc(max_compressed_size);
     if (compressed_data == NULL)
       show_error(E_GENERIC, "Failed to allocate memory during buffer__compress() operation for compressed_data pointer.");
-    rv = compress2(compressed_data, &max_compressed_size, buf->data, buf->data_length, opts.compressor_level);
+    rv = compress2(compressed_data, &max_compressed_size, buf->data, buf->data_length, compressor_level);
     if (rv != Z_OK) {
       printf("buffer__compress returned an error from zlib's compress2: %d\n.", rv);
       return E_GENERIC;
@@ -288,12 +285,12 @@ int buffer__compress(Buffer *buf) {
     buf->comp_length = max_compressed_size;
   }
   // -- Using Zstd
-  if(opts.compressor_id == ZSTD_COMPRESSOR_ID) {
+  if(compressor_id == ZSTD_COMPRESSOR_ID) {
     int max_compressed_size = ZSTD_compressBound(buf->data_length);
     compressed_data = (void *)malloc(max_compressed_size);
     if (compressed_data == NULL)
       show_error(E_GENERIC, "Failed to allocate memory during buffer__compress() operation for compressed_data pointer.");
-    rv = ZSTD_compress(compressed_data, max_compressed_size, buf->data, buf->data_length, opts.compressor_level);
+    rv = ZSTD_compress(compressed_data, max_compressed_size, buf->data, buf->data_length, compressor_level);
     if (ZSTD_isError(rv)) {
       printf("buffer__compress returned a negative result from ZSTD_compress: %d\n.", rv);
       return E_GENERIC;
@@ -322,9 +319,9 @@ int buffer__compress(Buffer *buf) {
  * This sets comp_length back to 0 which signals that the buffer is no longer in a compressed state.
  * Caller MUST block (buffer__block/unblock) to drain readers!
  */
-int buffer__decompress(Buffer *buf) {
+int buffer__decompress(Buffer *buf, int compressor_id) {
   // Make sure we're supposed to actually be doing work.
-  if(opts.disable_compression != 0) {
+  if(compressor_id == NO_COMPRESSOR_ID) {
     buf->comp_length = 0;
     return E_OK;
   }
@@ -345,7 +342,7 @@ int buffer__decompress(Buffer *buf) {
   if (decompressed_data == NULL)
     show_error(E_GENERIC, "Failed to allocate memory for buffer__decompress() for the decompressed_data pointer.");
   // -- Use LZ4
-  if(opts.compressor_id == LZ4_COMPRESSOR_ID) {
+  if(compressor_id == LZ4_COMPRESSOR_ID) {
     rv = LZ4_decompress_safe(buf->data, decompressed_data, buf->comp_length, buf->data_length);
     if (rv < 0) {
       printf("Failed to decompress the data in buffer %d, rv was %d.\n", buf->id, rv);
@@ -353,7 +350,7 @@ int buffer__decompress(Buffer *buf) {
     }
   }
   // -- Use Zlib
-  if(opts.compressor_id == ZLIB_COMPRESSOR_ID) {
+  if(compressor_id == ZLIB_COMPRESSOR_ID) {
     uLongf data_length = buf->data_length;
     rv = uncompress(decompressed_data, &data_length, buf->data, buf->comp_length);
     if (rv < 0 || data_length != buf->data_length) {
@@ -362,7 +359,7 @@ int buffer__decompress(Buffer *buf) {
     }
   }
   // -- Use Zstd
-  if(opts.compressor_id == ZSTD_COMPRESSOR_ID) {
+  if(compressor_id == ZSTD_COMPRESSOR_ID) {
     rv = ZSTD_decompress(decompressed_data, buf->data_length, buf->data, buf->comp_length);
     if (ZSTD_isError(rv)) {
       printf("Failed to decompress the data in buffer %d, rv was %d.\n", buf->id, rv);

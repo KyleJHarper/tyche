@@ -34,13 +34,14 @@ extern const int E_OK;
 extern const int E_GENERIC;
 extern const int E_BAD_CLI;
 
-/* Make the options stuct shared. */
+/* Make the options struct shared. */
 extern Options opts;
 
-/* Define the compressor functions.  This should probably be an enum. */
-const int LZ4_COMPRESSOR_ID  = 1;
-const int ZLIB_COMPRESSOR_ID = 2;
-const int ZSTD_COMPRESSOR_ID = 3;
+/* Extern the compressor IDs. */
+extern const int NO_COMPRESSOR_ID;
+extern const int LZ4_COMPRESSOR_ID;
+extern const int ZLIB_COMPRESSOR_ID;
+extern const int ZSTD_COMPRESSOR_ID;
 
 
 /* options__process
@@ -59,7 +60,6 @@ void options__process(int argc, char **argv) {
   /* Resource Control */
   opts.max_memory = 10 * 1024 * 1024;
   opts.fixed_ratio = -1;
-  opts.disable_compression = 0;
   opts.workers = sysconf(_SC_NPROCESSORS_ONLN) > 0 ? (uint16_t)sysconf(_SC_NPROCESSORS_ONLN) : 1;
   opts.cpu_count = sysconf(_SC_NPROCESSORS_ONLN) > 0 ? (uint16_t)sysconf(_SC_NPROCESSORS_ONLN) : 1;
   /* Tyche Management */
@@ -93,7 +93,7 @@ void options__process(int argc, char **argv) {
           opts.compressor_id = ZSTD_COMPRESSOR_ID;
         break;
       case 'C':
-        opts.disable_compression = 1;
+        opts.compressor_id = NO_COMPRESSOR_ID;
         break;
       case 'd':
         opts.duration = (uint16_t)atoi(optarg);
@@ -202,7 +202,7 @@ void options__process(int argc, char **argv) {
   if (opts.page_limit == 0)
     show_error(E_BAD_CLI, "The page limit (-n) is 0.  You either sent invalid input (atoi() failed), or you misunderstood the option; it limits the number of pages the scan functions will find before moving on with the test.");
   // -- When compression is disabled, warn the user!
-  if (opts.disable_compression != 0)
+  if (opts.compressor_id == NO_COMPRESSOR_ID)
     fprintf(stderr, "WARNING!!  Compression is DISABLED (you sent -C).\n");
 
   return;

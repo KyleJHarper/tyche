@@ -60,8 +60,8 @@ int buffer__update_ref(Buffer *buf, int delta);
 int buffer__victimize(Buffer *buf);
 int buffer__block(Buffer *buf);
 int buffer__unblock(Buffer *buf);
-int buffer__compress(Buffer *buf);
-int buffer__decompress(Buffer *buf);
+int buffer__compress(Buffer *buf, int compressor_id, int compressor_level);
+int buffer__decompress(Buffer *buf, int compressor_id);
 int buffer__copy(Buffer *src, Buffer *dst);
 
 

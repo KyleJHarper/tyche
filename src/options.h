@@ -27,7 +27,6 @@ struct options {
   /* Resource Control */
   uint64_t max_memory;          // Maximum amount of memory tyche can use for buffers.
   int8_t fixed_ratio;           // If non-negative, enforce raw list to this ratio when balancing.
-  uint8_t disable_compression;  // Disables compression if non-zero.
   uint16_t workers;             // Number of worker threads to use simultaneously.
   uint16_t cpu_count;           // Number of CPUs/cores available.
 

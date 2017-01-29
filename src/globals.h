@@ -1,13 +1,24 @@
 /*
- * error_codes.h
+ *globals.h
  *
  *  Created on: Jun 25, 2015
  *      Author: Kyle Harper
- * Description: Codes are shared amongst the entire program.  They should extern them as-needed.
+ * Description: Values shared amongst the entire program.  They should extern them as-needed.
  */
 
-#ifndef SRC_ERROR_CODES_H_
-#define SRC_ERROR_CODES_H_
+#ifndef SRC_GLOBALS_H_
+#define SRC_GLOBALS_H_
+
+
+
+
+/* Define the compressor functions.  This should probably be an enum. */
+const int NO_COMPRESSOR_ID   = 0;
+const int LZ4_COMPRESSOR_ID  = 1;
+const int ZLIB_COMPRESSOR_ID = 2;
+const int ZSTD_COMPRESSOR_ID = 3;
+
+
 
 /* Global Error Codes
  *         0  == Ok
@@ -33,4 +44,4 @@ const int E_BUFFER_ALREADY_COMPRESSED       = 124;  // Not sure this condition e
 const int E_BUFFER_ALREADY_DECOMPRESSED     = 125;  // If 2 threads are attempting to restore a buffer this condition can occur.
 
 
-#endif /* SRC_ERROR_CODES_H_ */
+#endif /* SRC_GLOBALS_H_ */

@@ -72,14 +72,14 @@ Manager* manager__initialize(managerid_t id, char **pages) {
   mgr->misses = 0;
 
   /* Create the listset for this manager to use. */
-  List *list = list__initialize();
+  List *list = list__initialize(opts.cpu_count, opts.compressor_id, opts.compressor_level);
   if (list == NULL)
     show_error(E_GENERIC, "Couldn't create the list for manager "PRIu8".  This is fatal.", id);
   mgr->list = list;
   tmp = mgr->list;
 
   /* Set the memory sizes for both lists. */
-  list__balance(list, opts.fixed_ratio > 0 ? opts.fixed_ratio : INITIAL_RAW_RATIO);
+  list__balance(list, opts.fixed_ratio > 0 ? opts.fixed_ratio : INITIAL_RAW_RATIO, opts.max_memory);
 
   /* Return our manager. */
   return mgr;

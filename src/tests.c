@@ -428,12 +428,12 @@ void tests__compression() {
   buf->data = (void *)malloc(src_size);
   buf->data_length = src_size;
   memcpy(buf->data, src, buf->data_length);
-  rv = buffer__compress(buf);
+  rv = buffer__compress(buf, opts.compressor_id, opts.compressor_level);
   if (rv != 0)
     show_error(E_GENERIC, "The rv was non-zero, indicating an error from buffer__compress: %d\n", rv);
   printf("Compression gave an OK response.    comp_time is %d ns, comp_hits is %d, data_legnth is %d, and comp_length is %d bytes\n", buf->comp_cost, buf->comp_hits, buf->data_length, buf->comp_length);
   memset(new_src, 0, src_size);
-  rv = buffer__decompress(buf);
+  rv = buffer__decompress(buf, opts.compressor_id);
   if (rv != 0)
     show_error(E_GENERIC, "The rv was non-zero, indicating an error from buffer__decompress: %d\n", rv);
   if (memcmp(src, buf->data, src_size) != 0)

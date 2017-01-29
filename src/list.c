@@ -21,9 +21,7 @@
 #include <math.h>
 #include "buffer.h"
 #include "error.h"
-#include "options.h"
 #include "list.h"
-#include "options.h"
 
 #include <locale.h> /* Remove me after debugging... probably */
 #include <unistd.h> //Also remove after debug.
@@ -50,15 +48,12 @@ extern const int E_BUFFER_ALREADY_DECOMPRESSED;
 /* We need some information from the buffer */
 extern const int BUFFER_OVERHEAD;
 
-/* Extern the global options. */
-extern Options opts;
-
 
 
 /* list__initialize
  * Creates the actual list that we're being given a pointer to.  We will also create the head of it as a reference point.
  */
-List* list__initialize() {
+List* list__initialize(int compressor_count, int compressor_id, int compressor_level) {
   /* Quick error checking, then initialize the list.  We don't need to lock it because it's synchronous. */
   List *list = (List *)malloc(sizeof(List));
   if (list == NULL)
@@ -111,7 +106,7 @@ List* list__initialize() {
   pthread_mutex_init(&list->jobs_lock, NULL);
   pthread_cond_init(&list->jobs_cond, NULL);
   pthread_cond_init(&list->jobs_parent_cond, NULL);
-  list->compressor_threads = calloc(opts.cpu_count, sizeof(pthread_t));
+  list->compressor_threads = calloc(compressor_count, sizeof(pthread_t));
   if(list->compressor_threads == NULL)
     show_error(E_GENERIC, "Failed to allocate memory for the compressor_threads");
   for(int i=0; i<VICTIM_BATCH_SIZE; i++)
@@ -122,10 +117,10 @@ List* list__initialize() {
   list->victims_index = 0;
   list->victims_compressor_index = 0;
   list->active_compressors = 0;
-  list->compressor_pool = calloc(opts.cpu_count, sizeof(Compressor));
+  list->compressor_pool = calloc(compressor_count, sizeof(Compressor));
   if(list->compressor_pool == NULL)
     show_error(E_GENERIC, "Failed to allocate memory for the compressor_pool");
-  for(int i=0; i<opts.cpu_count; i++) {
+  for(int i=0; i<compressor_count; i++) {
     list->compressor_pool[i].jobs_cond = &list->jobs_cond;
     list->compressor_pool[i].jobs_lock = &list->jobs_lock;
     list->compressor_pool[i].jobs_parent_cond = &list->jobs_parent_cond;
@@ -134,8 +129,13 @@ List* list__initialize() {
     list->compressor_pool[i].victims = list->victims;
     list->compressor_pool[i].victims_index = &list->victims_index;
     list->compressor_pool[i].victims_compressor_index = &list->victims_compressor_index;
+    list->compressor_pool[i].compressor_id = compressor_id;
+    list->compressor_pool[i].compressor_level = compressor_level;
     pthread_create(&list->compressor_threads[i], NULL, (void*) &list__compressor_start, &list->compressor_pool[i]);
   }
+  list->compressor_id = compressor_id;
+  list->compressor_level = compressor_level;
+  list->compressor_count = compressor_count;
 
   return list;
 }
@@ -488,7 +488,7 @@ int list__search(List *list, Buffer **buf, bufferid_t id, uint8_t caller_has_lis
       buffer__update_ref(*buf, -1);
       buffer__unlock(*buf);
       copy->is_ephemeral = 1;
-      if(buffer__decompress(copy) != E_OK)
+      if(buffer__decompress(copy, list->compressor_id) != E_OK)
         show_error(E_GENERIC, "A buffer received a non-OK return code when being decompressed.");
       *buf = copy;
     } else {
@@ -500,7 +500,7 @@ int list__search(List *list, Buffer **buf, bufferid_t id, uint8_t caller_has_lis
       buffer__unlock(*buf);
       if (buffer__block(*buf) == E_BUFFER_IS_VICTIMIZED)
         show_error(E_GENERIC, "I am trying to block a victimized buffer.\n");
-      decompress_rv = buffer__decompress(*buf);
+      decompress_rv = buffer__decompress(*buf, list->compressor_id);
       if (decompress_rv != E_OK && decompress_rv != E_BUFFER_ALREADY_DECOMPRESSED)
         show_error(decompress_rv, "A buffer that deserved restoration failed to decompress properly.  rv was %d.", decompress_rv);
       buffer__unblock(*buf);
@@ -668,15 +668,15 @@ uint64_t list__sweep(List *list, uint8_t sweep_goal) {
  * Redistributes memory between a list and it's offload target.  The list__sweep() and list__pop() functions will handle the
  * buffer migration while respecting the new boundaries.
  */
-int list__balance(List *list, uint32_t ratio) {
+int list__balance(List *list, uint32_t ratio, uint64_t max_memory) {
   // As always, be safe.
   if (list == NULL)
     show_error(E_GENERIC, "The list__balance function was given a NULL list.  This should never happen.");
   list__acquire_write_lock(list);
 
   // Set the memory values according to the ratio.
-  list->max_raw_size = opts.max_memory * ratio / 100;
-  list->max_comp_size = opts.max_memory - list->max_raw_size;
+  list->max_raw_size = max_memory * ratio / 100;
+  list->max_comp_size = max_memory - list->max_raw_size;
 
   // Call list__sweep to clean up any needed raw space and remove any compressed buffers, if necessary.
   const uint8_t MINIMUM_SWEEP_GOAL = list->current_raw_size > list->max_raw_size ? 101 - (100 * list->max_raw_size / list->current_raw_size) : 1;
@@ -703,14 +703,14 @@ int list__destroy(List *list) {
   list__remove(list, list->head->id);
   for(int i=0; i<SKIPLIST_MAX; i++)
     free(list->indexes[i]);
-  for(int i=0; i<opts.cpu_count; i++)
+  for(int i=0; i<list->compressor_count; i++)
     list->compressor_pool[i].runnable = 1;
-  for(int i=0; i<opts.cpu_count; i++) {
+  for(int i=0; i<list->compressor_count; i++) {
     pthread_mutex_lock(&list->jobs_lock);
     pthread_cond_broadcast(&list->jobs_cond);
     pthread_mutex_unlock(&list->jobs_lock);
   }
-  for(int i=0; i<opts.cpu_count; i++)
+  for(int i=0; i<list->compressor_count; i++)
     pthread_join(list->compressor_threads[i], NULL);
   free(list->compressor_pool);
   free(list->compressor_threads);
@@ -768,7 +768,7 @@ void list__compressor_start(Compressor *comp) {
         buffer__unlock(work_me[i]);
         continue;
       }
-      rv = buffer__compress(work_me[i]);
+      rv = buffer__compress(work_me[i], comp->compressor_id, comp->compressor_level);
       buffer__unblock(work_me[i]);
       if(rv != E_OK)
         show_error(rv, "Compressor job failed to compress a buffer.  RV was %d.  Buffer id was %u.  Data and comp lengths are %u %u", rv, work_me[i]->id, work_me[i]->data_length, work_me[i]->comp_length);
