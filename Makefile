@@ -18,7 +18,14 @@ OBJECTS  := $(SOURCES:$(SRCDIR)/%.c=$(OBJDIR)/%.o)
 # The clock_gettime() on this gcc version requires -lrt.
 build:
 	$(CC) $(CFLAGS) -O3 -o $(BINDIR)/hello $(SRCDIR)/hello.c
-	$(CC) $(CFLAGS) -O3 -o $(BINDIR)/playground $(SRCDIR)/playground.c $(ZSTD_SRCS)
+	$(CC) $(CFLAGS) -O3 -o $(BINDIR)/playground \
+		$(SRCDIR)/playground.c \
+		$(SRCDIR)/list.c       \
+		$(SRCDIR)/buffer.c     \
+		$(ZLIB_SRCS)           \
+		$(LZ4_SRCS)            \
+		$(ZSTD_SRCS)           \
+		-lm
 	$(CC) $(CFLAGS) -O3 -o $(BINDIR)/sizes $(SRCDIR)/sizes.c
 	$(CC) $(CFLAGS) -g -pg -O0 -o $(BINDIR)/tyche_debug \
 		$(LZ4_SRCS)                \
@@ -48,7 +55,14 @@ build:
 		-L$(JEMALLOC_DIR) -Wl,-rpath,${JEMALLOC_DIR}/ -ljemalloc -lrt -lm
 
 playground:
-	$(CC) $(CFLAGS) -O3 -o $(BINDIR)/playground $(SRCDIR)/playground.c $(ZSTD_SRCS)
+	$(CC) $(CFLAGS) -O3 -o $(BINDIR)/playground \
+		$(SRCDIR)/playground.c \
+		$(SRCDIR)/list.c       \
+		$(SRCDIR)/buffer.c     \
+		$(ZLIB_SRCS)           \
+		$(LZ4_SRCS)            \
+		$(ZSTD_SRCS)           \
+		-lm
 
 clean:
 	rm -f $(BINDIR)/*

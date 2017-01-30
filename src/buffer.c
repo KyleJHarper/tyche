@@ -13,7 +13,6 @@
 #include <stdlib.h>
 #include <time.h>     /* for clock_gettime() */
 #include <string.h>   /* for memcpy() */
-#include "error.h"
 #include "buffer.h"
 #include "lz4/lz4.h"
 #include "zlib/zlib.h"
@@ -63,6 +62,9 @@ extern const int E_BUFFER_IS_VICTIMIZED;
 extern const int E_BUFFER_MISSING_DATA;
 extern const int E_BUFFER_ALREADY_COMPRESSED;
 extern const int E_BUFFER_ALREADY_DECOMPRESSED;
+// Also get the NO_MEMORY one for allocations.
+extern const int E_NO_MEMORY;
+extern const int E_BAD_ARGS;
 
 
 /* Store the overhead of a Buffer for others to use for calculations.  Note this doesn't count the SkipListNode (24 bytes), probabilistically. */
@@ -72,41 +74,42 @@ const int BUFFER_OVERHEAD = sizeof(Buffer);
 
 
 /* buffer__initialize
+ * TODO Fix description
  * Creates a new buffer, simply put.  We have to create a new buffer (with a new pointer) and return its address because we NULL
  * out existing buffers' pointers when we remove them from their pools.  The *page_filespec is the path to the file (page) we're
  * going to read into the buffer's ()->data member.
  */
-Buffer* buffer__initialize(bufferid_t id, char *page_filespec) {
-  Buffer *new_buffer = (Buffer *)malloc(sizeof(Buffer));
-  if (new_buffer == NULL)
-    show_error(E_GENERIC, "Error malloc-ing a new buffer in buffer__initialize.");
+int buffer__initialize(Buffer **buf, bufferid_t id, char *page_filespec) {
+  *buf = (Buffer *)malloc(sizeof(Buffer));
+  if (*buf == NULL)
+    return E_NO_MEMORY;
   /* Load default values via memcpy from a template defined above. */
-  memcpy(new_buffer, &BUFFER_INITIALIZER, sizeof(Buffer));
-  new_buffer->id = id;
+  memcpy(*buf, &BUFFER_INITIALIZER, sizeof(Buffer));
+  (*buf)->id = id;
 
   /* If we weren't given a filespec, then we're done.  Peace out. */
   if (page_filespec == NULL)
-    return new_buffer;
+    return E_OK;
 
   /* Use *page to try to read the page from the disk.  Time the operation.*/
   struct timespec start, end;
   clock_gettime(CLOCK_MONOTONIC, &start);
   FILE *fh = fopen(page_filespec, "rb");
   if (fh == NULL)
-    show_error(E_GENERIC, "Unable to open file: %s.\n", page_filespec);
+    return E_GENERIC;
   fseek(fh, 0, SEEK_END);
-  new_buffer->data_length = ftell(fh);
+  (*buf)->data_length = ftell(fh);
   rewind(fh);
-  new_buffer->data = malloc(new_buffer->data_length);
-  if (new_buffer->data == NULL)
-    show_error(E_GENERIC, "Unable to allocate memory when loading a buffer's data member.");
-  if (fread(new_buffer->data, new_buffer->data_length, 1, fh) == 0)
-    show_error(E_GENERIC, "Failed to read the data for a new buffer: %s", page_filespec);
+  (*buf)->data = malloc((*buf)->data_length);
+  if ((*buf)->data == NULL)
+    return E_NO_MEMORY;
+  if (fread((*buf)->data, (*buf)->data_length, 1, fh) == 0)
+    return E_GENERIC;
   fclose(fh);
   clock_gettime(CLOCK_MONOTONIC, &end);
-  new_buffer->io_cost = BILLION *(end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec;
+  (*buf)->io_cost = BILLION *(end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec;
 
-  return new_buffer;
+  return E_OK;
 }
 
 
@@ -118,7 +121,7 @@ int buffer__destroy(Buffer *buf) {
   if (buf == NULL)
     return E_OK;
   if (buf->victimized == 0 && buf->is_ephemeral == 0)
-    show_error(E_GENERIC, "The buffer__destroy() function was called with a buffer that is neither ephemeral or victimized.  This isn't allowed.");
+    return E_BAD_ARGS;
 
   /* Free the members which are pointers to other data locations. */
   free(buf->data);
@@ -261,7 +264,7 @@ int buffer__compress(Buffer *buf, int compressor_id, int compressor_level) {
     int max_compressed_size = LZ4_compressBound(buf->data_length);
     compressed_data = (void *)malloc(max_compressed_size);
     if (compressed_data == NULL)
-      show_error(E_GENERIC, "Failed to allocate memory during buffer__compress() operation for compressed_data pointer.");
+      return E_NO_MEMORY;
     rv = LZ4_compress_default(buf->data, compressed_data, buf->data_length, max_compressed_size);
     if (rv < 1) {
       printf("buffer__compress returned a negative result from LZ4_compress_default: %d\n.", rv);
@@ -275,7 +278,7 @@ int buffer__compress(Buffer *buf, int compressor_id, int compressor_level) {
     uLongf max_compressed_size = compressBound(buf->data_length);
     compressed_data = (void *)malloc(max_compressed_size);
     if (compressed_data == NULL)
-      show_error(E_GENERIC, "Failed to allocate memory during buffer__compress() operation for compressed_data pointer.");
+      return E_NO_MEMORY;
     rv = compress2(compressed_data, &max_compressed_size, buf->data, buf->data_length, compressor_level);
     if (rv != Z_OK) {
       printf("buffer__compress returned an error from zlib's compress2: %d\n.", rv);
@@ -289,7 +292,7 @@ int buffer__compress(Buffer *buf, int compressor_id, int compressor_level) {
     int max_compressed_size = ZSTD_compressBound(buf->data_length);
     compressed_data = (void *)malloc(max_compressed_size);
     if (compressed_data == NULL)
-      show_error(E_GENERIC, "Failed to allocate memory during buffer__compress() operation for compressed_data pointer.");
+      return E_NO_MEMORY;
     rv = ZSTD_compress(compressed_data, max_compressed_size, buf->data, buf->data_length, compressor_level);
     if (ZSTD_isError(rv)) {
       printf("buffer__compress returned a negative result from ZSTD_compress: %d\n.", rv);
@@ -340,7 +343,7 @@ int buffer__decompress(Buffer *buf, int compressor_id) {
   clock_gettime(CLOCK_MONOTONIC, &start);
   void *decompressed_data = (void *)malloc(buf->data_length);
   if (decompressed_data == NULL)
-    show_error(E_GENERIC, "Failed to allocate memory for buffer__decompress() for the decompressed_data pointer.");
+    return E_NO_MEMORY;
   // -- Use LZ4
   if(compressor_id == LZ4_COMPRESSOR_ID) {
     rv = LZ4_decompress_safe(buf->data, decompressed_data, buf->comp_length, buf->data_length);
@@ -388,7 +391,7 @@ int buffer__decompress(Buffer *buf, int compressor_id) {
 int buffer__copy(Buffer *src, Buffer *dst) {
   /* Make sure the buffer is real.  Caller must initialize. */
   if (dst == NULL)
-    show_error(E_GENERIC, "The buffer__copy function was given a dst buffer pointer that was NULL.  This shouldn't happen.  Ever.");
+    return E_BAD_ARGS;
 
   /* Attributes for typical buffer organization and management. */
   dst->id           = src->id;

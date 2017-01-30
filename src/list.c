@@ -36,6 +36,9 @@
  * have profound performance implications in a real-world situation.  So we'll leave it for edification if nothing else. */
 const int RESTORATION_THRESHOLD = 8;
 
+/* Specify the default raw ratio to start with. */
+#define INITIAL_RAW_RATIO   80    // 80%
+
 
 /* Extern the error codes we'll use. */
 extern const int E_OK;
@@ -44,6 +47,12 @@ extern const int E_BUFFER_NOT_FOUND;
 extern const int E_BUFFER_IS_VICTIMIZED;
 extern const int E_BUFFER_ALREADY_EXISTS;
 extern const int E_BUFFER_ALREADY_DECOMPRESSED;
+extern const int E_BUFFER_COMPRESSION_PROBLEM;
+extern const int E_LIST_CANNOT_BALANCE;
+extern const int E_LIST_REMOVAL;
+// No mem errors.
+extern const int E_NO_MEMORY;
+extern const int E_BAD_ARGS;
 
 /* We need some information from the buffer */
 extern const int BUFFER_OVERHEAD;
@@ -53,106 +62,112 @@ extern const int BUFFER_OVERHEAD;
 /* list__initialize
  * Creates the actual list that we're being given a pointer to.  We will also create the head of it as a reference point.
  */
-List* list__initialize(int compressor_count, int compressor_id, int compressor_level) {
+int list__initialize(List **list, int compressor_count, int compressor_id, int compressor_level, uint64_t  max_memory) {
   /* Quick error checking, then initialize the list.  We don't need to lock it because it's synchronous. */
-  List *list = (List *)malloc(sizeof(List));
-  if (list == NULL)
-    show_error(E_GENERIC, "Failed to malloc a new list.");
+  int rv = E_OK;
+  *list = (List *)malloc(sizeof(List));
+  if (*list == NULL)
+    return E_NO_MEMORY;
 
   /* Size and Counter Members */
-  list->raw_count = 0;
-  list->comp_count = 0;
-  list->current_raw_size = 0;
-  list->max_raw_size = 0;
-  list->current_comp_size = 0;
-  list->max_comp_size = 0;
+  (*list)->raw_count = 0;
+  (*list)->comp_count = 0;
+  (*list)->current_raw_size = 0;
+  (*list)->max_raw_size = 0;
+  (*list)->current_comp_size = 0;
+  (*list)->max_comp_size = 0;
+  list__balance(*list, INITIAL_RAW_RATIO, max_memory);
 
   /* Locking, Reference Counters, and Similar Members */
-  if (pthread_mutex_init(&list->lock, NULL) != 0)
-    show_error(E_GENERIC, "Failed to initialize mutex for a list.  This is fatal.");
-  list->lock_owner = 0;
-  list->lock_depth = 0;
-  if (pthread_cond_init(&list->writer_condition, NULL) != 0)
-    show_error(E_GENERIC, "Failed to initialize writer condition for a list.  This is fatal.");
-  if (pthread_cond_init(&list->reader_condition, NULL) != 0)
-    show_error(E_GENERIC, "Failed to initialize reader condition for a list.  This is fatal.");
-  if (pthread_cond_init(&list->sweeper_condition, NULL) != 0)
-    show_error(E_GENERIC, "Failed to initialized sweeper condition for a list.  This is fatal.");
-  list->ref_count = 0;
-  list->pending_writers = 0;
+  if (pthread_mutex_init(&(*list)->lock, NULL) != 0)
+    return E_GENERIC;
+  (*list)->lock_owner = 0;
+  (*list)->lock_depth = 0;
+  if (pthread_cond_init(&(*list)->writer_condition, NULL) != 0)
+    return E_GENERIC;
+  if (pthread_cond_init(&(*list)->reader_condition, NULL) != 0)
+    return E_GENERIC;
+  if (pthread_cond_init(&(*list)->sweeper_condition, NULL) != 0)
+    return E_GENERIC;
+  (*list)->ref_count = 0;
+  (*list)->pending_writers = 0;
 
   /* Management and Administration Members */
-  list->sweep_goal = 5;
-  list->sweeps = 0;
-  list->sweep_cost = 0;
-  list->restorations = 0;
-  list->compressions = 0;
+  (*list)->sweep_goal = 5;
+  (*list)->sweeps = 0;
+  (*list)->sweep_cost = 0;
+  (*list)->restorations = 0;
+  (*list)->compressions = 0;
 
   /* Head Nodes of the List and Skiplist (Index). Make the Buffer list head a dummy buffer. */
-  list->head = buffer__initialize(BUFFER_ID_MAX, NULL);
-  list->head->next = list->head;
-  list->clock_hand = list->head;
-  list->levels = 1;
+  rv = buffer__initialize(&(*list)->head, BUFFER_ID_MAX, NULL);
+  if (rv != E_OK)
+    return rv;
+  (*list)->head->next = (*list)->head;
+  (*list)->clock_hand = (*list)->head;
+  (*list)->levels = 1;
   SkiplistNode *slnode = NULL;
   for(int i=0; i<SKIPLIST_MAX; i++) {
-    slnode = list__initialize_skiplistnode(list->head);
+    rv = list__initialize_skiplistnode(&slnode, (*list)->head);
+    if (rv != E_OK)
+      return rv;
     if(i != 0)
-      slnode->down = list->indexes[i-1];
+      slnode->down = (*list)->indexes[i-1];
     // Assign it to the correct index.
-    list->indexes[i] = slnode;
+    (*list)->indexes[i] = slnode;
   }
 
   /* Compressor Pool Management */
-  pthread_mutex_init(&list->jobs_lock, NULL);
-  pthread_cond_init(&list->jobs_cond, NULL);
-  pthread_cond_init(&list->jobs_parent_cond, NULL);
-  list->compressor_threads = calloc(compressor_count, sizeof(pthread_t));
-  if(list->compressor_threads == NULL)
-    show_error(E_GENERIC, "Failed to allocate memory for the compressor_threads");
+  pthread_mutex_init(&(*list)->jobs_lock, NULL);
+  pthread_cond_init(&(*list)->jobs_cond, NULL);
+  pthread_cond_init(&(*list)->jobs_parent_cond, NULL);
+  (*list)->compressor_threads = calloc(compressor_count, sizeof(pthread_t));
+  if((*list)->compressor_threads == NULL)
+    return E_NO_MEMORY;
   for(int i=0; i<VICTIM_BATCH_SIZE; i++)
-    list->comp_victims[i] = NULL;
-  list->comp_victims_index = 0;
+    (*list)->comp_victims[i] = NULL;
+  (*list)->comp_victims_index = 0;
   for(int i=0; i<VICTIM_BATCH_SIZE; i++)
-    list->victims[i] = NULL;
-  list->victims_index = 0;
-  list->victims_compressor_index = 0;
-  list->active_compressors = 0;
-  list->compressor_pool = calloc(compressor_count, sizeof(Compressor));
-  if(list->compressor_pool == NULL)
-    show_error(E_GENERIC, "Failed to allocate memory for the compressor_pool");
+    (*list)->victims[i] = NULL;
+  (*list)->victims_index = 0;
+  (*list)->victims_compressor_index = 0;
+  (*list)->active_compressors = 0;
+  (*list)->compressor_pool = calloc(compressor_count, sizeof(Compressor));
+  if((*list)->compressor_pool == NULL)
+    return E_NO_MEMORY;
   for(int i=0; i<compressor_count; i++) {
-    list->compressor_pool[i].jobs_cond = &list->jobs_cond;
-    list->compressor_pool[i].jobs_lock = &list->jobs_lock;
-    list->compressor_pool[i].jobs_parent_cond = &list->jobs_parent_cond;
-    list->compressor_pool[i].active_compressors = &list->active_compressors;
-    list->compressor_pool[i].runnable = 0;
-    list->compressor_pool[i].victims = list->victims;
-    list->compressor_pool[i].victims_index = &list->victims_index;
-    list->compressor_pool[i].victims_compressor_index = &list->victims_compressor_index;
-    list->compressor_pool[i].compressor_id = compressor_id;
-    list->compressor_pool[i].compressor_level = compressor_level;
-    pthread_create(&list->compressor_threads[i], NULL, (void*) &list__compressor_start, &list->compressor_pool[i]);
+    (*list)->compressor_pool[i].jobs_cond = &(*list)->jobs_cond;
+    (*list)->compressor_pool[i].jobs_lock = &(*list)->jobs_lock;
+    (*list)->compressor_pool[i].jobs_parent_cond = &(*list)->jobs_parent_cond;
+    (*list)->compressor_pool[i].active_compressors = &(*list)->active_compressors;
+    (*list)->compressor_pool[i].runnable = 0;
+    (*list)->compressor_pool[i].victims = (*list)->victims;
+    (*list)->compressor_pool[i].victims_index = &(*list)->victims_index;
+    (*list)->compressor_pool[i].victims_compressor_index = &(*list)->victims_compressor_index;
+    (*list)->compressor_pool[i].compressor_id = compressor_id;
+    (*list)->compressor_pool[i].compressor_level = compressor_level;
+    pthread_create(&(*list)->compressor_threads[i], NULL, (void*) &list__compressor_start, &(*list)->compressor_pool[i]);
   }
-  list->compressor_id = compressor_id;
-  list->compressor_level = compressor_level;
-  list->compressor_count = compressor_count;
+  (*list)->compressor_id = compressor_id;
+  (*list)->compressor_level = compressor_level;
+  (*list)->compressor_count = compressor_count;
 
-  return list;
+  return E_OK;
 }
 
 
 /* list__initialize_skiplistnode
  * Simply builds an empty skiplist node.
  */
-SkiplistNode* list__initialize_skiplistnode(Buffer *buf) {
-  SkiplistNode *slnode = (SkiplistNode *)malloc(sizeof(SkiplistNode));
-  if(slnode == NULL)
-    show_error(E_GENERIC, "Failed to allocate memory for a Skiplist Node.  This is fatal.");
-  slnode->down = NULL;
-  slnode->right = NULL;
-  slnode->target = buf;
-  slnode->buffer_id = buf->id;
-  return slnode;
+int list__initialize_skiplistnode(SkiplistNode **slnode, Buffer *buf) {
+  *slnode = (SkiplistNode *)malloc(sizeof(SkiplistNode));
+  if(*slnode == NULL)
+    return E_NO_MEMORY;
+  (*slnode)->down = NULL;
+  (*slnode)->right = NULL;
+  (*slnode)->target = buf;
+  (*slnode)->buffer_id = buf->id;
+  return E_OK;
 }
 
 
@@ -171,7 +186,7 @@ int list__acquire_write_lock(List *list) {
   /* Block until we get the list lock, then we can safely update pending writers. */
   pthread_mutex_lock(&list->lock);
   if (list->lock_depth != 0)
-    show_error(E_GENERIC, "A new lock chain is being established but someone else left the list with a non-zero depth.  This is fatal.");
+    return E_GENERIC;
   list->pending_writers++;
   /* Begin a predicate check while under the protection of the mutex.  Block if the predicate remains true. */
   while(list->ref_count != 0)
@@ -215,6 +230,7 @@ int list__release_write_lock(List *list) {
 int list__add(List *list, Buffer *buf, uint8_t caller_has_list_pin) {
   /* Initialize a few basic values. */
   int rv = E_OK;
+  int slnode_rv = E_OK;
 
   /* Grab the list lock so we can handle sweeping processes and signaling correctly.  Small race will allow exceeding max, but that's ok. */
   if(list->current_raw_size > list->max_raw_size) {
@@ -300,7 +316,9 @@ int list__add(List *list, Buffer *buf, uint8_t caller_has_list_pin) {
     SkiplistNode *slnode = NULL;
     for(int i = 0; i < levels; i++) {
       // Create a new Skiplist Node for each level we'll be inserting at and insert it into that index.
-      slnode = list__initialize_skiplistnode(buf);
+      slnode_rv = list__initialize_skiplistnode(&slnode, buf);
+      if (slnode_rv != E_OK)
+        return slnode_rv;
       slnode->right = slstack[i]->right;
       slstack[i]->right = slnode;
     }
@@ -371,7 +389,7 @@ int list__remove(List *list, bufferid_t id) {
     const uint32_t BUFFER_SIZE = BUFFER_OVERHEAD + (buf->comp_length == 0 ? buf->data_length : buf->comp_length);
     int victimize_status = buffer__victimize(buf);
     if (victimize_status != 0)
-      show_error(victimize_status, "The list__remove function received an error when trying to victimize the buffer (%d).", victimize_status);
+      return victimize_status;
     // Update the list metrics and move the clock hand if it's pointing at the same address as buf.
     if(list->clock_hand == buf)
       list->clock_hand = list->clock_hand->next;
@@ -481,7 +499,10 @@ int list__search(List *list, Buffer **buf, bufferid_t id, uint8_t caller_has_lis
   if(rv == E_OK && (*buf)->comp_length != 0) {
     if((*buf)->popularity < RESTORATION_THRESHOLD) {
       // Simply send back a copy.
-      Buffer *copy = buffer__initialize(0, NULL);
+      Buffer *copy = NULL;
+      rv = buffer__initialize(&copy, 0, NULL);
+      if (rv != E_OK)
+        return rv;
       buffer__copy((*buf), copy);
       // The original buffer needs to be released since we're sending back a copy.
       buffer__lock(*buf);
@@ -489,7 +510,7 @@ int list__search(List *list, Buffer **buf, bufferid_t id, uint8_t caller_has_lis
       buffer__unlock(*buf);
       copy->is_ephemeral = 1;
       if(buffer__decompress(copy, list->compressor_id) != E_OK)
-        show_error(E_GENERIC, "A buffer received a non-OK return code when being decompressed.");
+        return E_BUFFER_COMPRESSION_PROBLEM;
       *buf = copy;
     } else {
       // This buffer warrants full restoration to the raw list.  Hooray for it!  Remove our pin and block for protection.  Safe due to list pin.
@@ -499,10 +520,10 @@ int list__search(List *list, Buffer **buf, bufferid_t id, uint8_t caller_has_lis
       buffer__update_ref(*buf, -1);
       buffer__unlock(*buf);
       if (buffer__block(*buf) == E_BUFFER_IS_VICTIMIZED)
-        show_error(E_GENERIC, "I am trying to block a victimized buffer.\n");
+        return E_GENERIC;
       decompress_rv = buffer__decompress(*buf, list->compressor_id);
       if (decompress_rv != E_OK && decompress_rv != E_BUFFER_ALREADY_DECOMPRESSED)
-        show_error(decompress_rv, "A buffer that deserved restoration failed to decompress properly.  rv was %d.", decompress_rv);
+        return E_BUFFER_COMPRESSION_PROBLEM;
       buffer__unblock(*buf);
       // Restore our pin and update counters for the list now.
       buffer__lock(*buf);
@@ -671,7 +692,7 @@ uint64_t list__sweep(List *list, uint8_t sweep_goal) {
 int list__balance(List *list, uint32_t ratio, uint64_t max_memory) {
   // As always, be safe.
   if (list == NULL)
-    show_error(E_GENERIC, "The list__balance function was given a NULL list.  This should never happen.");
+    return E_BAD_ARGS;
   list__acquire_write_lock(list);
 
   // Set the memory values according to the ratio.
@@ -681,7 +702,7 @@ int list__balance(List *list, uint32_t ratio, uint64_t max_memory) {
   // Call list__sweep to clean up any needed raw space and remove any compressed buffers, if necessary.
   const uint8_t MINIMUM_SWEEP_GOAL = list->current_raw_size > list->max_raw_size ? 101 - (100 * list->max_raw_size / list->current_raw_size) : 1;
   if (MINIMUM_SWEEP_GOAL > 99)
-    show_error(E_GENERIC, "When trying to balance the lists, sweep goal was incremented to 100+ which would eliminate the entire list.  This is, I believe, a condition that should never happen.");
+    return E_LIST_CANNOT_BALANCE;
   list__sweep(list, MINIMUM_SWEEP_GOAL > list->sweep_goal ? MINIMUM_SWEEP_GOAL : list->sweep_goal);
 
   // All done.  Release our lock and go home.
@@ -698,7 +719,7 @@ int list__destroy(List *list) {
   while(list->head->next != list->head) {
     rv = list__remove(list, list->head->next->id);
     if(rv != E_OK)
-      show_error(rv, "Failed to remove buffer %"PRIu32" when destroying the list.", list->head->next->id);
+      return E_LIST_REMOVAL;
   }
   list__remove(list, list->head->id);
   for(int i=0; i<SKIPLIST_MAX; i++)
@@ -770,8 +791,6 @@ void list__compressor_start(Compressor *comp) {
       }
       rv = buffer__compress(work_me[i], comp->compressor_id, comp->compressor_level);
       buffer__unblock(work_me[i]);
-      if(rv != E_OK)
-        show_error(rv, "Compressor job failed to compress a buffer.  RV was %d.  Buffer id was %u.  Data and comp lengths are %u %u", rv, work_me[i]->id, work_me[i]->data_length, work_me[i]->comp_length);
       work_me[i] = NULL;
     }
   }

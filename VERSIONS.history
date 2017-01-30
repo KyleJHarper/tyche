@@ -1,5 +1,8 @@
 Contains a simple note for each tagged release.  We will try to follow SEMVER.  Be aware, all 0.x.y releases are developmental and are NOT guaranteed compatible according to SEMVER.  Major version 0 should go away after major release 1... as will this notice probably.
 
+0.0.15 (2017-01-29)
+- Added support for Zstd compression.
+
 0.0.14 (2016-04-28)
 - Added support for Zlib compression.
 - Added, and then removed, LZMA support as well because it was too complicated for now and (more importantly) I can prove what I'm trying to demonstrate with lz4 vs zlib anyway.

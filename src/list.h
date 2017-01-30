@@ -109,8 +109,8 @@ struct list {
 
 
 /* Function prototypes.  Not required, but whatever. */
-List* list__initialize(int compressor_count, int compressor_id, int compressor_level);
-SkiplistNode* list__initialize_skiplistnode(Buffer *buf);
+int list__initialize(List **list, int compressor_count, int compressor_id, int compressor_level, uint64_t max_memory);
+int list__initialize_skiplistnode(SkiplistNode **slnode, Buffer *buf);
 int list__add(List *list, Buffer *buf, uint8_t caller_has_list_pin);
 int list__remove(List *list, bufferid_t id);
 int list__update_ref(List *list, int delta);

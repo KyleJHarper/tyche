@@ -72,8 +72,10 @@ Manager* manager__initialize(managerid_t id, char **pages) {
   mgr->misses = 0;
 
   /* Create the listset for this manager to use. */
-  List *list = list__initialize(opts.cpu_count, opts.compressor_id, opts.compressor_level);
-  if (list == NULL)
+  List *list = NULL;
+  int list_rv = E_OK;
+  list_rv = list__initialize(&list, opts.cpu_count, opts.compressor_id, opts.compressor_level, opts.max_memory);
+  if (list_rv != E_OK)
     show_error(E_GENERIC, "Couldn't create the list for manager "PRIu8".  This is fatal.", id);
   mgr->list = list;
   tmp = mgr->list;
@@ -284,6 +286,7 @@ void manager__spawn_worker(Manager *mgr) {
   Buffer *buf = NULL;
   bufferid_t id_to_get = 0;
   int rv = 0;
+  int buf_rv = 0;
   while(mgr->runnable != 0) {
     /* Callers can provide their own list pins before calling read operations.  Do so here to reduce lock contention. */
     if(has_list_pin == 0) {
@@ -299,7 +302,9 @@ void manager__spawn_worker(Manager *mgr) {
       mgr->workers[id].hits++;
     if(rv == E_BUFFER_NOT_FOUND) {
       mgr->workers[id].misses++;
-      buf = buffer__initialize(id_to_get, mgr->pages[id_to_get]);
+      buf_rv = buffer__initialize(&buf, id_to_get, mgr->pages[id_to_get]);
+      if (buf_rv != E_OK)
+        show_error(buf_rv, "Unable to get a buffer.  RV is %d.", buf_rv);
       buffer__update_ref(buf, 1);
       rv = list__add(mgr->list, buf, has_list_pin);
       if (rv == E_BUFFER_ALREADY_EXISTS) {

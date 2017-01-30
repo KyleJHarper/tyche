@@ -52,7 +52,7 @@ struct buffer {
 
 
 /* Prototypes */
-Buffer* buffer__initialize(bufferid_t id, char *page_filespec);
+int buffer__initialize(Buffer **buf, bufferid_t id, char *page_filespec);
 int buffer__destroy(Buffer *buf);
 int buffer__lock(Buffer *buf);
 void buffer__unlock(Buffer *buf);

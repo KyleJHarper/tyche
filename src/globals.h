@@ -42,6 +42,11 @@ const int E_BUFFER_ALREADY_EXISTS           = 122;  // When trying to add a buff
 const int E_BUFFER_MISSING_DATA             = 123;  // Operations attempting to read data from a buffer might find it has none at the time.
 const int E_BUFFER_ALREADY_COMPRESSED       = 124;  // Not sure this condition ever really exists but we'll set a code.
 const int E_BUFFER_ALREADY_DECOMPRESSED     = 125;  // If 2 threads are attempting to restore a buffer this condition can occur.
+const int E_BUFFER_COMPRESSION_PROBLEM      = 126;  // The code we send when lz4/zlib/zstd gives us a code of their own.
+const int E_LIST_CANNOT_BALANCE             = 140;  // If we can't balance a list, throw this code.
+const int E_LIST_REMOVAL                    = 141;  // Cannot remove a buffer from the list.
+const int E_NO_MEMORY                       = 150;  // Any time an alloc() fails, we send this rather than bailing out via exit().
+const int E_BAD_ARGS                        = 190;  // Caller sent bad arguments.  Whatever was supposed to be done, isn't, or is incomplete.
 
 
 #endif /* SRC_GLOBALS_H_ */

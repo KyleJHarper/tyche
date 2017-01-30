@@ -13,8 +13,6 @@
 
 
 int main() {
-  printf("(Note: Size may be slightly off due to alignment and/or pointers-to-alloc'd spaces.)\n");
-
   // -- Manager Information
   printf("\n");
   /* Identifier(s) & Lists */
@@ -50,8 +48,8 @@ int main() {
   printf("Size of List->raw_count                       : %5zu Bytes\n", sizeof((List *)0)->raw_count);
   printf("Size of List->comp_count                      : %5zu Bytes\n", sizeof((List *)0)->comp_count);
   printf("Size of List->current_raw_size                : %5zu Bytes\n", sizeof((List *)0)->current_raw_size);
-  printf("Size of List->current_size                    : %5zu Bytes\n", sizeof((List *)0)->current_comp_size);
   printf("Size of List->max_raw_size                    : %5zu Bytes\n", sizeof((List *)0)->max_raw_size);
+  printf("Size of List->current_comp_size               : %5zu Bytes\n", sizeof((List *)0)->current_comp_size);
   printf("Size of List->max_comp_size                   : %5zu Bytes\n", sizeof((List *)0)->max_comp_size);
   /* Locking, Reference Counters, and Similar Members */
   printf("Size of List->lock                            : %5zu Bytes\n", sizeof((List *)0)->lock);
@@ -85,6 +83,9 @@ int main() {
   printf("Size of List->active_compressors              : %5zu Bytes\n", sizeof((List *)0)->active_compressors);
   printf("Size of List->compressor_threads              : %5zu Bytes\n", sizeof((List *)0)->compressor_threads);
   printf("Size of List->compressor_pool                 : %5zu Bytes\n", sizeof((List *)0)->compressor_pool);
+  printf("Size of List->compressor_id                   : %5zu Bytes\n", sizeof((List *)0)->compressor_id);
+  printf("Size of List->compressor_level                : %5zu Bytes\n", sizeof((List *)0)->compressor_level);
+  printf("Size of List->compressor_count                : %5zu Bytes\n", sizeof((List *)0)->compressor_count);
   printf("-----------------------------------------------------------\n");
   printf("Size of List                                    %5zu Bytes\n", sizeof(List));
 
@@ -100,6 +101,8 @@ int main() {
   printf("Size of Compressor->victims                   : %5zu Bytes\n", sizeof((Compressor *)0)->victims);
   printf("Size of Compressor->victims_index             : %5zu Bytes\n", sizeof((Compressor *)0)->victims_index);
   printf("Size of Compressor->victims_compressor_index  : %5zu Bytes\n", sizeof((Compressor *)0)->victims_compressor_index);
+  printf("Size of Compressor->compressor_id             : %5zu Bytes\n", sizeof((Compressor *)0)->compressor_id);
+  printf("Size of Compressor->compressor_level          : %5zu Bytes\n", sizeof((Compressor *)0)->compressor_level);
   printf("-----------------------------------------------------------\n");
   printf("Size of Compressor                              %5zu Bytes\n", sizeof(Compressor));
 
@@ -151,6 +154,8 @@ int main() {
   printf("| SkiplistNode  | %5zu Bytes |\n", sizeof(SkiplistNode));
   printf("| Buffer        | %5zu Bytes |\n", sizeof(Buffer));
   printf("+---------------+-------------+\n");
+  printf("(Note: Size may be slightly off due to alignment and/or pointers-to-alloc'd spaces.)\n");
+
 
   printf("\n\n%10s%10s\n", "PAGE_SIZE", "Overhead");
   float size = 0.0;
