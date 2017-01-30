@@ -92,20 +92,13 @@ Manager* manager__initialize(managerid_t id, char **pages) {
  * Takes a previous created manager object and attempts to start the main tyche logic with it.
  */
 int manager__start(Manager *mgr) {
-  /* Whether we're doing tests or not, we need the sweeper running for this manager. */
-  pthread_t pt_sweeper;
-  pthread_create(&pt_sweeper, NULL, (void *) &manager__sweeper, mgr);
-
   /* If a test was specified, run it instead of the manager(s) and then leave. */
   if (opts.test != NULL) {
     tests__run_test(mgr->list, mgr->pages);
     fprintf(stderr, "A test (-t %s) was specified so we ran it.  All done.  Quitting non-zero for safety.\n", opts.test);
     /* Stop the sweeper.  It requires being woken up. */
     mgr->runnable = 0;
-    pthread_mutex_lock(&mgr->list->lock);
-    pthread_cond_broadcast(&mgr->list->sweeper_condition);
-    pthread_mutex_unlock(&mgr->list->lock);
-    pthread_join(pt_sweeper, NULL);
+    list__destroy(mgr->list);
     exit(E_GENERIC);
   }
 
@@ -123,12 +116,6 @@ int manager__start(Manager *mgr) {
   for(int i=0; i<opts.workers; i++) {
     pthread_join(workers[i], NULL);
   }
-
-  /* Stop the sweeper.  It requires being woken up. */
-  pthread_mutex_lock(&mgr->list->lock);
-  pthread_cond_broadcast(&mgr->list->sweeper_condition);
-  pthread_mutex_unlock(&mgr->list->lock);
-  pthread_join(pt_sweeper, NULL);
 
   /* Show results and leave. */
   uint64_t total_acquisitions = mgr->hits + mgr->misses;
@@ -150,32 +137,6 @@ int manager__start(Manager *mgr) {
   if(opts.verbosity > 1)
     list__dump_structure(mgr->list);
   return E_OK;
-}
-
-
-/* manager__sweeper
- * A dedicated thread for sweeping the list when it's time.  If this fails, bye bye RAM.
- */
-void manager__sweeper(Manager *mgr) {
-  while(1) {
-    pthread_mutex_lock(&mgr->list->lock);
-    while(mgr->list->current_raw_size < mgr->list->max_raw_size && mgr->list->current_comp_size < mgr->list->max_comp_size && mgr->runnable != 0) {
-      pthread_cond_broadcast(&mgr->list->reader_condition);
-      pthread_cond_wait(&mgr->list->sweeper_condition, &mgr->list->lock);
-    }
-    pthread_mutex_unlock(&mgr->list->lock);
-    if(mgr->runnable == 0) {
-      pthread_cond_broadcast(&mgr->list->reader_condition);
-      break;
-    }
-    list__sweep(mgr->list, mgr->list->sweep_goal);
-  }
-
-  // Perform a final sweep.  This is to solve the edge case where a reader (list__add or list__search) is stuck waiting because its
-  // last wake-up failed the predicate because others add/restores pushed it over the limit again.  Ergo, they're hung at shutdown.
-  list__sweep(mgr->list, mgr->list->sweep_goal);
-
-  return;
 }
 
 

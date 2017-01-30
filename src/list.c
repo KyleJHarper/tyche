@@ -93,6 +93,8 @@ int list__initialize(List **list, int compressor_count, int compressor_id, int c
   (*list)->pending_writers = 0;
 
   /* Management and Administration Members */
+  (*list)->active = 1;
+  pthread_create(&(*list)->sweeper_thread, NULL, (void *) &list__sweeper_start, (*list));
   (*list)->sweep_goal = 5;
   (*list)->sweeps = 0;
   (*list)->sweep_cost = 0;
@@ -685,6 +687,32 @@ uint64_t list__sweep(List *list, uint8_t sweep_goal) {
 }
 
 
+/* list__sweeper_start
+ * This is the asynchronous thread that will call the sweeping logic when necessary.
+ */
+void list__sweeper_start(List *list) {
+  while(1) {
+    pthread_mutex_lock(&list->lock);
+    while(list->current_raw_size < list->max_raw_size && list->current_comp_size < list->max_comp_size && list->active != 0) {
+      pthread_cond_broadcast(&list->reader_condition);
+      pthread_cond_wait(&list->sweeper_condition, &list->lock);
+    }
+    pthread_mutex_unlock(&list->lock);
+    if(list->active == 0) {
+      pthread_cond_broadcast(&list->reader_condition);
+      break;
+    }
+    list__sweep(list, list->sweep_goal);
+  }
+
+  // Perform a final sweep.  This is to solve the edge case where a reader (list__add or list__search) is stuck waiting because its
+  // last wake-up failed the predicate because others add/restores pushed it over the limit again.  Ergo, they're hung at shutdown.
+  list__sweep(list, list->sweep_goal);
+
+  return;
+}
+
+
 /* list__balance
  * Redistributes memory between a list and it's offload target.  The list__sweep() and list__pop() functions will handle the
  * buffer migration while respecting the new boundaries.
@@ -716,6 +744,13 @@ int list__balance(List *list, uint32_t ratio, uint64_t max_memory) {
  */
 int list__destroy(List *list) {
   int rv = E_OK;
+  // Stop the sweeper.
+  list->active = 0;
+  pthread_mutex_lock(&list->lock);
+  pthread_cond_broadcast(&list->sweeper_condition);
+  pthread_mutex_unlock(&list->lock);
+  pthread_join(list->sweeper_thread, NULL);
+
   while(list->head->next != list->head) {
     rv = list__remove(list, list->head->next->id);
     if(rv != E_OK)

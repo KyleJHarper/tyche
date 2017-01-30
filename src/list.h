@@ -78,6 +78,8 @@ struct list {
   uint8_t pending_writers;                       /* Value to indicate how many writers are waiting to edit the list. */
 
   /* Management and Administration Members */
+  pthread_t sweeper_thread;                      /* The threads that the sweeper runs in. */
+  uint8_t active;                                /* Boolean for active/inactive status for async processes like sweeping. */
   uint8_t sweep_goal;                            /* Minimum percentage of memory we want to free up whenever we sweep, relative to current_size. */
   uint64_t sweeps;                               /* Number of times the list has been swept. */
   uint64_t sweep_cost;                           /* Time in ns spent sweeping lists. */
@@ -118,6 +120,7 @@ int list__search(List *list, Buffer **buf, bufferid_t id, uint8_t caller_has_lis
 int list__acquire_write_lock(List *list);
 int list__release_write_lock(List *list);
 uint64_t list__sweep(List *list, uint8_t sweep_goal);
+void list__sweeper_start(List *list);
 int list__balance(List *list, uint32_t ratio, uint64_t max_memory);
 int list__destroy(List *list);
 void list__compressor_start(Compressor *comp);
