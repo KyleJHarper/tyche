@@ -9,12 +9,12 @@
  */
 
 /* Include necessary headers here. */
+#include <pthread.h>
 #include <jemalloc/jemalloc.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 #include <stdint.h>
-#include <pthread.h>
 #include <assert.h>
 #include <inttypes.h>
 #include <time.h>      /* for clock_gettime() */
@@ -22,6 +22,7 @@
 #include "buffer.h"
 #include "error.h"
 #include "list.h"
+
 
 #include <locale.h> /* Remove me after debugging... probably */
 #include <unistd.h> //Also remove after debug.

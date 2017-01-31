@@ -6,13 +6,13 @@
  * Description: See manager.h
  */
 
+#include <pthread.h>
 #include <jemalloc/jemalloc.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <time.h>
 #include <inttypes.h>
-#include <pthread.h>
 #include <locale.h>
 #include <string.h>
 #include "options.h"

@@ -9,9 +9,9 @@
 #define SRC_LIST_H_
 
 /* Includes */
+#include <pthread.h>
 #include <stdint.h>
 #include <inttypes.h>
-#include <pthread.h>
 #include "buffer.h"
 
 /* A list is simply the collection of buffers, metadata to describe the list for management, and control attributes to protect it.

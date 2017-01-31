@@ -6,9 +6,9 @@
  */
 
 /* Include Headers */
+#include <pthread.h>
 #include <jemalloc/jemalloc.h>
 #include <stdio.h>
-#include <pthread.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <time.h>     /* for clock_gettime() */

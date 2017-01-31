@@ -5,8 +5,8 @@
  *      Author: administrator
  */
 
-#include <stdio.h>
 #include <pthread.h>
+#include <stdio.h>
 #include "buffer.h"
 #include "list.h"
 #include "manager.h"
