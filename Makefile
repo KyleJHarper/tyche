@@ -54,15 +54,19 @@ build:
 		$(SRCDIR)/tyche.c          \
 		-L$(JEMALLOC_DIR) -Wl,-rpath,${JEMALLOC_DIR}/ -ljemalloc -lrt -lm
 
+example:
+	$(CC) $(CFLAGS) -O0 -o $(BINDIR)/example \
+		$(SRCDIR)/example.c \
+		$(LZ4_SRCS)                \
+		$(ZLIB_SRCS)               \
+		$(ZSTD_SRCS)               \
+		$(SRCDIR)/list.c           \
+		$(SRCDIR)/buffer.c         \
+		-L$(JEMALLOC_DIR) -Wl,-rpath,${JEMALLOC_DIR}/ -ljemalloc -lrt -lm
+
 playground:
-	$(CC) $(CFLAGS) -O3 -o $(BINDIR)/playground \
-		$(SRCDIR)/playground.c \
-		$(SRCDIR)/list.c       \
-		$(SRCDIR)/buffer.c     \
-		$(ZLIB_SRCS)           \
-		$(LZ4_SRCS)            \
-		$(ZSTD_SRCS)           \
-		-lm
+	$(CC) $(CFLAGS) -O0 -o $(BINDIR)/playground \
+		$(SRCDIR)/playground.c
 
 clean:
 	rm -f $(BINDIR)/*

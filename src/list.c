@@ -58,12 +58,14 @@ extern const int E_BAD_ARGS;
 /* We need some information from the buffer */
 extern const int BUFFER_OVERHEAD;
 
+/* We use the have/don't have data flags. */
+extern const int DESTROY_DATA;
 
 
 /* list__initialize
  * Creates the actual list that we're being given a pointer to.  We will also create the head of it as a reference point.
  */
-int list__initialize(List **list, int compressor_count, int compressor_id, int compressor_level, uint64_t  max_memory) {
+int list__initialize(List **list, int compressor_count, int compressor_id, int compressor_level, uint64_t max_memory) {
   /* Quick error checking, then initialize the list.  We don't need to lock it because it's synchronous. */
   int rv = E_OK;
   *list = (List *)malloc(sizeof(List));
@@ -103,7 +105,7 @@ int list__initialize(List **list, int compressor_count, int compressor_id, int c
   (*list)->compressions = 0;
 
   /* Head Nodes of the List and Skiplist (Index). Make the Buffer list head a dummy buffer. */
-  rv = buffer__initialize(&(*list)->head, BUFFER_ID_MAX, NULL);
+  rv = buffer__initialize(&(*list)->head, BUFFER_ID_MAX, 0, (void*)0, NULL);
   if (rv != E_OK)
     return rv;
   (*list)->head->next = (*list)->head;
@@ -391,7 +393,7 @@ int list__remove(List *list, bufferid_t id) {
     Buffer *buf = nearest_neighbor->next;
     const uint32_t BUFFER_SIZE = BUFFER_OVERHEAD + (buf->comp_length == 0 ? buf->data_length : buf->comp_length);
     int victimize_status = buffer__victimize(buf);
-    if (victimize_status != 0)
+    if (victimize_status != E_OK)
       return victimize_status;
     // Update the list metrics and move the clock hand if it's pointing at the same address as buf.
     if(list->clock_hand == buf)
@@ -405,7 +407,7 @@ int list__remove(List *list, bufferid_t id) {
     }
     // Now change our ->next pointer for nearest_neighbor to drop this from the list, then destroy buf.
     nearest_neighbor->next = buf->next;
-    buffer__destroy(buf);
+    buffer__destroy(buf, DESTROY_DATA);
   }
 
   /* Remove the Skiplist Nodes that were found at various levels. */
@@ -503,7 +505,7 @@ int list__search(List *list, Buffer **buf, bufferid_t id, uint8_t caller_has_lis
     if((*buf)->popularity < RESTORATION_THRESHOLD) {
       // Simply send back a copy.
       Buffer *copy = NULL;
-      rv = buffer__initialize(&copy, 0, NULL);
+      rv = buffer__initialize(&copy, 0, 0, (void*)0, NULL);
       if (rv != E_OK)
         return rv;
       buffer__copy((*buf), copy);

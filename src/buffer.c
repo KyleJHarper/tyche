@@ -41,7 +41,6 @@ const Buffer BUFFER_INITIALIZER = {
   .pending_writers = 0,
   /* Cost values for each buffer when pulled from disk or compressed/decompressed. */
   .comp_cost = 0,
-  .io_cost = 0,
   .comp_hits = 0,
   /* The actual payload we want to cache (i.e.: the page). */
   .data_length = 0,
@@ -62,6 +61,7 @@ extern const int E_BUFFER_IS_VICTIMIZED;
 extern const int E_BUFFER_MISSING_DATA;
 extern const int E_BUFFER_ALREADY_COMPRESSED;
 extern const int E_BUFFER_ALREADY_DECOMPRESSED;
+extern const int E_BUFFER_COMPRESSION_PROBLEM;
 // Also get the NO_MEMORY one for allocations.
 extern const int E_NO_MEMORY;
 extern const int E_BAD_ARGS;
@@ -79,21 +79,29 @@ const int BUFFER_OVERHEAD = sizeof(Buffer);
  * out existing buffers' pointers when we remove them from their pools.  The *page_filespec is the path to the file (page) we're
  * going to read into the buffer's ()->data member.
  */
-int buffer__initialize(Buffer **buf, bufferid_t id, char *page_filespec) {
+int buffer__initialize(Buffer **buf, bufferid_t id, uint32_t size, void *data, char *page_filespec) {
   *buf = (Buffer *)malloc(sizeof(Buffer));
   if (*buf == NULL)
     return E_NO_MEMORY;
   /* Load default values via memcpy from a template defined above. */
   memcpy(*buf, &BUFFER_INITIALIZER, sizeof(Buffer));
   (*buf)->id = id;
-
-  /* If we weren't given a filespec, then we're done.  Peace out. */
-  if (page_filespec == NULL)
+  /* If the page_filespec, *data, and size are all null/0, the user just wants a blank buffer. */
+  if (page_filespec == NULL && size == 0 && data == NULL)
     return E_OK;
+  /* Error if page_filespec and *data or size exist.  Logical XOR via boolean equality. */
+  if ((page_filespec != NULL) == (size > 0 || data != NULL))
+    return E_BAD_ARGS;
 
-  /* Use *page to try to read the page from the disk.  Time the operation.*/
-  struct timespec start, end;
-  clock_gettime(CLOCK_MONOTONIC, &start);
+  /* If we weren't given a filespec, we better have been given *data and size. */
+  if (page_filespec == NULL) {
+    (*buf)->data = data;
+    (*buf)->data_length = size;
+    //memcpy((*buf)->data, data, size);
+    return E_OK;
+  }
+
+  /* Use *page to try to read the page from the disk. */
   FILE *fh = fopen(page_filespec, "rb");
   if (fh == NULL)
     return E_GENERIC;
@@ -106,9 +114,33 @@ int buffer__initialize(Buffer **buf, bufferid_t id, char *page_filespec) {
   if (fread((*buf)->data, (*buf)->data_length, 1, fh) == 0)
     return E_GENERIC;
   fclose(fh);
-  clock_gettime(CLOCK_MONOTONIC, &end);
-  (*buf)->io_cost = BILLION *(end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec;
 
+  return E_OK;
+}
+
+
+/* buffer__update
+ * A handy function to allow someone to safely update a buffer's data info.
+ */
+int buffer__update(Buffer *buf, uint32_t size, void *data) {
+  if (buf == NULL)
+    return E_BAD_ARGS;
+
+  /* Remove the pin the caller should have.  Remove it, then block and free the buffer and data. */
+  buffer__update_ref(buf, -1);
+  buffer__block(buf);
+  free(buf->data);
+
+  /* Wipe out the old data, update the data and length, then reset some comp values. */
+  buf->data = data;
+  buf->data_length = size;
+  buf->comp_length = 0;
+  buf->comp_cost = 0;
+  buf->comp_hits = 0;
+
+  /* Unblock the buffer and restore our caller's pin. */
+  buffer__unblock(buf);
+  buffer__update_ref(buf, 1);
   return E_OK;
 }
 
@@ -117,15 +149,17 @@ int buffer__initialize(Buffer **buf, bufferid_t id, char *page_filespec) {
  * A concise function to completely free up the memory used by a buffer.
  * Caller MUST have victimized the buffer before this is allowed!  This means the buffer's lock will be LOCKED!
  */
-int buffer__destroy(Buffer *buf) {
+int buffer__destroy(Buffer *buf, const int destroy_data) {
   if (buf == NULL)
     return E_OK;
   if (buf->victimized == 0 && buf->is_ephemeral == 0)
     return E_BAD_ARGS;
 
-  /* Free the members which are pointers to other data locations. */
-  free(buf->data);
-  buf->data = NULL;
+  if (destroy_data) {
+    /* Free the members which are pointers to other data locations. */
+    free(buf->data);
+    buf->data = NULL;
+  }
   /* All remaining members will die when free is invoked against the buffer itself. */
   free(buf);
   // Setting buf to NULL here is useless because it's not a double pointer, on purpose.  Caller needs to NULL their own pointers.
@@ -266,10 +300,8 @@ int buffer__compress(Buffer *buf, int compressor_id, int compressor_level) {
     if (compressed_data == NULL)
       return E_NO_MEMORY;
     rv = LZ4_compress_default(buf->data, compressed_data, buf->data_length, max_compressed_size);
-    if (rv < 1) {
-      printf("buffer__compress returned a negative result from LZ4_compress_default: %d\n.", rv);
-      return E_GENERIC;
-    }
+    if (rv < 1)
+      return E_BUFFER_COMPRESSION_PROBLEM;
     // LZ4 returns the compressed size in the rv itself, assign it here.
     buf->comp_length = rv;
   }
@@ -280,10 +312,8 @@ int buffer__compress(Buffer *buf, int compressor_id, int compressor_level) {
     if (compressed_data == NULL)
       return E_NO_MEMORY;
     rv = compress2(compressed_data, &max_compressed_size, buf->data, buf->data_length, compressor_level);
-    if (rv != Z_OK) {
-      printf("buffer__compress returned an error from zlib's compress2: %d\n.", rv);
-      return E_GENERIC;
-    }
+    if (rv != Z_OK)
+      return E_BUFFER_COMPRESSION_PROBLEM;
     // Zlib returns the compressed length in max_compressed_size; so assign it here.
     buf->comp_length = max_compressed_size;
   }
@@ -294,10 +324,8 @@ int buffer__compress(Buffer *buf, int compressor_id, int compressor_level) {
     if (compressed_data == NULL)
       return E_NO_MEMORY;
     rv = ZSTD_compress(compressed_data, max_compressed_size, buf->data, buf->data_length, compressor_level);
-    if (ZSTD_isError(rv)) {
-      printf("buffer__compress returned a negative result from ZSTD_compress: %d\n.", rv);
-      return E_GENERIC;
-    }
+    if (ZSTD_isError(rv))
+      return E_BUFFER_COMPRESSION_PROBLEM;
     // ZSTD returns the compressed size in the rv itself, assign it here.
     buf->comp_length = rv;
   }
@@ -347,27 +375,21 @@ int buffer__decompress(Buffer *buf, int compressor_id) {
   // -- Use LZ4
   if(compressor_id == LZ4_COMPRESSOR_ID) {
     rv = LZ4_decompress_safe(buf->data, decompressed_data, buf->comp_length, buf->data_length);
-    if (rv < 0) {
-      printf("Failed to decompress the data in buffer %d, rv was %d.\n", buf->id, rv);
-      return E_GENERIC;
-    }
+    if (rv < 0)
+      return E_BUFFER_COMPRESSION_PROBLEM;
   }
   // -- Use Zlib
   if(compressor_id == ZLIB_COMPRESSOR_ID) {
     uLongf data_length = buf->data_length;
     rv = uncompress(decompressed_data, &data_length, buf->data, buf->comp_length);
-    if (rv < 0 || data_length != buf->data_length) {
-      printf("Failed to decompress the data in buffer %d with zlib, rv was %d.\n", buf->id, rv);
-      return E_GENERIC;
-    }
+    if (rv < 0 || data_length != buf->data_length)
+      return E_BUFFER_COMPRESSION_PROBLEM;
   }
   // -- Use Zstd
   if(compressor_id == ZSTD_COMPRESSOR_ID) {
     rv = ZSTD_decompress(decompressed_data, buf->data_length, buf->data, buf->comp_length);
-    if (ZSTD_isError(rv)) {
-      printf("Failed to decompress the data in buffer %d, rv was %d.\n", buf->id, rv);
-      return E_GENERIC;
-    }
+    if (ZSTD_isError(rv))
+      return E_BUFFER_COMPRESSION_PROBLEM;
   }
 
   /* Now free buf->data of it's compressed information and modify the pointer to look at *decompressed_data now. We can avoid using
@@ -403,7 +425,6 @@ int buffer__copy(Buffer *src, Buffer *dst) {
 
   /* Cost values for each buffer when pulled from disk or compressed/decompressed. */
   dst->comp_cost = src->comp_cost;
-  dst->io_cost   = src->io_cost;
   dst->comp_hits = src->comp_hits;
 
   /* The actual payload we want to cache (i.e.: the page). */

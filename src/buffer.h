@@ -36,14 +36,13 @@ struct buffer {
   pthread_cond_t reader_cond;  /* The condition for readers to wait upon. */
   pthread_cond_t writer_cond;  /* The condition for writers to wait upon. */
 
-  /* Cost values for each buffer when pulled from disk or compressed/decompressed. */
+  /* Cost values for each buffer. */
   uint32_t comp_cost;          /* Time spent, in ns, to compress and decompress a page.  Using clock_gettime(3) */
-  uint32_t io_cost;            /* Time spent, in ns, to read this buffer from the disk.  Using clock_gettime(3) */
   uint16_t comp_hits;          /* Number of times reclaimed from the compressed table during a polling period. */
 
   /* The actual payload we want to cache (i.e.: the page). */
-  uint16_t data_length;        /* Number of bytes originally in *data. */
-  uint16_t comp_length;        /* Number of bytes in *data if it was compressed.  Set to 0 when not used. */
+  uint32_t data_length;        /* Number of bytes originally in *data. */
+  uint32_t comp_length;        /* Number of bytes in *data if it was compressed.  Set to 0 when not used. */
   void *data;                  /* Pointer to the memory holding the page data, whether raw or compressed. */
 
   /* Tracking for the list we're part of. */
@@ -52,8 +51,9 @@ struct buffer {
 
 
 /* Prototypes */
-int buffer__initialize(Buffer **buf, bufferid_t id, char *page_filespec);
-int buffer__destroy(Buffer *buf);
+int buffer__initialize(Buffer **buf, bufferid_t id, uint32_t size, void *data, char *page_filespec);
+int buffer__update(Buffer *buf, uint32_t size, void *data);
+int buffer__destroy(Buffer *buf, const int destroy_data);
 int buffer__lock(Buffer *buf);
 void buffer__unlock(Buffer *buf);
 int buffer__update_ref(Buffer *buf, int delta);
@@ -62,7 +62,7 @@ int buffer__block(Buffer *buf);
 int buffer__unblock(Buffer *buf);
 int buffer__compress(Buffer *buf, int compressor_id, int compressor_level);
 int buffer__decompress(Buffer *buf, int compressor_id);
-int buffer__copy(Buffer *src, Buffer *dst);
+int buffer__copy(Buffer *src, Buffer *dst);\
 
 
 #endif /* SRC_BUFFER_H_ */
