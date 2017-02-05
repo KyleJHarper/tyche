@@ -21,8 +21,8 @@ const int ZSTD_COMPRESSOR_ID = 3;
 
 
 /* Handy Variables for Lists and Buffers */
-const int NEED_LIST_PIN = 0;
-const int HAVE_LIST_PIN = 1;
+const int NEED_PIN      = 0;
+const int HAVE_PIN      = 1;
 const int KEEP_DATA     = 0;
 const int DESTROY_DATA  = 1;
 

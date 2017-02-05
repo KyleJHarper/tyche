@@ -126,9 +126,10 @@ int buffer__update(Buffer *buf, uint32_t size, void *data) {
   if (buf == NULL)
     return E_BAD_ARGS;
 
-  /* Remove the pin the caller should have.  Remove it, then block and free the buffer and data. */
-  buffer__update_ref(buf, -1);
-  buffer__block(buf);
+  /* Block the buffer and free up the data. */
+  int rv = buffer__block(buf, 1);
+  if (rv != E_OK)
+    return rv;
   free(buf->data);
 
   /* Wipe out the old data, update the data and length, then reset some comp values. */
@@ -138,9 +139,8 @@ int buffer__update(Buffer *buf, uint32_t size, void *data) {
   buf->comp_cost = 0;
   buf->comp_hits = 0;
 
-  /* Unblock the buffer and restore our caller's pin. */
+  /* Unblock the buffer and move on. */
   buffer__unblock(buf);
-  buffer__update_ref(buf, 1);
   return E_OK;
 }
 
@@ -238,15 +238,16 @@ int buffer__victimize(Buffer *buf) {
  * Similar to buffer__victimize().  The main difference is this will simply block the caller until ref_count hits zero, upon which
  * it will continue on while holding the lock to prevent others from doing anything else.  See buffer__update_ref() for how it works
  * together.
+ * Caller MUST provide how many list pins (either 0 or 1) to block on; this allows non-victimized!
  * The buffer will REMAIN LOCKED since only a buffer__unblock() from this same thread should ever resume normal flow.
  */
-int buffer__block(Buffer *buf) {
+int buffer__block(Buffer *buf, int pin_threshold) {
   // Lock the buffer.  It might be victimized, so check for that and let caller know.
   int rv = buffer__lock(buf);
   if (rv != E_OK)
     return rv;
   buf->pending_writers++;
-  while(buf->ref_count != 0)
+  while(buf->ref_count != pin_threshold)
     pthread_cond_wait(&buf->writer_cond, &buf->lock);
   return E_OK;
 }

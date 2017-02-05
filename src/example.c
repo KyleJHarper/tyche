@@ -90,7 +90,7 @@ int main() {
   int new_data_size = 60;
   char *new_data = malloc(new_data_size);
   memcpy(new_data, "This is your new data that you want assigned to your buffer.", new_data_size);
-  rv = ex__update(your_data_id, new_data, new_data_size);
+  rv = list__update_buffer(list, your_data_id, new_data, new_data_size, NEED_PIN);
   if (rv != E_OK) {
     // The update failed.  Possibly because the buffer wasn't in the list.  Handle this appropriately in your app.
     exit(1);
@@ -99,6 +99,8 @@ int main() {
   ex__find(your_data_id, &found_data);
   printf("Data updated, it's now %zu bytes long.\n    %s\n", strlen(found_data), (char *)found_data);
   free(found_data);
+  printf("Our list now has %"PRIu32" raw and %"PRIu32" compressed buffers, using %"PRIu64" bytes.\n", list->raw_count, list->comp_count, list->current_raw_size + list->current_comp_size);
+
 
   // Step 5)
   // Remove the buffer from the list now that we're done with it.
@@ -140,12 +142,16 @@ int ex__update(bufferid_t your_data_id, void *new_data, int new_data_size) {
   // Updating a buffer doesn't require working with the list itself.  Just the buffer.
   // First, use list__search() to get a reference to the buffer you want to update.
   Buffer *buf = NULL;
-  int rv = list__search(list, &buf, your_data_id, NEED_LIST_PIN);
-  if (rv != E_OK)  // It wasn't found, so you can't update it.
+  int rv = list__search(list, &buf, your_data_id, NEED_PIN);
+  if (rv != E_OK)  // It wasn't found, so you can't update it.  Let your caller know, perhaps so they can use list__add().
     return rv;
 
-  // Use buffer__update() to set up the new data.
+  // Found it and pinned it!  Use buffer__update() to set up the new data.
   rv = buffer__update(buf, new_data_size, new_data);
+  if (rv != E_OK)  // There was a problem updating... almost impossible, but we'll throw it.
+    return rv;
+
+  // In this example, we'll drop our reference pin on *buf and find it again later.
   return rv;
 }
 
@@ -153,7 +159,7 @@ int ex__update(bufferid_t your_data_id, void *new_data, int new_data_size) {
 int ex__find(bufferid_t your_data_id, void **your_data_pointer) {
   // Searching is quite simple.  Create a buffer pointer and use list__search() to try to find it.
   Buffer *buf = NULL;
-  int rv = list__search(list, &buf, your_data_id, NEED_LIST_PIN);
+  int rv = list__search(list, &buf, your_data_id, NEED_PIN);
   // If we didn't find it, there's nothing to clean up.
   if (rv != E_OK)
     return rv;
@@ -168,7 +174,9 @@ int ex__find(bufferid_t your_data_id, void **your_data_pointer) {
   *your_data_pointer = malloc(buf->data_length);
   memcpy(*your_data_pointer, buf->data, buf->data_length);
   // Searching gives you a "pin" on the buffer when it's non-ephemeral.  Remove that pin now that we have our own copy.
+  buffer__lock(buf);
   buffer__update_ref(buf, -1);
+  buffer__unlock(buf);
   return rv;
 }
 

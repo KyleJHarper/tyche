@@ -58,7 +58,7 @@ int buffer__lock(Buffer *buf);
 void buffer__unlock(Buffer *buf);
 int buffer__update_ref(Buffer *buf, int delta);
 int buffer__victimize(Buffer *buf);
-int buffer__block(Buffer *buf);
+int buffer__block(Buffer *buf, int pin_threshold);
 int buffer__unblock(Buffer *buf);
 int buffer__compress(Buffer *buf, int compressor_id, int compressor_level);
 int buffer__decompress(Buffer *buf, int compressor_id);

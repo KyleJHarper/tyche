@@ -430,6 +430,34 @@ int list__remove(List *list, bufferid_t id) {
 }
 
 
+/* list__update_buffer
+ * Updates a buffer with the data and size you sent.
+ */
+int list__update_buffer(List *list, bufferid_t id, void *data, uint32_t size, uint8_t caller_has_list_pin) {
+  /* We can rely on the list__search() function to give us all the locking and pinning we need. */
+  int rv = E_OK;
+  Buffer *buf = NULL;
+  rv = list__search(list, &buf, id, caller_has_list_pin);
+  if (rv != E_OK)
+    return rv;
+
+  /* Buffer was found.  Lock the list so we can update values, then update the buffer too. */
+  list__acquire_write_lock(list);
+  if(buf->comp_length == 0)
+    list->current_raw_size -= (buf->data_length - size);  // Buffer is raw, just reduce the current raw count.
+  else
+    list->current_comp_size -= (buf->comp_length - size);  // Buffer is compressed, remove it from compressed space.
+  list__release_write_lock(list);
+  rv = buffer__update(buf, size, data);
+
+  /* Remove the buffer pin we got from searching. */
+  buffer__lock(buf);
+  buffer__update_ref(buf, -1);
+  buffer__unlock(buf);
+  return rv;
+}
+
+
 /* list__search
  * Searches for a buffer in the list specified so it can be sent back as a double pointer.  We need to pin the list so we can
  * search it.  When successfully found, we increment ref_count.  Caller MUST get a list pin first!
@@ -518,22 +546,15 @@ int list__search(List *list, Buffer **buf, bufferid_t id, uint8_t caller_has_lis
         return E_BUFFER_COMPRESSION_PROBLEM;
       *buf = copy;
     } else {
-      // This buffer warrants full restoration to the raw list.  Hooray for it!  Remove our pin and block for protection.  Safe due to list pin.
+      // This buffer warrants full restoration to the raw list.  Hooray for it!  Keep our buffer pin and block for protection.
       int decompress_rv = E_OK;
       uint16_t comp_length = (*buf)->comp_length;
-      buffer__lock(*buf);
-      buffer__update_ref(*buf, -1);
-      buffer__unlock(*buf);
-      if (buffer__block(*buf) == E_BUFFER_IS_VICTIMIZED)
-        return E_GENERIC;
+      buffer__block(*buf, 1);
       decompress_rv = buffer__decompress(*buf, list->compressor_id);
       if (decompress_rv != E_OK && decompress_rv != E_BUFFER_ALREADY_DECOMPRESSED)
         return E_BUFFER_COMPRESSION_PROBLEM;
       buffer__unblock(*buf);
-      // Restore our pin and update counters for the list now.
-      buffer__lock(*buf);
-      buffer__update_ref(*buf, 1);
-      buffer__unlock(*buf);
+      // Update counters for the list now by forcibly grabbing the mutex, while still holding our pin.
       pthread_mutex_lock(&list->lock);
       list->raw_count++;
       list->comp_count--;
@@ -822,7 +843,7 @@ void list__compressor_start(Compressor *comp) {
     pthread_mutex_unlock(comp->jobs_lock);
     for(int i = 0; i < work_me_count; i++) {
       rv = E_OK;
-      rv = buffer__block(work_me[i]);
+      rv = buffer__block(work_me[i], 0);
       if(rv == E_BUFFER_IS_VICTIMIZED) {
         buffer__unlock(work_me[i]);
         continue;
