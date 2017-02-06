@@ -17,16 +17,19 @@ OBJECTS  := $(SOURCES:$(SRCDIR)/%.c=$(OBJDIR)/%.o)
 # Targets
 # The clock_gettime() on this gcc version requires -lrt.
 build:
+	$(MAKE) examples
+	$(MAKE) playground
+	$(MAKE) hello
+	$(MAKE) sizes
+	$(MAKE) tyche
+
+hello:
 	$(CC) $(CFLAGS) -O3 -o $(BINDIR)/hello $(SRCDIR)/hello.c
-	$(CC) $(CFLAGS) -O3 -o $(BINDIR)/playground \
-		$(SRCDIR)/playground.c \
-		$(SRCDIR)/list.c       \
-		$(SRCDIR)/buffer.c     \
-		$(ZLIB_SRCS)           \
-		$(LZ4_SRCS)            \
-		$(ZSTD_SRCS)           \
-		-lm
+
+sizes:
 	$(CC) $(CFLAGS) -O3 -o $(BINDIR)/sizes $(SRCDIR)/sizes.c
+
+tyche:
 	$(CC) $(CFLAGS) -g -pg -O0 -o $(BINDIR)/tyche_debug \
 		$(LZ4_SRCS)                \
 		$(ZLIB_SRCS)               \
@@ -54,14 +57,14 @@ build:
 		$(SRCDIR)/tyche.c          \
 		-L$(JEMALLOC_DIR) -Wl,-rpath,${JEMALLOC_DIR}/ -ljemalloc -lrt -lm
 
-example:
-	$(CC) $(CFLAGS) -O0 -o $(BINDIR)/example \
-		$(SRCDIR)/example.c \
-		$(LZ4_SRCS)                \
-		$(ZLIB_SRCS)               \
-		$(ZSTD_SRCS)               \
-		$(SRCDIR)/list.c           \
-		$(SRCDIR)/buffer.c         \
+examples:
+	$(CC) $(CFLAGS) -O0 -o $(BINDIR)/example_simple \
+		$(SRCDIR)/example_simple.c  \
+		$(LZ4_SRCS)                 \
+		$(ZLIB_SRCS)                \
+		$(ZSTD_SRCS)                \
+		$(SRCDIR)/list.c            \
+		$(SRCDIR)/buffer.c          \
 		-L$(JEMALLOC_DIR) -Wl,-rpath,${JEMALLOC_DIR}/ -ljemalloc -lrt -lm
 
 playground:
@@ -72,3 +75,4 @@ clean:
 	rm -f $(BINDIR)/*
 	rm -f $(OBJECTS)
 	echo "Cleanup complete!"
+

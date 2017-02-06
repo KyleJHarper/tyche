@@ -56,7 +56,7 @@ struct compressor {
 /* Build the typedef and structure for a List */
 #define SKIPLIST_MAX 32
 #define VICTIM_BATCH_SIZE 1000
-#define COMPRESSOR_BATCH_SIZE 25
+#define COMPRESSOR_BATCH_SIZE 250
 typedef struct list List;
 struct list {
   /* Size and Counter Members */
@@ -113,11 +113,10 @@ struct list {
 /* Function prototypes.  Not required, but whatever. */
 int list__initialize(List **list, int compressor_count, int compressor_id, int compressor_level, uint64_t max_memory);
 int list__initialize_skiplistnode(SkiplistNode **slnode, Buffer *buf);
-int list__add(List *list, Buffer *buf, uint8_t caller_has_list_pin);
+int list__add(List *list, Buffer *buf, uint8_t list_pin_status);
 int list__remove(List *list, bufferid_t id);
-int list__update_buffer(List *list, bufferid_t, void *data, uint32_t size, uint8_t caller_has_list_pin);
 int list__update_ref(List *list, int delta);
-int list__search(List *list, Buffer **buf, bufferid_t id, uint8_t caller_has_list_pin);
+int list__search(List *list, Buffer **buf, bufferid_t id, uint8_t list_pin_status);
 int list__acquire_write_lock(List *list);
 int list__release_write_lock(List *list);
 uint64_t list__sweep(List *list, uint8_t sweep_goal);
@@ -127,5 +126,9 @@ int list__destroy(List *list);
 void list__compressor_start(Compressor *comp);
 void list__show_structure(List *list);
 void list__dump_structure(List *list);
+/* These are convenience functions for application integration.  App only has to send the buffer ID and info, not a Buffer*. */
+int list__easy_update(List *list, bufferid_t id, void *data, uint32_t size, uint8_t list_pin_status);
+int list__easy_add(List *list, bufferid_t id, void *data, uint32_t size, uint8_t list_pin_status);
+int list__easy_search(List *list, bufferid_t id, void **data_pointer, uint8_t list_pin_status);
 
 #endif /* SRC_LIST_H_ */

@@ -337,11 +337,9 @@ int buffer__compress(Buffer *buf, int compressor_id, int compressor_level) {
   buf->data = (void *)malloc(buf->comp_length);
   memcpy(buf->data, compressed_data, buf->comp_length);
   free(compressed_data);
-
   /* At this point we've compressed the raw data and saved it in a tightly allocated section of heap. */
   clock_gettime(CLOCK_MONOTONIC, &end);
   buf->comp_cost += BILLION *(end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec;
-
   return E_OK;
 }
 

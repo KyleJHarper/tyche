@@ -35,6 +35,9 @@ extern const int BUFFER_OVERHEAD;
 
 extern const int RESTORATION_THRESHOLD;
 
+//extern const int KEEP_DATA;
+extern const int DESTROY_DATA;
+
 /* Make the options stuct shared. */
 extern Options opts;
 
@@ -166,7 +169,7 @@ void tests__synchronized_readwrite(List *list) {
 
   // Create LIST_COUNT buffers with some data in them.
   for (bufferid_t i=1; i<=rwopts.list_count; i++) {
-    buffer__initialize(&temp, i, NULL);
+    buffer__initialize(&temp, i, 0, NULL, NULL);
     temp->data = malloc(strlen(sample_data) + 1);
     strcpy(temp->data, sample_data);
     temp->data_length = strlen(temp->data) + 1;
@@ -233,7 +236,7 @@ void tests__read(ReadWriteOpts *rwopts) {
       buffer__unlock(selected);
     }
     if (selected->is_ephemeral)
-      buffer__destroy(selected);
+      buffer__destroy(selected, DESTROY_DATA);
   }
   pthread_exit(0);
 }
@@ -281,11 +284,11 @@ void tests__elements(List *list) {
 
   // Add all the buffers.
   printf("Step 1.  Adding %d dummy buffers to the list in with random IDs.\n", element_count);
-  buffer__initialize(&buf, 1, NULL);
+  buffer__initialize(&buf, 1, 0, NULL, NULL);
   list__add(list, buf, 0);
   while(list->raw_count < element_count) {
     id = rand() % (element_count * 10);
-    buffer__initialize(&buf, id, NULL);
+    buffer__initialize(&buf, id, 0, NULL, NULL);
     rv = list__add(list, buf, 0);
     if (rv != E_OK)
       free(buf);
@@ -334,10 +337,10 @@ void tests__io(char **pages) {
 
   // Looks like we have a valid ID to get.  Let's see if it actually works...
   Buffer *buf = NULL;
-  buffer__initialize(&buf, id_to_get, pages[id_to_get - 1]);
-  printf("Found a buffer and loaded it.  ID is %d, data length is %d, and io_cost is %"PRIu32".\n", buf->id, buf->data_length, buf->io_cost);
+  buffer__initialize(&buf, id_to_get, 0, NULL, pages[id_to_get - 1]);
+  printf("Found a buffer and loaded it.  ID is %d, data length is %d.\n", buf->id, buf->data_length);
   buffer__victimize(buf);
-  buffer__destroy(buf);
+  buffer__destroy(buf, DESTROY_DATA);
 
   printf("Test 'io': All Passed\n");
   return;
@@ -410,7 +413,7 @@ void tests__compression() {
 
   /* Test 3:  The compression and decompression functions should work on a buffer->data element. */
   Buffer *buf = NULL;
-  buffer__initialize(&buf, 205, NULL);
+  buffer__initialize(&buf, 205, 0, NULL, NULL);
   buf->data = (void *)malloc(src_size);
   buf->data_length = src_size;
   memcpy(buf->data, src, buf->data_length);
@@ -461,15 +464,15 @@ void tests__move_buffers(List *list, char **pages) {
   // -- TEST 1:  Do sizes match up like they're supposed to when moving items into a list?
   /* Figure out how much data we have in the pages[] elements' files. */
   for (uint i = 0; i < opts.page_count; i++) {
-    buffer__initialize(&buf, i, pages[i]);
+    buffer__initialize(&buf, i, 0, NULL, pages[i]);
     total_bytes += buf->data_length + BUFFER_OVERHEAD;
     buffer__victimize(buf);
-    buffer__destroy(buf);
+    buffer__destroy(buf, DESTROY_DATA);
   }
   /* Now add them all to the list and see if the list size matches. */
   list->max_raw_size = total_bytes + (1024 * 1024);
   for (uint i = 0; i < opts.page_count; i++) {
-    buffer__initialize(&buf, i, pages[i]);
+    buffer__initialize(&buf, i, 0, NULL, pages[i]);
     list__add(list, buf, 0);
   }
   if (total_bytes != list->current_raw_size)
@@ -484,7 +487,7 @@ void tests__move_buffers(List *list, char **pages) {
   list->max_raw_size = total_bytes >> 1;
   list->max_comp_size = total_bytes;
   for (uint i = 0; i < opts.page_count; i++) {
-    buffer__initialize(&buf, i, pages[i]);
+    buffer__initialize(&buf, i, 0, NULL, pages[i]);
     buf->popularity = MAX_POPULARITY/(i+1);
     list__add(list, buf, 0);
   }
@@ -498,7 +501,7 @@ void tests__move_buffers(List *list, char **pages) {
   list->max_raw_size = total_bytes >> 1;
   list->max_comp_size = total_bytes >> 3;
   for (uint i = 0; i < opts.page_count; i++) {
-    buffer__initialize(&buf, i, pages[i]);
+    buffer__initialize(&buf, i, 0, NULL, pages[i]);
     buf->popularity = MAX_POPULARITY/(i+1);
     list__add(list, buf, 0);
   }
@@ -511,7 +514,7 @@ void tests__move_buffers(List *list, char **pages) {
   list->max_raw_size = total_bytes >> 1;
   list->max_comp_size = total_bytes >> 3;
   for (uint i = 0; i < opts.page_count; i++) {
-    buffer__initialize(&buf, i, pages[i]);
+    buffer__initialize(&buf, i, 0, NULL, pages[i]);
     buf->popularity = MAX_POPULARITY/(i+1);
     list__add(list, buf, 0);
   }
@@ -529,7 +532,7 @@ void tests__move_buffers(List *list, char **pages) {
     buffer__unlock(test4_buf);
     if(test4_buf->is_ephemeral == 0)
       break;
-    buffer__destroy(test4_buf);
+    buffer__destroy(test4_buf, DESTROY_DATA);
   }
   printf("Test 4 Passed:  Can we restore items from the offload list when searching finds them there?\n\n");
 

@@ -40,6 +40,8 @@ extern const int E_GENERIC;
 extern const int E_BUFFER_NOT_FOUND;
 extern const int E_BUFFER_ALREADY_EXISTS;
 
+extern const int DESTROY_DATA;
+
 /* Globals to protect worker IDs. */
 #define MAX_WORKER_ID UINT32_MAX
 workerid_t next_worker_id = 0;
@@ -263,7 +265,7 @@ void manager__spawn_worker(Manager *mgr) {
       mgr->workers[id].hits++;
     if(rv == E_BUFFER_NOT_FOUND) {
       mgr->workers[id].misses++;
-      buf_rv = buffer__initialize(&buf, id_to_get, mgr->pages[id_to_get]);
+      buf_rv = buffer__initialize(&buf, id_to_get, 0, NULL, mgr->pages[id_to_get]);
       if (buf_rv != E_OK)
         show_error(buf_rv, "Unable to get a buffer.  RV is %d.", buf_rv);
       buffer__update_ref(buf, 1);
@@ -271,7 +273,7 @@ void manager__spawn_worker(Manager *mgr) {
       if (rv == E_BUFFER_ALREADY_EXISTS) {
         // Someone beat us to it.  Just free it and loop around for something else.
         buf->is_ephemeral = 1;
-        buffer__destroy(buf);
+        buffer__destroy(buf, DESTROY_DATA);
         buf = NULL;
         continue;
       }
@@ -281,7 +283,7 @@ void manager__spawn_worker(Manager *mgr) {
     buffer__update_ref(buf, -1);
     buffer__unlock(buf);
     if(buf->is_ephemeral == 1)
-      buffer__destroy(buf);
+      buffer__destroy(buf, DESTROY_DATA);
     buf = NULL;
 
     /* Release the list pin if there are pending writers.  This is a dirty read/race but that's ok for an extra loop */

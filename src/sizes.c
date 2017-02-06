@@ -133,7 +133,6 @@ int main() {
   printf("Size of Buffer->pending_writers               : %5zu Bytes\n", sizeof((Buffer *)0)->pending_writers);
   /* Cost values for each buffer when pulled from disk or compressed/decompressed. */
   printf("Size of Buffer->comp_cost                     : %5zu Bytes\n", sizeof((Buffer *)0)->comp_cost);
-  printf("Size of Buffer->io_cost                       : %5zu Bytes\n", sizeof((Buffer *)0)->io_cost);
   printf("Size of Buffer->comp_hits                     : %5zu Bytes\n", sizeof((Buffer *)0)->comp_hits);
   /* The actual payload we want to cache (i.e.: the page). */
   printf("Size of Buffer->data_length                   : %5zu Bytes\n", sizeof((Buffer *)0)->data_length);

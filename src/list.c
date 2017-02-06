@@ -60,7 +60,98 @@ extern const int BUFFER_OVERHEAD;
 
 /* We use the have/don't have data flags. */
 extern const int DESTROY_DATA;
+extern const int KEEP_DATA;
+extern const int HAVE_PIN;
+extern const int NEED_PIN;
 
+
+
+
+/* +-------------------------+
+ * | User Friendly Functions |
+ * +-------------------------+
+ */
+/* list__easy_update
+ * Updates a buffer with the data and size you sent.  This prevents the caller from having to use or create a Buffer by itself.
+ */
+int list__easy_update(List *list, bufferid_t id, void *data, uint32_t size, uint8_t list_pin_status) {
+  /* We can rely on the list__search() function to give us all the locking and pinning we need. */
+  int rv = E_OK;
+  Buffer *buf = NULL;
+  rv = list__search(list, &buf, id, list_pin_status);
+  if (rv != E_OK)
+    return rv;
+
+  /* Buffer was found.  Lock the list so we can update values, then update the buffer too. */
+  list__acquire_write_lock(list);
+  if(buf->comp_length == 0)
+    list->current_raw_size -= (buf->data_length - size);  // Buffer is raw, just reduce the current raw count.
+  else
+    list->current_comp_size -= (buf->comp_length - size);  // Buffer is compressed, remove it from compressed space.
+  list__release_write_lock(list);
+  rv = buffer__update(buf, size, data);
+
+  /* Remove the buffer pin we got from searching. */
+  buffer__lock(buf);
+  buffer__update_ref(buf, -1);
+  buffer__unlock(buf);
+  return rv;
+}
+
+
+/* list__easy_add
+ * Adds a buffer to the list by sending the data and length directly.  This prevents the caller from having to use or create a
+ * Buffer by itself.
+ */
+int list__easy_add(List *list, bufferid_t id, void *data, uint32_t size, uint8_t list_pin_status) {
+  Buffer *buf = NULL;
+  int rv = buffer__initialize(&buf, id, size, data, NULL);
+  if (rv != E_OK)
+    return rv;
+  /* Add it to the list, destroy it if it already exists. */
+  rv = list__add(list, buf, list_pin_status);
+  if (rv == E_BUFFER_ALREADY_EXISTS)
+    buffer__destroy(buf, DESTROY_DATA);
+
+  // Leave.  Send rv if you want your caller to know the list__add status.
+  return rv;
+
+}
+
+
+/* list__easy_search
+ * Searches for a buffer in the list, but only returns the data portion as a copy for the caller.
+ * ALWAYS send back a COPY of the data, not a reference to the original.
+ */
+int list__easy_search(List *list, bufferid_t id, void **data_pointer, uint8_t list_pin_status) {
+  Buffer *buf = NULL;
+  int rv = list__search(list, &buf, id, list_pin_status);
+  if (rv != E_OK)
+    return rv;
+  // We did find it, yay!  We've either been given a copy, or a reference to the original data.
+  if (buf->is_ephemeral) {
+    // We were given an ephemeral copy.  We can simply link to that data, destroy the copy, and move on.
+    *data_pointer = buf->data;
+    buffer__destroy(buf, KEEP_DATA);
+    return rv;
+  }
+
+  // The buffer wasn't ephemeral.  We only have a reference to the real buffer.  Copy it and remove our buffer pin.
+  *data_pointer = malloc(buf->data_length);
+  memcpy(*data_pointer, buf->data, buf->data_length);
+  buffer__lock(buf);
+  buffer__update_ref(buf, -1);
+  buffer__unlock(buf);
+  return rv;
+}
+
+
+
+/*
+ * +--------------------+
+ * | Core Functionality |
+ * +--------------------+
+ */
 
 /* list__initialize
  * Creates the actual list that we're being given a pointer to.  We will also create the head of it as a reference point.
@@ -232,7 +323,7 @@ int list__release_write_lock(List *list) {
  * performance, but it's a minor improvement.  The real benefit is that readers can continue searching (list__search()) while this
  * function is running.
  */
-int list__add(List *list, Buffer *buf, uint8_t caller_has_list_pin) {
+int list__add(List *list, Buffer *buf, uint8_t list_pin_status) {
   /* Initialize a few basic values. */
   int rv = E_OK;
   int slnode_rv = E_OK;
@@ -240,7 +331,7 @@ int list__add(List *list, Buffer *buf, uint8_t caller_has_list_pin) {
   /* Grab the list lock so we can handle sweeping processes and signaling correctly.  Small race will allow exceeding max, but that's ok. */
   if(list->current_raw_size > list->max_raw_size) {
     // We're about to wake up the sweeper, which means we need to remove this threads list pin if the caller has one.
-    if(caller_has_list_pin != 0)
+    if(list_pin_status == HAVE_PIN)
       list__update_ref(list, -1);
     pthread_mutex_lock(&list->lock);
     while(list->current_raw_size > list->max_raw_size) {
@@ -249,12 +340,12 @@ int list__add(List *list, Buffer *buf, uint8_t caller_has_list_pin) {
     }
     pthread_mutex_unlock(&list->lock);
     // Now put this threads list pin back in place, making the caller never-aware it lost it's pin; if applicable.
-    if(caller_has_list_pin != 0)
+    if(list_pin_status == HAVE_PIN)
       list__update_ref(list, 1);
   }
 
   // Add a list pin if the caller didn't provide one.
-  if(caller_has_list_pin == 0)
+  if(list_pin_status == NEED_PIN)
     list__update_ref(list, 1);
 
   // Decide how many levels we're willing to set the node upon.
@@ -337,7 +428,7 @@ int list__add(List *list, Buffer *buf, uint8_t caller_has_list_pin) {
     buffer__unlock(locked_buffers[i]);
 
   // Remove the list pin we set if the caller didn't provide one.
-  if(caller_has_list_pin == 0)
+  if(list_pin_status == NEED_PIN)
     list__update_ref(list, -1);
 
   // If everything worked, grab the list lock whenever it's available and increment counters.
@@ -430,43 +521,15 @@ int list__remove(List *list, bufferid_t id) {
 }
 
 
-/* list__update_buffer
- * Updates a buffer with the data and size you sent.
- */
-int list__update_buffer(List *list, bufferid_t id, void *data, uint32_t size, uint8_t caller_has_list_pin) {
-  /* We can rely on the list__search() function to give us all the locking and pinning we need. */
-  int rv = E_OK;
-  Buffer *buf = NULL;
-  rv = list__search(list, &buf, id, caller_has_list_pin);
-  if (rv != E_OK)
-    return rv;
-
-  /* Buffer was found.  Lock the list so we can update values, then update the buffer too. */
-  list__acquire_write_lock(list);
-  if(buf->comp_length == 0)
-    list->current_raw_size -= (buf->data_length - size);  // Buffer is raw, just reduce the current raw count.
-  else
-    list->current_comp_size -= (buf->comp_length - size);  // Buffer is compressed, remove it from compressed space.
-  list__release_write_lock(list);
-  rv = buffer__update(buf, size, data);
-
-  /* Remove the buffer pin we got from searching. */
-  buffer__lock(buf);
-  buffer__update_ref(buf, -1);
-  buffer__unlock(buf);
-  return rv;
-}
-
-
 /* list__search
  * Searches for a buffer in the list specified so it can be sent back as a double pointer.  We need to pin the list so we can
  * search it.  When successfully found, we increment ref_count.  Caller MUST get a list pin first!
  */
-int list__search(List *list, Buffer **buf, bufferid_t id, uint8_t caller_has_list_pin) {
+int list__search(List *list, Buffer **buf, bufferid_t id, uint8_t list_pin_status) {
   /* Since searching can cause restorations and ultimately exceed max size, check for it.  This is a dirty read but OK. */
   if(list->current_raw_size > list->max_raw_size) {
     // We're about to wake up the sweeper, which means we need to remove this threads list pin if the caller has one.
-    if(caller_has_list_pin != 0)
+    if(list_pin_status == HAVE_PIN)
       list__update_ref(list, -1);
     pthread_mutex_lock(&list->lock);
     while(list->current_raw_size > list->max_raw_size) {
@@ -475,12 +538,12 @@ int list__search(List *list, Buffer **buf, bufferid_t id, uint8_t caller_has_lis
     }
     pthread_mutex_unlock(&list->lock);
     // Now put this threads list pin back in place, making the caller never-aware it lost it's pin; if applicable.
-    if(caller_has_list_pin != 0)
+    if(list_pin_status == HAVE_PIN)
       list__update_ref(list, 1);
   }
 
   /* If the caller doesn't provide a list pin, add one. */
-  if(caller_has_list_pin == 0)
+  if(list_pin_status == NEED_PIN)
     list__update_ref(list, 1);
 
   /* Begin searching the list at the highest level's index head. */
@@ -566,7 +629,7 @@ int list__search(List *list, Buffer **buf, bufferid_t id, uint8_t caller_has_lis
   }
 
   /* If the caller didn't provide a pin, remove the one we set above. */
-  if(caller_has_list_pin == 0)
+  if(list_pin_status == NEED_PIN)
     list__update_ref(list, -1);
 
   return rv;
