@@ -1,23 +1,13 @@
 1. ACCRS
-     a) Create a reader/writer preference feature.  Stopping all readers for 1 writer seems unfair; maybe use
-        pending writer count as part of a coin-toss to determine if a new reader will actually wait or grab a new
-        pin anyway.  Statistically this will balance out and should help performance as reading/writing will be more
-        fairly balanced (i.e.: more threads can keep working).
-     b) Add options to emulate favoritism: what % is frequently used and how often are they reused vs others?
-     c) A thread needs to manage the ACCRS logic for each manager.
-     d) Research options to accommodate aging and if it's even necessary (newer buffers == more likely to reuse?)
-        Perhaps buffer__initialize should set popularity to 1 or 3 so bits are 100 or 010 instead of 001.
-        Results in triple or double protection.
-     e) Research scan protection vs. protecting newer buffers.
-     f) Create a way to determine how effective sweeping is and adjust it up/down... ?  Boundaries?
-     g) Use comp_time and io_time to determine if giving more space to raw/comp is better.
-        How to ensure this doesn't fly to 99% (boundaries?).
-        Should buffers even track their individual times?  Doing so is going to result in us scanning the whole set of
-          buffers in a list and that is going to be expensive.  Maybe the list should keep an array of aggregates and
-          iterate through them to determine how to tune the ratios and call list__balance.
-          (Note:  This would save 10 bytes per buffer, which is great.)
-     h) Allow buffer preferencing (% to consider high-usage) and the associated weight (how many times to hit)
-2. FAQ
+     a) Create windows that rotate every X seconds (or searches) and apply Zipf's Law for distribution.
+     b) ????  Make sure that the victim-finding solution never requires more than 1 clock sweep.
+              Hunt while actively searching and refuse to affect buffers with pin (could lock up).
+     c) ????  The compression efficiency of a buffer should determine if it should simply be evicted.
+     d) ????  Keep a list of all buffers we ever insert (just free() data).  Will slow searching but reduce insert/delete.
+              This could be detrimental on large data sets.
+     e) ????  Keep compressed size after a restoration to prevent guessing when testing for evicting again.
+
+99. FAQ
      a) Why no size_t?  (Because I want to ensure minium sizes in almost all cases)
      b) Why so much uint/uintX_t?  Because I usually need to accommodate the given size and negative numbers don't exist.
      c) Why no <bla> optimization?  Probably because I'm new to C and didn't know about it.
@@ -30,6 +20,3 @@
         (probabilistically) for a SkipListNode per buffer; but I can live with this.
      i) Your headers are insane!
         I know, but header guards make life happy.  If someone would like to fix it and submit a PR, go ahead.
-3. Compression options
-     a) See if there are any resources we can define ahead of time and reuse to save overhead. (cRess, dRess)
-     d) Either allow '-f 100' properly, or just have it set -C.  Update show_help() accordingly.

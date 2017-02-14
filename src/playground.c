@@ -7,14 +7,18 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include "globals.h"
 
 
-extern const int LZ4_COMPRESSOR_ID;
+
 
 int main() {
-  printf("%d\n", LZ4_COMPRESSOR_ID);
-  printf("Not used.  It's a toy script.\n");
+  uint32_t bob = 0;
+  for(int i=0; i<32; i++) {
+    bob = 1 << i;
+    printf("bob is %u\n", bob);
+  }
   return 0;
 }
 
