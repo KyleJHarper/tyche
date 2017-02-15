@@ -19,6 +19,12 @@
 #define MAX_GENERATION UINT8_MAX
 #define BUFFER_ID_MAX  UINT32_MAX
 
+/* Enumerator for bit-flags in the buffer. */
+typedef enum buffer_flags {
+  dirty         = 1 << 0,
+  pending_sweep = 1 << 1,
+} buffer_flags;
+
 /* Build the typedef and structure for a Buffer */
 typedef uint32_t bufferid_t;
 typedef uint8_t popularity_t;
@@ -27,6 +33,7 @@ struct buffer {
   /* Attributes for typical buffer organization and management. */
   bufferid_t id;               /* Identifier of the page. Should come from the system providing the data itself (e.g.: inode). */
   uint16_t ref_count;          /* Number of references currently holding this buffer. */
+  buffer_flags flags;          /* Holds 8 bit flags.  See enum above for details. */
   uint8_t pending_sweep;       /* Flag to indicate if this buffer is pending a sweep operation.  Prevents re-victimizing during a sweep. */
   popularity_t popularity;     /* Rapidly decaying counter used for victim selection with clock sweep.  Ceiling of MAX_POPULARITY. */
   uint8_t victimized;          /* If the buffer has been victimized this is set non-zero.  Prevents incrementing of ref_count. */

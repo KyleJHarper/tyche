@@ -6,6 +6,8 @@
      d) ????  Keep a list of all buffers we ever insert (just free() data).  Will slow searching but reduce insert/delete.
               This could be detrimental on large data sets.
      e) ????  Keep compressed size after a restoration to prevent guessing when testing for evicting again.
+     f) Copy-On-Write needs to be a thing...
+
 
 99. FAQ
      a) Why no size_t?  (Because I want to ensure minium sizes in almost all cases)
@@ -20,3 +22,23 @@
         (probabilistically) for a SkipListNode per buffer; but I can live with this.
      i) Your headers are insane!
         I know, but header guards make life happy.  If someone would like to fix it and submit a PR, go ahead.
+
+
+thr_1  gets state0
+thr_2  gets state0
+thr_3  gets state0
+thr_4  gets state0
+...
+thr_3  updates and gets state1 put in the list,  state0 is marked 'dirty'
+thr_1 2 and 4  all have a dirty state0
+...
+thr_5  gets state1
+thr_6  gets state1
+...
+thr_2  wants to update but state0 is dirty
+
+list__update(list, buffer, *data)
+  if (buffer->ref_count < 1)
+    return W_NO_UPDATE_WITHOUT_PIN;
+  if (buffer->flags & BUFFER_IS_DIRTY)
+    return W_NO_UPDATE_DIRTY_BUFFER;  // Warning code here.

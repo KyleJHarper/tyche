@@ -31,6 +31,7 @@ const Buffer BUFFER_INITIALIZER = {
   /* Attributes for typical buffer organization and management. */
   .id = 0,
   .ref_count = 0,
+  .flags = 0,
   .pending_sweep = 0,
   .popularity = 0,
   .victimized = 0,
@@ -149,7 +150,7 @@ int buffer__update(Buffer *buf, uint32_t size, void *data) {
  * A concise function to completely free up the memory used by a buffer.
  * Caller MUST have victimized the buffer before this is allowed!  This means the buffer's lock will be LOCKED!
  */
-int buffer__destroy(Buffer *buf, const int destroy_data) {
+int buffer__destroy(Buffer *buf, const bool destroy_data) {
   if (buf == NULL)
     return E_OK;
   if (buf->victimized == 0 && buf->is_ephemeral == 0)
@@ -409,7 +410,7 @@ int buffer__decompress(Buffer *buf, int compressor_id) {
 /* buffer__copy
  * Simple function to copy the contents of one buffer and all its elements to another.
  */
-int buffer__copy(Buffer *src, Buffer *dst) {
+int buffer__copy(Buffer *src, Buffer *dst, bool copy_data) {
   /* Make sure the buffer is real.  Caller must initialize. */
   if (dst == NULL)
     return E_BAD_ARGS;
@@ -429,9 +430,11 @@ int buffer__copy(Buffer *src, Buffer *dst) {
   /* The actual payload we want to cache (i.e.: the page). */
   dst->data_length = src->data_length;
   dst->comp_length = src->comp_length;
-  free(dst->data);
-  dst->data = malloc(src->comp_length > 0 ? src->comp_length : src->data_length);
-  memcpy(dst->data, src->data, (src->comp_length > 0 ? src->comp_length : src->data_length));
+  if(copy_data) {
+    free(dst->data);
+    dst->data = malloc(src->comp_length > 0 ? src->comp_length : src->data_length);
+    memcpy(dst->data, src->data, (src->comp_length > 0 ? src->comp_length : src->data_length));
+  }
 
   /* Tracking for the list we're part of. */
   // We do NOT copy ->next data because that's handled by list__* functions.

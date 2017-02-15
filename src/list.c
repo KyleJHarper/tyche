@@ -49,11 +49,15 @@ extern const int E_BUFFER_IS_VICTIMIZED;
 extern const int E_BUFFER_ALREADY_EXISTS;
 extern const int E_BUFFER_ALREADY_DECOMPRESSED;
 extern const int E_BUFFER_COMPRESSION_PROBLEM;
+extern const int E_BUFFER_MISSING_A_PIN;
+extern const int E_BUFFER_IS_DIRTY;
 extern const int E_LIST_CANNOT_BALANCE;
 extern const int E_LIST_REMOVAL;
 // No mem errors.
 extern const int E_NO_MEMORY;
 extern const int E_BAD_ARGS;
+// Warnings
+
 
 /* We need some information from the buffer */
 extern const int BUFFER_OVERHEAD;
@@ -71,34 +75,6 @@ extern const int NEED_PIN;
  * | User Friendly Functions |
  * +-------------------------+
  */
-/* list__easy_update
- * Updates a buffer with the data and size you sent.  This prevents the caller from having to use or create a Buffer by itself.
- */
-int list__easy_update(List *list, bufferid_t id, void *data, uint32_t size, uint8_t list_pin_status) {
-  /* We can rely on the list__search() function to give us all the locking and pinning we need. */
-  int rv = E_OK;
-  Buffer *buf = NULL;
-  rv = list__search(list, &buf, id, list_pin_status);
-  if (rv != E_OK)
-    return rv;
-
-  /* Buffer was found.  Lock the list so we can update values, then update the buffer too. */
-  list__acquire_write_lock(list);
-  if(buf->comp_length == 0)
-    list->current_raw_size -= (buf->data_length - size);  // Buffer is raw, just reduce the current raw count.
-  else
-    list->current_comp_size -= (buf->comp_length - size);  // Buffer is compressed, remove it from compressed space.
-  list__release_write_lock(list);
-  rv = buffer__update(buf, size, data);
-
-  /* Remove the buffer pin we got from searching. */
-  buffer__lock(buf);
-  buffer__update_ref(buf, -1);
-  buffer__unlock(buf);
-  return rv;
-}
-
-
 /* list__easy_add
  * Adds a buffer to the list by sending the data and length directly.  This prevents the caller from having to use or create a
  * Buffer by itself.
@@ -247,6 +223,11 @@ int list__initialize(List **list, int compressor_count, int compressor_id, int c
   (*list)->compressor_id = compressor_id;
   (*list)->compressor_level = compressor_level;
   (*list)->compressor_count = compressor_count;
+
+  /* Garbage Collection (of Buffers) */
+  pthread_mutex_init(&(*list)->gc_lock, NULL);
+  buffer__initialize(&(*list)->gc_head, BUFFER_ID_MAX, 0, (void*)0, NULL);
+  (*list)->gc_head->next = (*list)->gc_head;
 
   return E_OK;
 }
@@ -631,6 +612,124 @@ int list__search(List *list, Buffer **buf, bufferid_t id, uint8_t list_pin_statu
   /* If the caller didn't provide a pin, remove the one we set above. */
   if(list_pin_status == NEED_PIN)
     list__update_ref(list, -1);
+
+  return rv;
+}
+
+
+/* list__update
+ * Updates a buffer with the data and size specified.  We require the caller to have a pin from list__search() or easy search().
+ * If the page is clean, the update mark the existing buffer dirty and swaps in a new one.
+ * If the page is dirty, we refuse the update and send back a warning.  (Caller needs to refresh and re-process).
+ * Caller MUST have a pin on the buffer!
+ */
+int list__update(List *list, Buffer *buf, void *data, uint32_t size, uint8_t list_pin_status) {
+  /* Caller has to have a pin, so even though ref_count is a dirty read it will always be 1+ if the caller did their job right. */
+//TODO  There needs to be a flag and locking in case 2 threads try to call update at the same time.
+  if(buf->ref_count < 1)
+    return E_BUFFER_MISSING_A_PIN;
+  if(buf->flags & dirty)
+    return E_BUFFER_IS_DIRTY;
+
+  /* Initialize a few basic values. */
+  int rv = E_OK;
+  int slnode_rv = E_OK;
+
+  /* Grab the list lock so we can handle sweeping processes and signaling correctly.  Small race will allow exceeding max, but that's ok. */
+  if(list->current_raw_size > list->max_raw_size) {
+    // We're about to wake up the sweeper, which means we need to remove this threads list pin if the caller has one.
+    if(list_pin_status == HAVE_PIN)
+      list__update_ref(list, -1);
+    pthread_mutex_lock(&list->lock);
+    while(list->current_raw_size > list->max_raw_size) {
+      pthread_cond_broadcast(&list->sweeper_condition);
+      pthread_cond_wait(&list->reader_condition, &list->lock);
+    }
+    pthread_mutex_unlock(&list->lock);
+    // Now put this threads list pin back in place, making the caller never-aware it lost it's pin; if applicable.
+    if(list_pin_status == HAVE_PIN)
+      list__update_ref(list, 1);
+  }
+
+  // Add a list pin if the caller didn't provide one.
+  if(list_pin_status == NEED_PIN)
+    list__update_ref(list, 1);
+
+  // Build a local stack based on the main list->indexes[] to build breadcrumbs.  Lock each buffer as we descend the skiplist tree.
+  // until we have the whole chain.  Since scanning is always down-and-forward we're safe.
+  SkiplistNode *slstack[SKIPLIST_MAX];
+  Buffer *locked_buffers[SKIPLIST_MAX];
+  bufferid_t last_lock_id = BUFFER_ID_MAX - 1;
+  int locked_ids_index = -1;
+  for(int i = 0; i < SKIPLIST_MAX; i++)
+    slstack[i] = list->indexes[i];
+
+  // Traverse the list to find the ideal location at each level.  Since we're searching, use list->levels as the start height.
+  for(int i = list->levels - 1; i >= 0; i--) {
+    for(;;) {
+      // Scan forward until we are as close as we can get.
+      while(slstack[i]->right != NULL && slstack[i]->right->buffer_id <= buf->id)
+        slstack[i] = slstack[i]->right;
+      // Lock the buffer pointed to (if we haven't already) to effectively lock this SkiplistNode so we can test it.
+      if(slstack[i]->buffer_id != last_lock_id)
+        buffer__lock(slstack[i]->target);
+      // If right is NULL or the ->right member is still bigger, we're as far over as we can go and should have a lock.
+      if(slstack[i]->right == NULL || slstack[i]->right->buffer_id > buf->id) {
+        if(slstack[i]->buffer_id != last_lock_id) {
+          last_lock_id = slstack[i]->buffer_id;
+          locked_ids_index++;
+          locked_buffers[locked_ids_index] = slstack[i]->target;
+        }
+        break;
+      }
+      // Otherwise, someone inserted while we acquired this lock.  Release and try moving forward again.
+      buffer__unlock(slstack[i]->target);
+    }
+    // Modify the next slstack node to look at the more-forward position we just jumped to.  If we're at index 0, skip it, we're done.
+    if(i != 0)
+      slstack[i-1] = slstack[i]->down;
+  }
+
+  // Now find the nearest neighbor.
+  Buffer *nearest_neighbor = slstack[0]->target;
+  // Move right in the buffer list.  ->head is always max, so no need to check anything but ->id.
+  while(nearest_neighbor->next->id <= buf->id)
+    nearest_neighbor = nearest_neighbor->next;
+  if(nearest_neighbor->id != buf->id)
+    return E_BUFFER_NOT_FOUND;
+
+  // Make a copy of the buffer.  The new buffer will only have ONE (1) ref, the updater!  Remove its pin from buf.
+  Buffer *new_buffer;
+  buffer__initialize(&new_buffer, buf->id, buf->data_length, data, NULL);
+  buffer__copy(buf, new_buffer, false);
+  new_buffer->ref_count = 1;
+  buffer__update_ref(buf, -1);
+
+  // Update all the linking.  Update the new_buffer first!
+  new_buffer->next = buf->next;
+  nearest_neighbor->next = new_buffer;
+  for(int i = list->levels - 1; i >= 0; i--) {
+    if(slstack[i]->target == buf)
+      slstack[i]->target = new_buffer;
+  }
+
+  // Unlock any buffers we locked along the way.
+  for(int i = locked_ids_index; i >= 0; i--)
+    buffer__unlock(locked_buffers[i]);
+
+  // Remove the list pin we set if the caller didn't provide one.
+  if(list_pin_status == NEED_PIN)
+    list__update_ref(list, -1);
+
+  // If everything worked, grab the list lock whenever it's available and increment counters.
+  if (rv == E_OK) {
+    pthread_mutex_lock(&list->lock);
+    list->current_raw_size = list->current_raw_size - buf->data_length + size;
+    pthread_mutex_unlock(&list->lock);
+  }
+
+  // Throw the original buffer in the dirty pool for future eviction.
+  list__add_garbage(list, buf);
 
   return rv;
 }
@@ -1062,3 +1161,25 @@ void list__dump_structure(List *list) {
 
   return;
 }
+
+
+/* list__add_garbage
+ * Marks a buffer as dirty and appends it to a list for future cleaning.
+ */
+void list__add_garbage(List *list, Buffer *buf) {
+  /* If the buffer doesn't have any pins just kill it. */
+  if(buf->ref_count == 0) {
+    buffer__destroy(buf, true);
+    return;
+  }
+
+  /* Looks like it has pins.  Prepend it to the list. */
+  pthread_mutex_lock(&list->gc_lock);
+  buf->next = list->gc_head->next;
+  list->gc_head->next = buf;
+  pthread_mutex_unlock(&list->gc_lock);
+  return;
+}
+
+
+
