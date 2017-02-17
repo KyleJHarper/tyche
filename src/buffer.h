@@ -12,6 +12,7 @@
 
 /* Include necessary headers here. */
 #include <stdint.h>  /* Used for the uint_ types */
+#include <stdbool.h> /* For bool types. */
 
 
 /* Globals to help track limits. */
@@ -21,8 +22,9 @@
 
 /* Enumerator for bit-flags in the buffer. */
 typedef enum buffer_flags {
-  dirty         = 1 << 0,
-  pending_sweep = 1 << 1,
+  dirty         = 1 <<  0,
+  pending_sweep = 1 <<  1,
+  updating      = 1 <<  2,
 } buffer_flags;
 
 /* Build the typedef and structure for a Buffer */
@@ -30,10 +32,13 @@ typedef uint32_t bufferid_t;
 typedef uint8_t popularity_t;
 typedef struct buffer Buffer;
 struct buffer {
+  /* Tracking for the list we're part of. */
+  Buffer *next;                /* Pointer to the next neighbor since lists are singularly linked. */
+
   /* Attributes for typical buffer organization and management. */
   bufferid_t id;               /* Identifier of the page. Should come from the system providing the data itself (e.g.: inode). */
   uint16_t ref_count;          /* Number of references currently holding this buffer. */
-  buffer_flags flags;          /* Holds 8 bit flags.  See enum above for details. */
+  buffer_flags flags;          /* Holds 32 bit flags.  See enum above for details. */
   uint8_t pending_sweep;       /* Flag to indicate if this buffer is pending a sweep operation.  Prevents re-victimizing during a sweep. */
   popularity_t popularity;     /* Rapidly decaying counter used for victim selection with clock sweep.  Ceiling of MAX_POPULARITY. */
   uint8_t victimized;          /* If the buffer has been victimized this is set non-zero.  Prevents incrementing of ref_count. */
@@ -51,16 +56,13 @@ struct buffer {
   uint32_t data_length;        /* Number of bytes originally in *data. */
   uint32_t comp_length;        /* Number of bytes in *data if it was compressed.  Set to 0 when not used. */
   void *data;                  /* Pointer to the memory holding the page data, whether raw or compressed. */
-
-  /* Tracking for the list we're part of. */
-  Buffer *next;                /* Pointer to the next neighbor since lists are singularly linked. */
 };
 
 
 /* Prototypes */
 int buffer__initialize(Buffer **buf, bufferid_t id, uint32_t size, void *data, char *page_filespec);
 int buffer__update(Buffer *buf, uint32_t size, void *data);
-int buffer__destroy(Buffer *buf, const int destroy_data);
+int buffer__destroy(Buffer *buf, const bool destroy_data);
 int buffer__lock(Buffer *buf);
 void buffer__unlock(Buffer *buf);
 int buffer__update_ref(Buffer *buf, int delta);
@@ -69,7 +71,7 @@ int buffer__block(Buffer *buf, int pin_threshold);
 int buffer__unblock(Buffer *buf);
 int buffer__compress(Buffer *buf, int compressor_id, int compressor_level);
 int buffer__decompress(Buffer *buf, int compressor_id);
-int buffer__copy(Buffer *src, Buffer *dst);\
+int buffer__copy(Buffer *src, Buffer *dst, bool copy_data);
 
 
 #endif /* SRC_BUFFER_H_ */

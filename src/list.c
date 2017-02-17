@@ -15,10 +15,12 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <stdbool.h> /* For bool types. */
 #include <assert.h>
 #include <inttypes.h>
 #include <time.h>      /* for clock_gettime() */
 #include <math.h>
+#include <errno.h>
 #include "buffer.h"
 #include "error.h"
 #include "list.h"
@@ -39,6 +41,10 @@ const int RESTORATION_THRESHOLD = 8;
 
 /* Specify the default raw ratio to start with. */
 #define INITIAL_RAW_RATIO   80    // 80%
+/* Specify the default CoW ratio and defaults. */
+#define INITIAL_COW_RATIO    5    //  %
+#define COW_NAP_TIME         3    //  seconds
+
 
 
 /* Extern the error codes we'll use. */
@@ -63,63 +69,10 @@ extern const int E_BAD_ARGS;
 extern const int BUFFER_OVERHEAD;
 
 /* We use the have/don't have data flags. */
-extern const int DESTROY_DATA;
-extern const int KEEP_DATA;
 extern const int HAVE_PIN;
 extern const int NEED_PIN;
 
 
-
-
-/* +-------------------------+
- * | User Friendly Functions |
- * +-------------------------+
- */
-/* list__easy_add
- * Adds a buffer to the list by sending the data and length directly.  This prevents the caller from having to use or create a
- * Buffer by itself.
- */
-int list__easy_add(List *list, bufferid_t id, void *data, uint32_t size, uint8_t list_pin_status) {
-  Buffer *buf = NULL;
-  int rv = buffer__initialize(&buf, id, size, data, NULL);
-  if (rv != E_OK)
-    return rv;
-  /* Add it to the list, destroy it if it already exists. */
-  rv = list__add(list, buf, list_pin_status);
-  if (rv == E_BUFFER_ALREADY_EXISTS)
-    buffer__destroy(buf, DESTROY_DATA);
-
-  // Leave.  Send rv if you want your caller to know the list__add status.
-  return rv;
-
-}
-
-
-/* list__easy_search
- * Searches for a buffer in the list, but only returns the data portion as a copy for the caller.
- * ALWAYS send back a COPY of the data, not a reference to the original.
- */
-int list__easy_search(List *list, bufferid_t id, void **data_pointer, uint8_t list_pin_status) {
-  Buffer *buf = NULL;
-  int rv = list__search(list, &buf, id, list_pin_status);
-  if (rv != E_OK)
-    return rv;
-  // We did find it, yay!  We've either been given a copy, or a reference to the original data.
-  if (buf->is_ephemeral) {
-    // We were given an ephemeral copy.  We can simply link to that data, destroy the copy, and move on.
-    *data_pointer = buf->data;
-    buffer__destroy(buf, KEEP_DATA);
-    return rv;
-  }
-
-  // The buffer wasn't ephemeral.  We only have a reference to the real buffer.  Copy it and remove our buffer pin.
-  *data_pointer = malloc(buf->data_length);
-  memcpy(*data_pointer, buf->data, buf->data_length);
-  buffer__lock(buf);
-  buffer__update_ref(buf, -1);
-  buffer__unlock(buf);
-  return rv;
-}
 
 
 
@@ -224,10 +177,14 @@ int list__initialize(List **list, int compressor_count, int compressor_id, int c
   (*list)->compressor_level = compressor_level;
   (*list)->compressor_count = compressor_count;
 
-  /* Garbage Collection (of Buffers) */
-  pthread_mutex_init(&(*list)->gc_lock, NULL);
-  buffer__initialize(&(*list)->gc_head, BUFFER_ID_MAX, 0, (void*)0, NULL);
-  (*list)->gc_head->next = (*list)->gc_head;
+  /* Copy-On-Write Space (of Buffers) */
+  (*list)->cow_max_size = INITIAL_COW_RATIO * max_memory / 100;
+  pthread_mutex_init(&(*list)->cow_lock, NULL);
+  pthread_cond_init(&(*list)->cow_killer_cond, NULL);
+  pthread_cond_init(&(*list)->cow_waiter_cond, NULL);
+  buffer__initialize(&(*list)->cow_head, BUFFER_ID_MAX, 0, (void*)0, NULL);
+  (*list)->cow_head->next = (*list)->cow_head;
+  pthread_create(&(*list)->slaughter_house_thread, NULL, (void *) &list__slaughter_house, (*list));
 
   return E_OK;
 }
@@ -464,6 +421,7 @@ int list__remove(List *list, bufferid_t id) {
     rv = E_OK;
     Buffer *buf = nearest_neighbor->next;
     const uint32_t BUFFER_SIZE = BUFFER_OVERHEAD + (buf->comp_length == 0 ? buf->data_length : buf->comp_length);
+printf("overhead is %u, comp_length is %u, data_length is %u\n", BUFFER_OVERHEAD, buf->comp_length, buf->data_length);
     int victimize_status = buffer__victimize(buf);
     if (victimize_status != E_OK)
       return victimize_status;
@@ -479,7 +437,7 @@ int list__remove(List *list, bufferid_t id) {
     }
     // Now change our ->next pointer for nearest_neighbor to drop this from the list, then destroy buf.
     nearest_neighbor->next = buf->next;
-    buffer__destroy(buf, DESTROY_DATA);
+    buffer__destroy(buf, true);
   }
 
   /* Remove the Skiplist Nodes that were found at various levels. */
@@ -580,7 +538,7 @@ int list__search(List *list, Buffer **buf, bufferid_t id, uint8_t list_pin_statu
       rv = buffer__initialize(&copy, 0, 0, (void*)0, NULL);
       if (rv != E_OK)
         return rv;
-      buffer__copy((*buf), copy);
+      buffer__copy((*buf), copy, true);
       // The original buffer needs to be released since we're sending back a copy.
       buffer__lock(*buf);
       buffer__update_ref(*buf, -1);
@@ -618,22 +576,32 @@ int list__search(List *list, Buffer **buf, bufferid_t id, uint8_t list_pin_statu
 
 
 /* list__update
- * Updates a buffer with the data and size specified.  We require the caller to have a pin from list__search() or easy search().
- * If the page is clean, the update mark the existing buffer dirty and swaps in a new one.
+ * Updates a buffer with the data and size specified.  We require the caller to have a pin from list__search().
+ * If the page is clean, the update marks the existing buffer dirty and swaps in a new one.
  * If the page is dirty, we refuse the update and send back a warning.  (Caller needs to refresh and re-process).
+ *
+ * In the event multiple threads try to update the same buffer, the first (race condition) will win and the others will be given a
+ * blocking operation contingent the Buffer's `updating` flag.
+ *
  * Caller MUST have a pin on the buffer!
+ * Upon successful completion the original buffer will be moved to a copy-on-write space (pending deletion), and the caller's buf
+ * will be linked to the NEW buffer.  In other words, you get the new/updated buffer back so you don't have to search for it again.
  */
-int list__update(List *list, Buffer *buf, void *data, uint32_t size, uint8_t list_pin_status) {
+int list__update(List *list, Buffer **callers_buf, void *data, uint32_t size, uint8_t list_pin_status) {
   /* Caller has to have a pin, so even though ref_count is a dirty read it will always be 1+ if the caller did their job right. */
-//TODO  There needs to be a flag and locking in case 2 threads try to call update at the same time.
+  Buffer *buf = *callers_buf;
   if(buf->ref_count < 1)
     return E_BUFFER_MISSING_A_PIN;
-  if(buf->flags & dirty)
+  /* Use atomics/locks to compare and/or set the dirty flag to prevent multiple updates at once. */
+  pthread_mutex_lock(&buf->lock);
+  if((buf->flags & dirty) || (buf->flags & updating)) {
+    pthread_mutex_unlock(&buf->lock);
+    while(buf->flags & updating); //spin
     return E_BUFFER_IS_DIRTY;
-
-  /* Initialize a few basic values. */
-  int rv = E_OK;
-  int slnode_rv = E_OK;
+  }
+  // Looks like no one else beat us to the update.  Flip some bits and have a party.  We'll mark it dirty after we're done.
+  buf->flags |= updating;
+  pthread_mutex_unlock(&buf->lock);
 
   /* Grab the list lock so we can handle sweeping processes and signaling correctly.  Small race will allow exceeding max, but that's ok. */
   if(list->current_raw_size > list->max_raw_size) {
@@ -695,14 +663,17 @@ int list__update(List *list, Buffer *buf, void *data, uint32_t size, uint8_t lis
   // Move right in the buffer list.  ->head is always max, so no need to check anything but ->id.
   while(nearest_neighbor->next->id <= buf->id)
     nearest_neighbor = nearest_neighbor->next;
+  // This should NEVER happen because the caller has a pin... but we'll throw it.
   if(nearest_neighbor->id != buf->id)
     return E_BUFFER_NOT_FOUND;
 
   // Make a copy of the buffer.  The new buffer will only have ONE (1) ref, the updater!  Remove its pin from buf.
   Buffer *new_buffer;
-  buffer__initialize(&new_buffer, buf->id, buf->data_length, data, NULL);
+  buffer__initialize(&new_buffer, buf->id, size, data, NULL);
   buffer__copy(buf, new_buffer, false);
   new_buffer->ref_count = 1;
+  new_buffer->data_length = size;
+  new_buffer->comp_length = 0;
   buffer__update_ref(buf, -1);
 
   // Update all the linking.  Update the new_buffer first!
@@ -721,17 +692,22 @@ int list__update(List *list, Buffer *buf, void *data, uint32_t size, uint8_t lis
   if(list_pin_status == NEED_PIN)
     list__update_ref(list, -1);
 
+  // Now that we're done reading buf, we need to change the caller's buf via indirection so they see the new buffer.
+  *callers_buf = new_buffer;
+
   // If everything worked, grab the list lock whenever it's available and increment counters.
-  if (rv == E_OK) {
-    pthread_mutex_lock(&list->lock);
-    list->current_raw_size = list->current_raw_size - buf->data_length + size;
-    pthread_mutex_unlock(&list->lock);
-  }
+  pthread_mutex_lock(&list->lock);
+  list->current_raw_size = list->current_raw_size - buf->data_length + size;
+  pthread_mutex_unlock(&list->lock);
 
-  // Throw the original buffer in the dirty pool for future eviction.
-  list__add_garbage(list, buf);
+  // Mark the buffer dirty, remove the updating flag, and throw it in the dirty pool for future eviction.
+  pthread_mutex_lock(&buf->lock);
+  buf->flags |= dirty;
+  buf->flags &= (~updating);
+  pthread_mutex_unlock(&buf->lock);
+  list__add_cow(list, buf);
 
-  return rv;
+  return E_OK;
 }
 
 
@@ -879,6 +855,7 @@ uint64_t list__sweep(List *list, uint8_t sweep_goal) {
 void list__sweeper_start(List *list) {
   while(1) {
     pthread_mutex_lock(&list->lock);
+printf("3\n");
     while(list->current_raw_size < list->max_raw_size && list->current_comp_size < list->max_comp_size && list->active != 0) {
       pthread_cond_broadcast(&list->reader_condition);
       pthread_cond_wait(&list->sweeper_condition, &list->lock);
@@ -929,22 +906,31 @@ int list__balance(List *list, uint32_t ratio, uint64_t max_memory) {
  * Frees the data held by a list.
  */
 int list__destroy(List *list) {
+printf("0\n");
   int rv = E_OK;
   // Stop the sweeper.
   list->active = 0;
   pthread_mutex_lock(&list->lock);
   pthread_cond_broadcast(&list->sweeper_condition);
   pthread_mutex_unlock(&list->lock);
+printf("0.1\n");
   pthread_join(list->sweeper_thread, NULL);
+printf("0.2\n");
 
+  // Destroy all the buffers, including head.
   while(list->head->next != list->head) {
     rv = list__remove(list, list->head->next->id);
     if(rv != E_OK)
       return E_LIST_REMOVAL;
   }
+printf("1\n");
   list__remove(list, list->head->id);
+
+  // Nuke all the skiplist items.
   for(int i=0; i<SKIPLIST_MAX; i++)
     free(list->indexes[i]);
+
+  // Stop all the compressors.
   for(int i=0; i<list->compressor_count; i++)
     list->compressor_pool[i].runnable = 1;
   for(int i=0; i<list->compressor_count; i++) {
@@ -956,6 +942,14 @@ int list__destroy(List *list) {
     pthread_join(list->compressor_threads[i], NULL);
   free(list->compressor_pool);
   free(list->compressor_threads);
+
+  // Stop the cow killer.
+  pthread_mutex_lock(&list->cow_lock);
+  pthread_cond_broadcast(&list->cow_killer_cond);
+  pthread_mutex_unlock(&list->cow_lock);
+  pthread_join(list->slaughter_house_thread, NULL);
+
+  // Destroy the list object itself.
   free(list);
   return E_OK;
 }
@@ -1163,23 +1157,82 @@ void list__dump_structure(List *list) {
 }
 
 
-/* list__add_garbage
+/* list__add_cow
  * Marks a buffer as dirty and appends it to a list for future cleaning.
  */
-void list__add_garbage(List *list, Buffer *buf) {
+void list__add_cow(List *list, Buffer *buf) {
   /* If the buffer doesn't have any pins just kill it. */
   if(buf->ref_count == 0) {
     buffer__destroy(buf, true);
     return;
   }
 
-  /* Looks like it has pins.  Prepend it to the list. */
-  pthread_mutex_lock(&list->gc_lock);
-  buf->next = list->gc_head->next;
-  list->gc_head->next = buf;
-  pthread_mutex_unlock(&list->gc_lock);
+  /* Looks like it has pins.  Try to prepend it to the list.  If the cow space is full, we wait. */
+  pthread_mutex_lock(&list->cow_lock);
+  while((list->cow_current_size + buf->data_length) > list->cow_max_size) {
+    pthread_cond_broadcast(&list->cow_killer_cond);
+    pthread_cond_wait(&list->cow_waiter_cond, &list->cow_lock);
+  }
+  // Space should be free, add our buffer.
+  buf->next = list->cow_head->next;
+  list->cow_head->next = buf;
+  list->cow_current_size += BUFFER_OVERHEAD + buf->data_length;
+  pthread_mutex_unlock(&list->cow_lock);
   return;
 }
 
+
+/* list__slaughter_house
+ * Kills cows... yep.
+ * Ok, it purges the Copy-On-Write buffers that are no longer pinned.
+ */
+void list__slaughter_house(List *list) {
+  Buffer *current = NULL;
+  Buffer *next = NULL;
+  struct timespec ts;
+  int wait_rv = 0;
+
+  /* Let's murder some cows D2 style! */
+  while(list->active) {
+    // Always get a lock to control the cow list.
+    pthread_mutex_lock(&list->cow_lock);
+    // Scan through the list and remove anything with no pins.
+    current = list->cow_head;
+    next = current->next;
+    while(next != list->cow_head) {
+      // If the ref is zero, unlink it and destroy it.
+      if(next->ref_count == 0) {
+        current->next = next->next;
+        list->cow_current_size -= (BUFFER_OVERHEAD + next->data_length);
+        buffer__destroy(next, true);
+        continue;
+      }
+      // Ref wasn't zero.  Move forward.
+      current = current->next;
+      next = next->next;
+    }
+
+    /* Now go to sleep until someone wakes us up or enough time has passed. */
+
+    ts.tv_sec = time(NULL) + COW_NAP_TIME;
+    ts.tv_nsec = 0;
+    pthread_cond_broadcast(&list->cow_waiter_cond);
+    wait_rv = pthread_cond_timedwait(&list->cow_killer_cond, &list->cow_lock, &ts);
+    // If we timed out, we have to unlock because the mutex was given back to us.
+    if(wait_rv == ETIMEDOUT)
+      pthread_mutex_unlock(&list->cow_lock);
+  }
+
+  // Upon exit, destroy anything remaining in the slaughter house.
+  current = list->cow_head;
+  next = current->next;
+  while(next != list->cow_head) {
+    current->next = next->next;
+    list->cow_current_size = list->cow_current_size - BUFFER_OVERHEAD - next->data_length;
+    buffer__destroy(next, true);
+  }
+
+  return;
+}
 
 

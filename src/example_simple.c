@@ -9,7 +9,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>   // For memcpy()
-#include "list.h"     // Include this.  Gives you access to List struct.
+#include "list.h"     // Include this.  Gives you access to List structures.
+#include "buffer.h"   // Include this.  Gives you access to Buffer structures.
 #include "globals.h"  // Include this.  Gives you access to error codes and constants.
 
 
@@ -29,6 +30,8 @@ extern const int NEED_PIN;
 int main() {
   // Create a pointer to a list structure for use later.  You can create this pointer anywhere as long as you don't lose scope to it.
   List *list = NULL;
+  // We will also create a Buffer object, which is a container (struct) for your data.  You'd have one of these for each data item you wanted managed.
+  Buffer *buf = NULL;
 
   // In this example, your application creates the following data and wants it stored in a self-managed pool (the list*).
   // Your app must know data size, and MUST malloc the space!  Otherwise, free() will fail later because we assign YOUR pointer.
@@ -46,12 +49,13 @@ int main() {
     printf("Failed to initialize the list.  Error code is %d.\n", rv);
     exit(rv);  // Or throw it to your caller...
   }
-  printf("Got my initialized list.  Compressor threads and management threads now running.\n");
+  printf("Got my initialized list.  Compressor threads and management threads are now running.\n");
 
 
   // Step 2)
   // Add your data to a buffer and store that in your list.
-  rv = list__easy_add(list, your_data_id, your_data, your_data_size, NEED_PIN);
+  buffer__initialize(&buf, your_data_id, your_data_size, your_data, NULL);
+  rv = list__add(list, buf, NEED_PIN);
   if (rv != E_OK) {
     printf("Uh oh, I didn't get to add my data :(.  Return value is: %d\n", rv);
     exit(rv);  // Or throw it to your caller.
@@ -61,34 +65,32 @@ int main() {
 
 
   // Step 3)
-  // Search for some data.  It'll get copied to your local pointer.
-  void *found_data = NULL;
-  rv = list__easy_search(list, your_data_id, &found_data, NEED_PIN);
+  // Search for some data.  We'll set our buf pointer to NULL to prove this works.
+  buf = NULL;
+  rv = list__search(list, &buf, your_data_id, NEED_PIN);
   if (rv != E_OK) {
     // We didn't find the buffer :(  Do whatever your app logic needs from here.
     // It's common to get E_BUFFER_NOT_FOUND if it doesn't exist.
     exit(rv);
   }
   // Hooray, we found the data.  *found_data now has a COPY of your original data.
-  printf("Yay!  We found our data inside the list:\n    %s\n", (char *)found_data);
-  // It is YOUR responsibility to free *found_data when you're done with it.
-  free(found_data);
+  printf("Yay!  We found our data inside the list:\n    %s\n", (char *)buf->data);
+  // Searching gives a "pin" on the buffer that prevents other threads from deleting it from under it.
 
 
   // Step 4)
-  // Update the data by assigning your new value to it.
+  // Update the data by assigning your new value to it.  A Copy-on-Write process will protect the original Buffer for other threads.
+  // In other words, you MUST find and keep your pin on a buffer THEN call list__update().
   int new_data_size = 60;
   char *new_data = malloc(new_data_size);
   memcpy(new_data, "This is your new data that you want assigned to your buffer.", new_data_size);
-  rv = list__easy_update(list, your_data_id, new_data, new_data_size, NEED_PIN);
+  rv = list__update(list, &buf, new_data, new_data_size, NEED_PIN);
   if (rv != E_OK) {
     // The update failed.  Possibly because the buffer wasn't in the list.  Handle this appropriately in your app.
     exit(rv);
   }
   // Going to search() it again so just to print it out to prove it changed.
-  list__easy_search(list, your_data_id, &found_data, NEED_PIN);
-  printf("Data updated, it's now %zu bytes long.\n    %s\n", strlen(found_data), (char *)found_data);
-  free(found_data);
+  printf("Data updated, it's now %"PRIu32" bytes long.\n    %s\n", buf->data_length, (char *)buf->data);
   printf("Our list now has %"PRIu32" raw and %"PRIu32" compressed buffers, using %"PRIu64" bytes.\n", list->raw_count, list->comp_count, list->current_raw_size + list->current_comp_size);
 
 
@@ -96,13 +98,16 @@ int main() {
   // Remove the buffer from the list now that we're done with it.  It's common for people to call list__remove() blindly because
   // their app can't be sure what's still in the list at any given time.  If the buffer is NOT FOUND, that's almost always OK; the
   // calling app simply wants to make sure it doesn't exist.
+printf("buf->data_length is %u\n", buf->data_length);
   rv = list__remove(list, your_data_id);
   if (rv != E_OK && rv != E_BUFFER_NOT_FOUND) {
     printf("Failed to remove the buffer.\n");
     exit(rv);
   }
+Buffer *buf2;
+list__search(list, &buf2, your_data_id, NEED_PIN);
+printf("buf2 data length is %u\n", buf2->data_length);
   printf("Removed the buffer, list now has %"PRIu32" raw and %"PRIu32" compressed buffers, using %"PRIu64" bytes.\n", list->raw_count, list->comp_count, list->current_raw_size + list->current_comp_size);
-
 
   // Step 6)
   // Our application is done, yay!  You should always destroy the list explicitly.

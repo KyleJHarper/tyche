@@ -10,6 +10,7 @@
 #include <jemalloc/jemalloc.h>
 #include <stdio.h>
 #include <stdint.h>
+#include <stdbool.h> /* For bool types. */
 #include <stdlib.h>
 #include <time.h>     /* for clock_gettime() */
 #include <string.h>   /* for memcpy() */

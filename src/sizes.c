@@ -114,23 +114,27 @@ int main() {
   printf("Size of SkiplistNode->down                    : %5zu Bytes\n", sizeof((SkiplistNode *)0)->down);
   /* Buffer Reference to the List Item Itself */
   printf("Size of SkiplistNode->target                  : %5zu Bytes\n", sizeof((SkiplistNode *)0)->target);
+  printf("Size of SkiplistNode->buffer_id               : %5zu Bytes\n", sizeof((SkiplistNode *)0)->buffer_id);
   printf("-----------------------------------------------------------\n");
   printf("Size of SkiplistNode                            %5zu Bytes\n", sizeof(SkiplistNode));
 
 
   // -- Buffer Information
   printf("\n");
+  /* Tracking for the list we're part of. */
+  printf("Size of Buffer->next                          : %5zu Bytes\n", sizeof((Buffer *)0)->next);
   /* Attributes for typical buffer organization and management. */
   printf("Size of Buffer->id                            : %5zu Bytes\n", sizeof((Buffer *)0)->id);
   printf("Size of Buffer->ref_count                     : %5zu Bytes\n", sizeof((Buffer *)0)->ref_count);
+  printf("Size of Buffer->flags                         : %5zu Bytes\n", sizeof((Buffer *)0)->flags);
   printf("Size of Buffer->pending_sweep                 : %5zu Bytes\n", sizeof((Buffer *)0)->pending_sweep);
   printf("Size of Buffer->popularity                    : %5zu Bytes\n", sizeof((Buffer *)0)->popularity);
   printf("Size of Buffer->victimized                    : %5zu Bytes\n", sizeof((Buffer *)0)->victimized);
   printf("Size of Buffer->is_ephemeral                  : %5zu Bytes\n", sizeof((Buffer *)0)->is_ephemeral);
+  printf("Size of Buffer->pending_writers               : %5zu Bytes\n", sizeof((Buffer *)0)->pending_writers);
   printf("Size of Buffer->lock                          : %5zu Bytes\n", sizeof((Buffer *)0)->lock);
   printf("Size of Buffer->reader_cond                   : %5zu Bytes\n", sizeof((Buffer *)0)->reader_cond);
   printf("Size of Buffer->writer_cond                   : %5zu Bytes\n", sizeof((Buffer *)0)->writer_cond);
-  printf("Size of Buffer->pending_writers               : %5zu Bytes\n", sizeof((Buffer *)0)->pending_writers);
   /* Cost values for each buffer when pulled from disk or compressed/decompressed. */
   printf("Size of Buffer->comp_cost                     : %5zu Bytes\n", sizeof((Buffer *)0)->comp_cost);
   printf("Size of Buffer->comp_hits                     : %5zu Bytes\n", sizeof((Buffer *)0)->comp_hits);
@@ -138,8 +142,6 @@ int main() {
   printf("Size of Buffer->data_length                   : %5zu Bytes\n", sizeof((Buffer *)0)->data_length);
   printf("Size of Buffer->comp_length                   : %5zu Bytes\n", sizeof((Buffer *)0)->comp_length);
   printf("Size of Buffer->data                          : %5zu Bytes\n", sizeof((Buffer *)0)->data);
-  /* Tracking for the list we're part of. */
-  printf("Size of Buffer->next                          : %5zu Bytes\n", sizeof((Buffer *)0)->next);
   printf("-----------------------------------------------------------\n");
   printf("Size of Buffer                                  %5zu Bytes\n", sizeof(Buffer));
 

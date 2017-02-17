@@ -47,7 +47,6 @@ extern const int DESTROY_DATA;
 workerid_t next_worker_id = 0;
 pthread_mutex_t next_worker_id_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-List *tmp;
 
 /* manager__initialize
  * Builds a manager, plain and simple.
@@ -80,7 +79,6 @@ Manager* manager__initialize(managerid_t id, char **pages) {
   if (list_rv != E_OK)
     show_error(E_GENERIC, "Couldn't create the list for manager "PRIu8".  This is fatal.", id);
   mgr->list = list;
-  tmp = mgr->list;
 
   /* Set the memory sizes for both lists. */
   list__balance(list, opts.fixed_ratio > 0 ? opts.fixed_ratio : INITIAL_RAW_RATIO, opts.max_memory);
