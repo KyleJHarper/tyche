@@ -124,10 +124,10 @@ struct list {
 int list__initialize(List **list, int compressor_count, int compressor_id, int compressor_level, uint64_t max_memory);
 int list__initialize_skiplistnode(SkiplistNode **slnode, Buffer *buf);
 int list__add(List *list, Buffer *buf, uint8_t list_pin_status);
-int list__remove(List *list, bufferid_t id);
+int list__remove(List *list, Buffer *buf);
+int list__update(List *list, Buffer **callers_buf, void *data, uint32_t size, uint8_t list_pin_status);
 int list__update_ref(List *list, int delta);
 int list__search(List *list, Buffer **buf, bufferid_t id, uint8_t list_pin_status);
-int list__update(List *list, Buffer **callers_buf, void *data, uint32_t size, uint8_t list_pin_status);
 int list__acquire_write_lock(List *list);
 int list__release_write_lock(List *list);
 uint64_t list__sweep(List *list, uint8_t sweep_goal);

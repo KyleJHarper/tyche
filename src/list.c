@@ -386,59 +386,102 @@ int list__add(List *list, Buffer *buf, uint8_t list_pin_status) {
 /* list__remove
  * Removes the buffer from the list's pool while respecting the list lock and readers.  Caller must grab and pass buffer_id before
  * unlocking its reference to the buffer; this way we can rely on finding the ID even if the buffer is removed by another thread.
- * Note: this function is not responsible for managing list max_sizes or main logic.  It just removes buffers.
+ *
+ * In the event multiple threads try to remove the same buffer, the first (race condition) will win and the others will simply have
+ * their pins removed after the removal is done.
+ *
+ * Caller MUST have a pin on the buffer!
+ * Upon successful completion the buffer will be moved to a copy-on-write space (pending deletion).
  */
-int list__remove(List *list, bufferid_t id) {
-  /* Get a write lock, which guarantees flushing all readers first. */
-  list__acquire_write_lock(list);
+int list__remove(List *list, Buffer *buf) {
+  /* Caller has to have a pin, so even though ref_count is a dirty read it will always be 1+ if the caller did their job right. */
+  if(buf->ref_count < 1)
+    return E_BUFFER_MISSING_A_PIN;
+  /* Use atomics/locks to compare and/or set the dirty flag to prevent multiple updates at once. */
+  pthread_mutex_lock(&buf->lock);
+  if((buf->flags & dirty) || (buf->flags & removing)) {
+    pthread_mutex_unlock(&buf->lock);
+    while(buf->flags & removing); //spin
+    // Since another thread was already removing it, it's now in the slaughter house.  Just remove our pin so it'll flush later.
+    buffer__update_ref(buf, -1);
+    return E_OK;
+  }
+  // Looks like no one else beat us to the update.  Flip some bits and have a party.  We'll mark it dirty after we're done.
+  buf->flags |= removing;
+  pthread_mutex_unlock(&buf->lock);
+
+  /* Get a read lock to ensure the sweeper doesn't run. */
+  list__update_ref(list, 1);
   int rv = E_BUFFER_NOT_FOUND;
-  /* Build a local stack of SkipistNode pointers to serve as a reference later. */
+
+  // Build a local stack based on the main list->indexes[] to build breadcrumbs.  Lock each buffer as we descend the skiplist tree.
+  // until we have the whole chain.  Since scanning is always down-and-forward we're safe.
   SkiplistNode *slstack[SKIPLIST_MAX];
+  Buffer *locked_buffers[SKIPLIST_MAX];
+  bufferid_t last_lock_id = BUFFER_ID_MAX - 1;
+  int locked_ids_index = -1;
   for(int i = 0; i < SKIPLIST_MAX; i++)
     slstack[i] = list->indexes[i];
 
-  /* Start forward scanning until we find it at each level. */
+  // Traverse the list to find the ideal location at each level.  Since we're searching, use list->levels as the start height.
   int levels = 0;
   for(int i = list->levels - 1; i >= 0; i--) {
-    // Shift right until the ->right target ID is too high.  Do NOT land on matches!  We don't have ->left pointers.
-    while(slstack[i]->right != NULL && slstack[i]->right->buffer_id < id)
-      slstack[i] = slstack[i]->right;
-    // Set the next slstack index to the ->down member of the most-forward position thus far.  Skip if we're at 0.
+    for(;;) {
+      // Scan forward until we are as close as we can get.
+      while(slstack[i]->right != NULL && slstack[i]->right->buffer_id < buf->id)
+        slstack[i] = slstack[i]->right;
+      // Lock the buffer pointed to (if we haven't already) to effectively lock this SkiplistNode so we can test it.
+      if(slstack[i]->buffer_id != last_lock_id)
+        buffer__lock(slstack[i]->target);
+      // If right is NULL or the ->right member is still bigger, we're as far over as we can go and should have a lock.
+      if(slstack[i]->right == NULL || slstack[i]->right->buffer_id >= buf->id) {
+        if(slstack[i]->buffer_id != last_lock_id) {
+          last_lock_id = slstack[i]->buffer_id;
+          locked_ids_index++;
+          locked_buffers[locked_ids_index] = slstack[i]->target;
+        }
+        break;  // Breaks the forward scanning.
+      }
+      // Otherwise, someone inserted while we acquired this lock.  Release and try moving forward again.
+      buffer__unlock(slstack[i]->target);
+    }
+    // Modify the next slstack node to look at the more-forward position we just jumped to.  If we're at index 0, skip it, we're done.
     if(i != 0)
       slstack[i-1] = slstack[i]->down;
     // If ->right exists and its id matches increment levels so we can modify the skiplist levels later.
-    if(slstack[i]->right != NULL && slstack[i]->right->buffer_id == id)
+    if(slstack[i]->right != NULL && slstack[i]->right->buffer_id == buf->id)
       levels++;
   }
 
-  /* Set up the nearest neighbor from slstack[0] and start removing nodes and the buffer. */
+  // Now find the nearest neighbor.
   Buffer *nearest_neighbor = slstack[0]->target;
-  while(nearest_neighbor->next != list->head && nearest_neighbor->next->id < id)
+  // Move right in the buffer list.  ->head is always max, so no need to check anything but ->id.
+  while(nearest_neighbor->next->id < buf->id)
     nearest_neighbor = nearest_neighbor->next;
-  // We should be close-as-can-be.  If ->next matches, victimize and remove it.  Otherwise we're still E_BUFFER_NOT_FOUND.
-  if(nearest_neighbor->next->id == id) {
-    rv = E_OK;
-    Buffer *buf = nearest_neighbor->next;
-    const uint32_t BUFFER_SIZE = BUFFER_OVERHEAD + (buf->comp_length == 0 ? buf->data_length : buf->comp_length);
-    int victimize_status = buffer__victimize(buf);
-    if (victimize_status != E_OK)
-      return victimize_status;
-    // Update the list metrics and move the clock hand if it's pointing at the same address as buf.
-    if(list->clock_hand == buf)
-      list->clock_hand = list->clock_hand->next;
-    if(buf->comp_length == 0) {
-      list->current_raw_size -= BUFFER_SIZE;
-      list->raw_count--;
-    } else {
-      list->current_comp_size -= BUFFER_SIZE;
-      list->comp_count--;
-    }
-    // Now change our ->next pointer for nearest_neighbor to drop this from the list, then destroy buf.
-    nearest_neighbor->next = buf->next;
-    buffer__destroy(buf, true);
+  // This should NEVER happen because the caller has a pin... but we'll throw it.
+  if(nearest_neighbor->next->id != buf->id)
+    return E_BUFFER_NOT_FOUND;
+
+  // We should be close-as-can-be.  If ->next matches, we're on the right track.  Otherwise we're still E_BUFFER_NOT_FOUND.
+  rv = E_OK;
+  const uint32_t BUFFER_SIZE = BUFFER_OVERHEAD + (buf->comp_length == 0 ? buf->data_length : buf->comp_length);
+  // Update the list metrics and move the clock hand if it's pointing at the same address as buf.
+  if(list->clock_hand == buf) {
+    //TODO This should be a CAS
+    pthread_mutex_lock(&list->lock);
+    list->clock_hand = list->clock_hand->next;
+    pthread_mutex_unlock(&list->lock);
+  }
+  if(buf->comp_length == 0) {
+    __sync_fetch_and_sub(&list->current_raw_size, BUFFER_SIZE);
+    __sync_fetch_and_sub(&list->raw_count, 1);
+  } else {
+    __sync_fetch_and_sub(&list->current_comp_size, BUFFER_SIZE);
+    __sync_fetch_and_sub(&list->comp_count, 1);
   }
 
-  /* Remove the Skiplist Nodes that were found at various levels. */
+  // Now change our ->next pointer for nearest_neighbor to drop this from the list, then destroy the slnodes.
+  nearest_neighbor->next = buf->next;
   if(rv == E_OK) {
     SkiplistNode *slnode = NULL;
     for(int i = levels - 1; i >= 0; i--) {
@@ -452,8 +495,20 @@ int list__remove(List *list, bufferid_t id) {
     }
   }
 
-  /* Let go of the write lock we acquired. */
-  list__release_write_lock(list);
+  // Unlock any buffers we locked along the way.
+  for(int i = locked_ids_index; i >= 0; i--)
+    buffer__unlock(locked_buffers[i]);
+
+  /* Flip bits and let go of the list pin we held.  Then send the buffer off. */
+  pthread_mutex_lock(&buf->lock);
+  buf->flags |= dirty;
+  buf->flags &= (~removing);
+  pthread_mutex_unlock(&buf->lock);
+  // Remove the pin the caller came in with.
+  buffer__update_ref(buf, -1);
+  list__add_cow(list, buf);
+  list__update_ref(list, -1);
+
   return rv;
 }
 
@@ -640,7 +695,7 @@ int list__update(List *list, Buffer **callers_buf, void *data, uint32_t size, ui
       if(slstack[i]->buffer_id != last_lock_id)
         buffer__lock(slstack[i]->target);
       // If right is NULL or the ->right member is still bigger, we're as far over as we can go and should have a lock.
-      if(slstack[i]->right == NULL || slstack[i]->right->buffer_id > buf->id) {
+      if(slstack[i]->right == NULL || slstack[i]->right->buffer_id >= buf->id) {
         if(slstack[i]->buffer_id != last_lock_id) {
           last_lock_id = slstack[i]->buffer_id;
           locked_ids_index++;
@@ -820,7 +875,9 @@ uint64_t list__sweep(List *list, uint8_t sweep_goal) {
     for(int i=0; i<list->comp_victims_index && list->current_comp_size > list->max_comp_size; i++) {
       if(list->comp_victims[i]->comp_length == 0)
         continue;
-      list__remove(list, list->comp_victims[i]->id);
+      // We add a pin because list__remove requires it (buffers usually come list__search).
+      buffer__update_ref(list->comp_victims[i], 1);
+      list__remove(list, list->comp_victims[i]);
       list->comp_victims[i] = NULL;
     }
     // If we still haven't freed enough comp space, start clockhand motion again and take more comp victims.
@@ -828,7 +885,8 @@ uint64_t list__sweep(List *list, uint8_t sweep_goal) {
       while(1) {
         list->clock_hand = list->clock_hand->next;
         if(list->clock_hand->popularity == 0 && list->clock_hand != list->head && list->clock_hand->comp_length != 0) {
-          list__remove(list, list->clock_hand->id);
+          buffer__update_ref(list->clock_hand, 1);
+          list__remove(list, list->clock_hand);
           break;
         }
         list->clock_hand->popularity >>= 1;
@@ -913,11 +971,13 @@ int list__destroy(List *list) {
 
   // Destroy all the buffers, including head.
   while(list->head->next != list->head) {
-    rv = list__remove(list, list->head->next->id);
+    buffer__update_ref(list->head->next, 1);
+    rv = list__remove(list, list->head->next);
     if(rv != E_OK)
       return E_LIST_REMOVAL;
   }
-  list__remove(list, list->head->id);
+  buffer__update_ref(list->head->next, 1);
+  list__remove(list, list->head);
 
   // Nuke all the skiplist items.
   for(int i=0; i<SKIPLIST_MAX; i++)

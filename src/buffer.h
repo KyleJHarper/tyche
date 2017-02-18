@@ -25,6 +25,7 @@ typedef enum buffer_flags {
   dirty         = 1 <<  0,
   pending_sweep = 1 <<  1,
   updating      = 1 <<  2,
+  removing      = 1 <<  3,
 } buffer_flags;
 
 /* Build the typedef and structure for a Buffer */

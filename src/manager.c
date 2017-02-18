@@ -98,6 +98,7 @@ int manager__start(Manager *mgr) {
     fprintf(stderr, "A test (-t %s) was specified so we ran it.  All done.  Quitting non-zero for safety.\n", opts.test);
     /* Stop the sweeper.  It requires being woken up. */
     mgr->runnable = 0;
+    list__show_structure(mgr->list);
     list__destroy(mgr->list);
     exit(E_GENERIC);
   }

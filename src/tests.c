@@ -251,11 +251,7 @@ void tests__chaos(ReadWriteOpts *rwopts) {
     rv = list__search(rwopts->list, &temp, id_to_remove, 0);
     if (rv == E_BUFFER_NOT_FOUND)
       continue;
-    // List search gave us a ref_count, need to decrement ourself.
-    buffer__lock(temp);
-    buffer__update_ref(temp, -1);
-    buffer__unlock(temp);
-    rv = list__remove(rwopts->list, id_to_remove);
+    rv = list__remove(rwopts->list, temp);
     usleep(rwopts->sleep_delay);
   }
   pthread_exit(0);
@@ -311,8 +307,10 @@ void tests__elements(List *list) {
 
   // Remove the buffers.
   printf("\nStep 4.  Removing all the dummy buffers.\n");
-  while(list->head->next != list->head)
-    list__remove(list, list->head->next->id);
+  while(list->head->next != list->head) {
+    buffer__update_ref(list->head->next, 1);
+    list__remove(list, list->head->next);
+  }
 
   // Display the statistics of the list again.
   printf("\nStep 5.  Showing list statistics.\n");
@@ -478,8 +476,10 @@ void tests__move_buffers(List *list, char **pages) {
   if (total_bytes != list->current_raw_size)
     show_error(E_GENERIC, "Calculated a total size of %d, and raw_list->current_size is %"PRIu64"\n", total_bytes, list->current_raw_size);
   printf("Total bytes measured in buffers matches the list size, success!\n");
-  while(list->head->next != list->head)
-    list__remove(list, list->head->next->id);
+  while(list->head->next != list->head) {
+    buffer__update_ref(list->head->next, 1);
+    list__remove(list, list->head->next);
+  }
   printf("Test 1 Passed:  Does the list size match the known size of data read from disk?\n\n");
 
   // -- TEST 2:  Can we compress an item?
@@ -492,8 +492,10 @@ void tests__move_buffers(List *list, char **pages) {
     list__add(list, buf, 0);
   }
   printf("All done.  Raw list has %d buffers using %"PRIu64" bytes.  Comp list has %d buffers using %"PRIu64" bytes.\n", list->raw_count, list->current_raw_size, list->comp_count, list->current_comp_size);
-  while(list->head->next != list->head)
-    list__remove(list, list->head->next->id);
+  while(list->head->next != list->head) {
+    buffer__update_ref(list->head->next, 1);
+    list__remove(list, list->head->next);
+  }
   printf("Test 2 Passed:  Will items go into the compressed space if necessary?\n\n");
 
   // -- TEST 3:  Will running out of comp space properly shrink and remove comp victims?
@@ -506,8 +508,10 @@ void tests__move_buffers(List *list, char **pages) {
     list__add(list, buf, 0);
   }
   printf("All done.  Raw list has %d buffers using %"PRIu64" bytes.  Comp list has %d buffers using %"PRIu64" bytes.\n", list->raw_count, list->current_raw_size, list->comp_count, list->current_comp_size);
-  while(list->head->next != list->head)
-    list__remove(list, list->head->next->id);
+  while(list->head->next != list->head) {
+    buffer__update_ref(list->head->next, 1);
+    list__remove(list, list->head->next);
+  }
   printf("Test 3 Passed:  Will running out of comp space remove buffers when swept?\n\n");
 
   // -- TEST 4:  Can we move items back to the raw list after they've been compressed?
