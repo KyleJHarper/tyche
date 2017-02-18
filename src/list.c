@@ -386,13 +386,12 @@ int list__add(List *list, Buffer *buf, uint8_t list_pin_status) {
 /* list__remove
  * Removes the buffer from the list's pool while respecting the list lock and readers.  Caller must grab and pass buffer_id before
  * unlocking its reference to the buffer; this way we can rely on finding the ID even if the buffer is removed by another thread.
- * Note: this function is not responsible for managing list max_sizes or HCRS logic.  It just removes buffers.
+ * Note: this function is not responsible for managing list max_sizes or main logic.  It just removes buffers.
  */
 int list__remove(List *list, bufferid_t id) {
   /* Get a write lock, which guarantees flushing all readers first. */
   list__acquire_write_lock(list);
   int rv = E_BUFFER_NOT_FOUND;
-
   /* Build a local stack of SkipistNode pointers to serve as a reference later. */
   SkiplistNode *slstack[SKIPLIST_MAX];
   for(int i = 0; i < SKIPLIST_MAX; i++)
@@ -421,7 +420,6 @@ int list__remove(List *list, bufferid_t id) {
     rv = E_OK;
     Buffer *buf = nearest_neighbor->next;
     const uint32_t BUFFER_SIZE = BUFFER_OVERHEAD + (buf->comp_length == 0 ? buf->data_length : buf->comp_length);
-printf("overhead is %u, comp_length is %u, data_length is %u\n", BUFFER_OVERHEAD, buf->comp_length, buf->data_length);
     int victimize_status = buffer__victimize(buf);
     if (victimize_status != E_OK)
       return victimize_status;
@@ -636,7 +634,7 @@ int list__update(List *list, Buffer **callers_buf, void *data, uint32_t size, ui
   for(int i = list->levels - 1; i >= 0; i--) {
     for(;;) {
       // Scan forward until we are as close as we can get.
-      while(slstack[i]->right != NULL && slstack[i]->right->buffer_id <= buf->id)
+      while(slstack[i]->right != NULL && slstack[i]->right->buffer_id < buf->id)
         slstack[i] = slstack[i]->right;
       // Lock the buffer pointed to (if we haven't already) to effectively lock this SkiplistNode so we can test it.
       if(slstack[i]->buffer_id != last_lock_id)
@@ -661,10 +659,10 @@ int list__update(List *list, Buffer **callers_buf, void *data, uint32_t size, ui
   // Now find the nearest neighbor.
   Buffer *nearest_neighbor = slstack[0]->target;
   // Move right in the buffer list.  ->head is always max, so no need to check anything but ->id.
-  while(nearest_neighbor->next->id <= buf->id)
+  while(nearest_neighbor->next->id < buf->id)
     nearest_neighbor = nearest_neighbor->next;
   // This should NEVER happen because the caller has a pin... but we'll throw it.
-  if(nearest_neighbor->id != buf->id)
+  if(nearest_neighbor->next->id != buf->id)
     return E_BUFFER_NOT_FOUND;
 
   // Make a copy of the buffer.  The new buffer will only have ONE (1) ref, the updater!  Remove its pin from buf.
@@ -855,7 +853,6 @@ uint64_t list__sweep(List *list, uint8_t sweep_goal) {
 void list__sweeper_start(List *list) {
   while(1) {
     pthread_mutex_lock(&list->lock);
-printf("3\n");
     while(list->current_raw_size < list->max_raw_size && list->current_comp_size < list->max_comp_size && list->active != 0) {
       pthread_cond_broadcast(&list->reader_condition);
       pthread_cond_wait(&list->sweeper_condition, &list->lock);
@@ -906,16 +903,13 @@ int list__balance(List *list, uint32_t ratio, uint64_t max_memory) {
  * Frees the data held by a list.
  */
 int list__destroy(List *list) {
-printf("0\n");
   int rv = E_OK;
   // Stop the sweeper.
   list->active = 0;
   pthread_mutex_lock(&list->lock);
   pthread_cond_broadcast(&list->sweeper_condition);
   pthread_mutex_unlock(&list->lock);
-printf("0.1\n");
   pthread_join(list->sweeper_thread, NULL);
-printf("0.2\n");
 
   // Destroy all the buffers, including head.
   while(list->head->next != list->head) {
@@ -923,7 +917,6 @@ printf("0.2\n");
     if(rv != E_OK)
       return E_LIST_REMOVAL;
   }
-printf("1\n");
   list__remove(list, list->head->id);
 
   // Nuke all the skiplist items.
@@ -1203,17 +1196,15 @@ void list__slaughter_house(List *list) {
       // If the ref is zero, unlink it and destroy it.
       if(next->ref_count == 0) {
         current->next = next->next;
-        list->cow_current_size -= (BUFFER_OVERHEAD + next->data_length);
+        list->cow_current_size = list->cow_current_size - BUFFER_OVERHEAD - next->data_length;
         buffer__destroy(next, true);
-        continue;
       }
       // Ref wasn't zero.  Move forward.
       current = current->next;
-      next = next->next;
+      next = current->next->next;
     }
 
     /* Now go to sleep until someone wakes us up or enough time has passed. */
-
     ts.tv_sec = time(NULL) + COW_NAP_TIME;
     ts.tv_nsec = 0;
     pthread_cond_broadcast(&list->cow_waiter_cond);
@@ -1224,10 +1215,9 @@ void list__slaughter_house(List *list) {
   }
 
   // Upon exit, destroy anything remaining in the slaughter house.
-  current = list->cow_head;
-  next = current->next;
-  while(next != list->cow_head) {
-    current->next = next->next;
+  while(list->cow_head->next != list->cow_head) {
+    next = list->cow_head->next;
+    list->cow_head->next = list->cow_head->next->next;
     list->cow_current_size = list->cow_current_size - BUFFER_OVERHEAD - next->data_length;
     buffer__destroy(next, true);
   }

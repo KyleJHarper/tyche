@@ -89,24 +89,21 @@ int main() {
     // The update failed.  Possibly because the buffer wasn't in the list.  Handle this appropriately in your app.
     exit(rv);
   }
-  // Going to search() it again so just to print it out to prove it changed.
   printf("Data updated, it's now %"PRIu32" bytes long.\n    %s\n", buf->data_length, (char *)buf->data);
   printf("Our list now has %"PRIu32" raw and %"PRIu32" compressed buffers, using %"PRIu64" bytes.\n", list->raw_count, list->comp_count, list->current_raw_size + list->current_comp_size);
+  // Now that we're done with the buffer, we need to remove our pin on it.
+  buffer__update_ref(buf, -1);
 
 
   // Step 5)
   // Remove the buffer from the list now that we're done with it.  It's common for people to call list__remove() blindly because
   // their app can't be sure what's still in the list at any given time.  If the buffer is NOT FOUND, that's almost always OK; the
   // calling app simply wants to make sure it doesn't exist.
-printf("buf->data_length is %u\n", buf->data_length);
   rv = list__remove(list, your_data_id);
   if (rv != E_OK && rv != E_BUFFER_NOT_FOUND) {
     printf("Failed to remove the buffer.\n");
     exit(rv);
   }
-Buffer *buf2;
-list__search(list, &buf2, your_data_id, NEED_PIN);
-printf("buf2 data length is %u\n", buf2->data_length);
   printf("Removed the buffer, list now has %"PRIu32" raw and %"PRIu32" compressed buffers, using %"PRIu64" bytes.\n", list->raw_count, list->comp_count, list->current_raw_size + list->current_comp_size);
 
   // Step 6)
