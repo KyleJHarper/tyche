@@ -393,7 +393,7 @@ int list__remove(List *list, Buffer *buf) {
     return E_BUFFER_MISSING_A_PIN;
   /* Use atomics/locks to compare and/or set the dirty flag to prevent multiple updates at once. */
   pthread_mutex_lock(&buf->lock);
-  if((buf->flags & dirty) || (buf->flags & removing)) {
+  if(buf->flags & removing) {
     pthread_mutex_unlock(&buf->lock);
     while(buf->flags & removing); //spin
     // Since another thread was already removing it, it's now in the slaughter house.  Just remove our pin so it'll flush later.
@@ -404,7 +404,7 @@ int list__remove(List *list, Buffer *buf) {
   buf->flags |= removing;
   pthread_mutex_unlock(&buf->lock);
 
-  /* Get a read lock to ensure the sweeper doesn't run. */
+  /* Get a read lock to ensure the sweeper doesn't run (or that it's the sweeper who actually called us). */
   list__update_ref(list, 1);
   int rv = E_BUFFER_NOT_FOUND;
 
@@ -796,7 +796,7 @@ uint64_t list__sweep(List *list, uint8_t sweep_goal) {
   uint32_t total_victims = 0;
   const uint64_t BYTES_NEEDED = (list->current_raw_size > list->max_raw_size ? list->current_raw_size - list->max_raw_size : 0) + (list->max_raw_size * sweep_goal / 100);
 
-  // Loop forever to free up memory.  Memory checks happen near the end of the loop.  Surround with a zero-check for initial balancing.
+  // Loop forever to free up memory.  Memory checks happen near the end of the loop.
   if(BYTES_NEEDED != 0 && list->current_raw_size > list->max_raw_size) {
     while(1) {
       // Scan until we find a buffer to remove.  Popularity is halved until a victim is found.  Skip head matches.
@@ -808,7 +808,7 @@ uint64_t list__sweep(List *list, uint8_t sweep_goal) {
             continue;
           // If it's compressed, just update the comp_victims array (if possible) and continue.
           if (list->clock_hand->comp_length > 0) {
-            if(list->comp_victims_index < VICTIM_BATCH_SIZE) {
+            if(list->comp_victims_index < MAX_COMP_VICTIMS) {
               list->comp_victims[list->comp_victims_index] = list->clock_hand;
               list->comp_victims_index++;
               list->clock_hand->flags |= pending_sweep;
