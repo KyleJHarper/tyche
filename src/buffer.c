@@ -33,10 +33,7 @@ const Buffer BUFFER_INITIALIZER = {
   .id = 0,
   .ref_count = 0,
   .flags = 0,
-  .pending_sweep = 0,
   .popularity = 0,
-  .victimized = 0,
-  .is_ephemeral = 0,
   .lock = PTHREAD_MUTEX_INITIALIZER,
   .reader_cond = PTHREAD_COND_INITIALIZER,
   .writer_cond = PTHREAD_COND_INITIALIZER,
@@ -59,7 +56,6 @@ const Buffer BUFFER_INITIALIZER = {
 extern const int E_OK;
 extern const int E_GENERIC;
 extern const int E_BUFFER_NOT_FOUND;
-extern const int E_BUFFER_IS_VICTIMIZED;
 extern const int E_BUFFER_MISSING_DATA;
 extern const int E_BUFFER_ALREADY_COMPRESSED;
 extern const int E_BUFFER_ALREADY_DECOMPRESSED;
@@ -121,41 +117,13 @@ int buffer__initialize(Buffer **buf, bufferid_t id, uint32_t size, void *data, c
 }
 
 
-/* buffer__update
- * A handy function to allow someone to safely update a buffer's data info.
- */
-int buffer__update(Buffer *buf, uint32_t size, void *data) {
-  if (buf == NULL)
-    return E_BAD_ARGS;
-
-  /* Block the buffer and free up the data. */
-  int rv = buffer__block(buf, 1);
-  if (rv != E_OK)
-    return rv;
-  free(buf->data);
-
-  /* Wipe out the old data, update the data and length, then reset some comp values. */
-  buf->data = data;
-  buf->data_length = size;
-  buf->comp_length = 0;
-  buf->comp_cost = 0;
-  buf->comp_hits = 0;
-
-  /* Unblock the buffer and move on. */
-  buffer__unblock(buf);
-  return E_OK;
-}
-
-
 /* buffer__destroy
  * A concise function to completely free up the memory used by a buffer.
- * Caller MUST have victimized the buffer before this is allowed!  This means the buffer's lock will be LOCKED!
+ * Caller MUST have ensured the buffer is not referenced!
  */
 int buffer__destroy(Buffer *buf, const bool destroy_data) {
   if (buf == NULL)
     return E_OK;
-  if (buf->victimized == 0 && buf->is_ephemeral == 0)
-    return E_BAD_ARGS;
 
   if (destroy_data) {
     /* Free the members which are pointers to other data locations. */
@@ -176,9 +144,6 @@ int buffer__destroy(Buffer *buf, const bool destroy_data) {
  */
 int buffer__lock(Buffer *buf) {
   pthread_mutex_lock(&buf->lock);
-  /* If a buffer is victimized we can still lock it, but the caller needs to know. This is safe because buffer__victimize locks. */
-  if (buf->victimized != 0)
-    return E_BUFFER_IS_VICTIMIZED;
   return E_OK;
 }
 
@@ -197,17 +162,13 @@ void buffer__unlock(Buffer *buf) {
  *   -1) Anyone can remove their pin.  Upon 0 we notify pending operators (writers).
  */
 int buffer__update_ref(Buffer *buf, int delta) {
-  // Check to see if the buffer is victimized, if so we can't add new pins.
-  if (delta > 0 && buf->victimized > 0)
-    return E_BUFFER_IS_VICTIMIZED;
-
   // Check to see if new refs are supposed to be blocked.  If so, wait.
   while (delta > 0 && buf->pending_writers != 0)
     pthread_cond_wait(&buf->reader_cond, &buf->lock);
 
   // At this point we're safe to modify the ref_count.  When decrementing, check to see if we need to broadcast to anyone.
   buf->ref_count += delta;
-  if ((buf->pending_writers != 0 || buf->victimized != 0) && buf->ref_count == 0)
+  if ((buf->pending_writers != 0) && buf->ref_count == 0)
     pthread_cond_broadcast(&buf->writer_cond);
 
   // If we're incrementing we need to update popularity too.
@@ -218,39 +179,27 @@ int buffer__update_ref(Buffer *buf, int delta) {
 }
 
 
-/* buffer__victimize
- * Marks the victimized attribute of the buffer and sets up a condition to wait for the ref_count to reach 0.  This allows this
- * function to fully block the caller until the buffer is ready to be removed.  The list__remove() function is how you get rid of
- * a buffer from the list since we need to manage the pointers.  In fact, only list__remove() should ever call this.
- * The buffer MUST remain locked upon exit otherwise another thread could try reading the buffer while we go back up the stack.
- */
-int buffer__victimize(Buffer *buf) {
-  /* Try to lock the buffer.  If it returns already victimized then we don't need to do anything.  Any other non-zero, error. */
-  int rv = buffer__lock(buf);
-  if (rv > 0 && rv != E_BUFFER_IS_VICTIMIZED)
-    return rv;
-  buf->victimized = 1;
-  while(buf->ref_count != 0)
-    pthread_cond_wait(&buf->writer_cond, &buf->lock);
-  return E_OK;
-}
-
-
 /* buffer__block
- * Similar to buffer__victimize().  The main difference is this will simply block the caller until ref_count hits zero, upon which
- * it will continue on while holding the lock to prevent others from doing anything else.  See buffer__update_ref() for how it works
- * together.
- * Caller MUST provide how many list pins (either 0 or 1) to block on; this allows non-victimized!
+ * This will simply block the caller until ref_count hits zero, upon which it will continue on while holding the lock to prevent
+ * others from doing anything else.  See buffer__update_ref() for how it works together.
+ *
+ * Caller MUST provide how many list pins (either 0 or 1) to block on!
  * The buffer will REMAIN LOCKED since only a buffer__unblock() from this same thread should ever resume normal flow.
  */
 int buffer__block(Buffer *buf, int pin_threshold) {
-  // Lock the buffer.  It might be victimized, so check for that and let caller know.
-  int rv = buffer__lock(buf);
-  if (rv != E_OK)
-    return rv;
+//TODO  Actually, buffer__block should always use a pin_threshold of 1... the blocker!
+//TODO  If possible... just get rid of buffer blocking altogether... we'll see.  If we don't, we can't get rid of reader/writer conditions :(
+  // Lock the buffer.
+  buffer__lock(buf);
   buf->pending_writers++;
-  while(buf->ref_count != pin_threshold)
+  while(buf->ref_count != pin_threshold) {
+    // This is dumb... but if pin threshold is non-zero, remove our pin before waiting, then add it back.  Otherwise we never wake up.
+    if(pin_threshold != 0)
+      buf->ref_count--;
     pthread_cond_wait(&buf->writer_cond, &buf->lock);
+    if(pin_threshold != 0)
+      buf->ref_count++;
+  }
   return E_OK;
 }
 
@@ -420,9 +369,8 @@ int buffer__copy(Buffer *src, Buffer *dst, bool copy_data) {
   dst->id           = src->id;
   dst->ref_count    = src->ref_count;
   dst->popularity   = src->popularity;
-  dst->is_ephemeral = src->is_ephemeral;
-  dst->victimized   = src->victimized;
   // The lock and conditions do not need to be linked.  Nor do pending writers.
+  // Do NOT copy flags!
 
   /* Cost values for each buffer when pulled from disk or compressed/decompressed. */
   dst->comp_cost = src->comp_cost;

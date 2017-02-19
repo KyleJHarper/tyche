@@ -34,11 +34,6 @@
 #define BILLION 1000000000L
 #define MILLION    1000000L
 
-/* Set a threshold for when a compressed buffer is a reasonable candidate for restoration.  Magic number.  However, in testing
- * this value seems reasonable; it doesn't reduce performance by much and allows popular buffers to enter raw space which could
- * have profound performance implications in a real-world situation.  So we'll leave it for edification if nothing else. */
-const int RESTORATION_THRESHOLD = 8;
-
 /* Specify the default raw ratio to start with. */
 #define INITIAL_RAW_RATIO   80    // 80%
 /* Specify the default CoW ratio and defaults. */
@@ -51,7 +46,6 @@ const int RESTORATION_THRESHOLD = 8;
 extern const int E_OK;
 extern const int E_GENERIC;
 extern const int E_BUFFER_NOT_FOUND;
-extern const int E_BUFFER_IS_VICTIMIZED;
 extern const int E_BUFFER_ALREADY_EXISTS;
 extern const int E_BUFFER_ALREADY_DECOMPRESSED;
 extern const int E_BUFFER_COMPRESSION_PROBLEM;
@@ -459,8 +453,10 @@ int list__remove(List *list, Buffer *buf) {
   while(nearest_neighbor->next->id < buf->id)
     nearest_neighbor = nearest_neighbor->next;
   // This should NEVER happen because the caller has a pin... but we'll throw it.
-  if(nearest_neighbor->next->id != buf->id)
+  if(nearest_neighbor->next->id != buf->id) {
+    list__update_ref(list, -1);
     return E_BUFFER_NOT_FOUND;
+  }
 
   // We should be close-as-can-be.  If ->next matches, we're on the right track.  Otherwise we're still E_BUFFER_NOT_FOUND.
   rv = E_OK;
@@ -505,7 +501,9 @@ int list__remove(List *list, Buffer *buf) {
   buf->flags &= (~removing);
   pthread_mutex_unlock(&buf->lock);
   // Remove the pin the caller came in with.
+  buffer__lock(buf);
   buffer__update_ref(buf, -1);
+  buffer__unlock(buf);
   list__add_cow(list, buf);
   list__update_ref(list, -1);
 
@@ -554,8 +552,8 @@ int list__search(List *list, Buffer **buf, bufferid_t id, uint8_t list_pin_statu
         *buf = slnode->target;
         buffer__update_ref(*buf, 1);
       }
-      // If E_OK or victimized we still need to unlock it.
-      if(rv == E_OK || rv == E_BUFFER_IS_VICTIMIZED)
+      // If E_OK we still need to unlock it.
+      if(rv == E_OK)
         buffer__unlock(slnode->target);
     }
     // If we can't move down, leave.
@@ -577,38 +575,26 @@ int list__search(List *list, Buffer **buf, bufferid_t id, uint8_t list_pin_statu
         *buf = nearest_neighbor;
         buffer__update_ref(*buf, 1);
       }
-      // If E_OK or victimized we still need to unlock it.
-      if(rv == E_OK || rv == E_BUFFER_IS_VICTIMIZED)
+      // If E_OK we still need to unlock it.
+      if(rv == E_OK)
         buffer__unlock(nearest_neighbor);
     }
   }
 
-  /* If the buffer was found and is compressed, we need to send a decompressed copy or perform a restoration on it. */
+  /* If the buffer was found and is compressed, we need to decompress it. */
   if(rv == E_OK && (*buf)->comp_length != 0) {
-    if((*buf)->popularity < RESTORATION_THRESHOLD) {
-      // Simply send back a copy.
-      Buffer *copy = NULL;
-      rv = buffer__initialize(&copy, 0, 0, (void*)0, NULL);
-      if (rv != E_OK)
-        return rv;
-      buffer__copy((*buf), copy, true);
-      // The original buffer needs to be released since we're sending back a copy.
-      buffer__lock(*buf);
-      buffer__update_ref(*buf, -1);
-      buffer__unlock(*buf);
-      copy->is_ephemeral = 1;
-      if(buffer__decompress(copy, list->compressor_id) != E_OK)
-        return E_BUFFER_COMPRESSION_PROBLEM;
-      *buf = copy;
-    } else {
-      // This buffer warrants full restoration to the raw list.  Hooray for it!  Keep our buffer pin and block for protection.
+    // The only protection we need is the buffer's lock.  We already have a pin, so it can't poof and there can't be any readers.
+    pthread_mutex_lock(&(*buf)->lock);
+    // First check above was a dirty read, do it again
+    if((*buf)->comp_length != 0) {
+      // No one else decompressed it before us, so let's move forward.
       int decompress_rv = E_OK;
       uint16_t comp_length = (*buf)->comp_length;
-      buffer__block(*buf, 1);
       decompress_rv = buffer__decompress(*buf, list->compressor_id);
-      if (decompress_rv != E_OK && decompress_rv != E_BUFFER_ALREADY_DECOMPRESSED)
+      if (decompress_rv != E_OK && decompress_rv != E_BUFFER_ALREADY_DECOMPRESSED) {
+        pthread_mutex_unlock(&(*buf)->lock);
         return E_BUFFER_COMPRESSION_PROBLEM;
-      buffer__unblock(*buf);
+      }
       // Update counters for the list now by forcibly grabbing the mutex, while still holding our pin.
       pthread_mutex_lock(&list->lock);
       list->raw_count++;
@@ -618,6 +604,7 @@ int list__search(List *list, Buffer **buf, bufferid_t id, uint8_t list_pin_statu
       list->restorations++;
       pthread_mutex_unlock(&list->lock);
     }
+    pthread_mutex_unlock(&(*buf)->lock);
   }
 
   /* If the caller didn't provide a pin, remove the one we set above. */
@@ -717,8 +704,10 @@ int list__update(List *list, Buffer **callers_buf, void *data, uint32_t size, ui
   while(nearest_neighbor->next->id < buf->id)
     nearest_neighbor = nearest_neighbor->next;
   // This should NEVER happen because the caller has a pin... but we'll throw it.
-  if(nearest_neighbor->next->id != buf->id)
+  if(nearest_neighbor->next->id != buf->id) {
+    list__update_ref(list, -1);
     return E_BUFFER_NOT_FOUND;
+  }
 
   // Make a copy of the buffer.  The new buffer will only have ONE (1) ref, the updater!  Remove its pin from buf.
   Buffer *new_buffer;
@@ -727,7 +716,9 @@ int list__update(List *list, Buffer **callers_buf, void *data, uint32_t size, ui
   new_buffer->ref_count = 1;
   new_buffer->data_length = size;
   new_buffer->comp_length = 0;
+  buffer__lock(buf);
   buffer__update_ref(buf, -1);
+  buffer__unlock(buf);
 
   // Update all the linking.  Update the new_buffer first!
   new_buffer->next = buf->next;
@@ -813,20 +804,20 @@ uint64_t list__sweep(List *list, uint8_t sweep_goal) {
         list->clock_hand = list->clock_hand->next;
         if (list->clock_hand->popularity == 0 && list->clock_hand != list->head) {
           // If the buffer is already pending for sweep operations, we can't reuse it.  Skip.
-          if(list->clock_hand->pending_sweep == 1)
+          if(list->clock_hand->flags & pending_sweep)
             continue;
           // If it's compressed, just update the comp_victims array (if possible) and continue.
           if (list->clock_hand->comp_length > 0) {
             if(list->comp_victims_index < VICTIM_BATCH_SIZE) {
               list->comp_victims[list->comp_victims_index] = list->clock_hand;
               list->comp_victims_index++;
-              list->clock_hand->pending_sweep = 1;
+              list->clock_hand->flags |= pending_sweep;
             }
             continue;
           }
-          // We found a raw buffer victim, yay.
+          // We found a raw buffer victim.
           victim = list->clock_hand;
-          victim->pending_sweep = 1;
+          victim->flags |= pending_sweep;
           break;
         }
         list->clock_hand->popularity >>= 1;
@@ -848,7 +839,7 @@ uint64_t list__sweep(List *list, uint8_t sweep_goal) {
         pthread_mutex_unlock(&list->jobs_lock);
         for(int i=0; i<list->victims_index; i++) {
           comp_bytes_added += BUFFER_OVERHEAD + list->victims[i]->comp_length;
-          list->victims[i]->pending_sweep = 0;
+          list->victims[i]->flags &= (~pending_sweep);
           list->victims[i] = NULL;
         }
         list->victims_index = 0;
@@ -861,7 +852,7 @@ uint64_t list__sweep(List *list, uint8_t sweep_goal) {
   }
   // Finally, remove all pending_sweep flags from the compressed victims now that we're done scanning.
   for(int i=0; i<list->comp_victims_index; i++)
-    list->comp_victims[i]->pending_sweep = 0;
+    list->comp_victims[i]->flags &= (~pending_sweep);
 
   // We freed up enough raw space.  If comp space is too large start freeing up space.  Update some counters under write protection.
   clock_gettime(CLOCK_MONOTONIC, &start);
@@ -876,7 +867,9 @@ uint64_t list__sweep(List *list, uint8_t sweep_goal) {
       if(list->comp_victims[i]->comp_length == 0)
         continue;
       // We add a pin because list__remove requires it (buffers usually come list__search).
+      buffer__lock(list->comp_victims[i]);
       buffer__update_ref(list->comp_victims[i], 1);
+      buffer__unlock(list->comp_victims[i]);
       list__remove(list, list->comp_victims[i]);
       list->comp_victims[i] = NULL;
     }
@@ -885,7 +878,9 @@ uint64_t list__sweep(List *list, uint8_t sweep_goal) {
       while(1) {
         list->clock_hand = list->clock_hand->next;
         if(list->clock_hand->popularity == 0 && list->clock_hand != list->head && list->clock_hand->comp_length != 0) {
+          buffer__lock(list->clock_hand);
           buffer__update_ref(list->clock_hand, 1);
+          buffer__unlock(list->clock_hand);
           list__remove(list, list->clock_hand);
           break;
         }
@@ -1015,7 +1010,6 @@ void list__compressor_start(Compressor *comp) {
   // Try to do work forever.  We need to start off assuming we're an active worker.  It self-regulates within the loop.
   Buffer *work_me[COMPRESSOR_BATCH_SIZE];
   int work_me_count = 0;
-  int rv = E_OK;
   pthread_mutex_lock(comp->jobs_lock);
   (*comp->active_compressors)++;
   pthread_mutex_unlock(comp->jobs_lock);
@@ -1051,13 +1045,8 @@ void list__compressor_start(Compressor *comp) {
     pthread_cond_broadcast(comp->jobs_cond);
     pthread_mutex_unlock(comp->jobs_lock);
     for(int i = 0; i < work_me_count; i++) {
-      rv = E_OK;
-      rv = buffer__block(work_me[i], 0);
-      if(rv == E_BUFFER_IS_VICTIMIZED) {
-        buffer__unlock(work_me[i]);
-        continue;
-      }
-      rv = buffer__compress(work_me[i], comp->compressor_id, comp->compressor_level);
+      buffer__block(work_me[i], 0);
+      buffer__compress(work_me[i], comp->compressor_id, comp->compressor_level);
       buffer__unblock(work_me[i]);
       work_me[i] = NULL;
     }
@@ -1150,10 +1139,13 @@ void list__show_structure(List *list) {
       out_of_order++;
     if(nearest_neighbor->ref_count != 0)
       non_zero_refs++;
-    if(nearest_neighbor->pending_sweep != 0)
+    if(nearest_neighbor->flags & pending_sweep)
       pending_sweeps++;
   }
   printf("Total number of SkiplistNodes   : %d (%7.4f%% coverage, optimal %8.4f%%, delta %.4f%%)\n", total_skiplistnodes, 100.0 * total_skiplistnodes / (list->raw_count + list->comp_count), 100.0, 100.0 * total_skiplistnodes / (list->raw_count + list->comp_count) - 100.0);
+  printf("\n");
+  printf("Buffer Statistics\n");
+  printf("===================\n");
   printf("Buffers in order from head      : %s\n", out_of_order == 0 ? "yes" : "no");
   printf("Buffers with non-zero ref counts: %d (should be 0)\n", non_zero_refs);
   printf("Buffers pending sweeps          : %d (should be 0)\n", pending_sweeps);

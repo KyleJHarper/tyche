@@ -28,12 +28,9 @@
 extern const int E_OK;
 extern const int E_BAD_CLI;
 extern const int E_BUFFER_NOT_FOUND;
-extern const int E_BUFFER_IS_VICTIMIZED;
 extern const int E_GENERIC;
 
 extern const int BUFFER_OVERHEAD;
-
-extern const int RESTORATION_THRESHOLD;
 
 //extern const int KEEP_DATA;
 extern const int DESTROY_DATA;
@@ -225,18 +222,16 @@ void tests__read(ReadWriteOpts *rwopts) {
       rv = list__search(rwopts->list, &selected, id_to_get, 0);
       if (rv == E_OK)
         break;
-      if (rv == E_BUFFER_NOT_FOUND || rv == E_BUFFER_IS_VICTIMIZED)
+      if (rv == E_BUFFER_NOT_FOUND)
         continue;
       printf("We should never hit this (rv is %d).\n", rv);
     }
     usleep(rand() % rwopts->sleep_delay);  // This just emulates some random time the reader will use this buffer.
     rv = buffer__lock(selected);
-    if (rv == E_OK || rv == E_BUFFER_IS_VICTIMIZED) {
+    if (rv == E_OK) {
       buffer__update_ref(selected, -1);
       buffer__unlock(selected);
     }
-    if (selected->is_ephemeral)
-      buffer__destroy(selected, DESTROY_DATA);
   }
   pthread_exit(0);
 }
@@ -337,7 +332,6 @@ void tests__io(char **pages) {
   Buffer *buf = NULL;
   buffer__initialize(&buf, id_to_get, 0, NULL, pages[id_to_get - 1]);
   printf("Found a buffer and loaded it.  ID is %d, data length is %d.\n", buf->id, buf->data_length);
-  buffer__victimize(buf);
   buffer__destroy(buf, DESTROY_DATA);
 
   printf("Test 'io': All Passed\n");
@@ -464,7 +458,6 @@ void tests__move_buffers(List *list, char **pages) {
   for (uint i = 0; i < opts.page_count; i++) {
     buffer__initialize(&buf, i, 0, NULL, pages[i]);
     total_bytes += buf->data_length + BUFFER_OVERHEAD;
-    buffer__victimize(buf);
     buffer__destroy(buf, DESTROY_DATA);
   }
   /* Now add them all to the list and see if the list size matches. */
@@ -527,17 +520,11 @@ void tests__move_buffers(List *list, char **pages) {
   while(test4_buf->comp_length == 0 && test4_buf != list->head)
     test4_buf = test4_buf->next;
   bufferid_t test4_id = test4_buf->id;
-  int i=0;
-  while(i<=RESTORATION_THRESHOLD*2) {
-    i++;
-    list__search(list, &test4_buf, test4_id, 0);
-    buffer__lock(test4_buf);
-    buffer__update_ref(test4_buf, -1);
-    buffer__unlock(test4_buf);
-    if(test4_buf->is_ephemeral == 0)
-      break;
-    buffer__destroy(test4_buf, DESTROY_DATA);
-  }
+  list__search(list, &test4_buf, test4_id, 0);
+  buffer__lock(test4_buf);
+  buffer__update_ref(test4_buf, -1);
+  buffer__unlock(test4_buf);
+  buffer__destroy(test4_buf, DESTROY_DATA);
   printf("Test 4 Passed:  Can we restore items from the offload list when searching finds them there?\n\n");
 
   printf("Test 'move_buffers': all passed\n");

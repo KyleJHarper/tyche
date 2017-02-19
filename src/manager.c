@@ -271,7 +271,6 @@ void manager__spawn_worker(Manager *mgr) {
       rv = list__add(mgr->list, buf, has_list_pin);
       if (rv == E_BUFFER_ALREADY_EXISTS) {
         // Someone beat us to it.  Just free it and loop around for something else.
-        buf->is_ephemeral = 1;
         buffer__destroy(buf, DESTROY_DATA);
         buf = NULL;
         continue;
@@ -281,8 +280,6 @@ void manager__spawn_worker(Manager *mgr) {
     buffer__lock(buf);
     buffer__update_ref(buf, -1);
     buffer__unlock(buf);
-    if(buf->is_ephemeral == 1)
-      buffer__destroy(buf, DESTROY_DATA);
     buf = NULL;
 
     /* Release the list pin if there are pending writers.  This is a dirty read/race but that's ok for an extra loop */

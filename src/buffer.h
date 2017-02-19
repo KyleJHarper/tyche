@@ -22,6 +22,7 @@
 
 /* Enumerator for bit-flags in the buffer. */
 typedef enum buffer_flags {
+  // These control CoW (copy-on-write) synchronization.
   dirty         = 1 <<  0,
   pending_sweep = 1 <<  1,
   updating      = 1 <<  2,
@@ -40,10 +41,7 @@ struct buffer {
   bufferid_t id;               /* Identifier of the page. Should come from the system providing the data itself (e.g.: inode). */
   uint16_t ref_count;          /* Number of references currently holding this buffer. */
   buffer_flags flags;          /* Holds 32 bit flags.  See enum above for details. */
-  uint8_t pending_sweep;       /* Flag to indicate if this buffer is pending a sweep operation.  Prevents re-victimizing during a sweep. */
   popularity_t popularity;     /* Rapidly decaying counter used for victim selection with clock sweep.  Ceiling of MAX_POPULARITY. */
-  uint8_t victimized;          /* If the buffer has been victimized this is set non-zero.  Prevents incrementing of ref_count. */
-  uint8_t is_ephemeral;        /* Is this buffer part of a list, or an ephemeral copy the caller needs to remove? */
   uint8_t pending_writers;     /* The number of writers (usually blockers) trying to work on the buffer. */
   pthread_mutex_t lock;        /* The primary locking element for individual buffer protection. */
   pthread_cond_t reader_cond;  /* The condition for readers to wait upon. */
@@ -62,12 +60,10 @@ struct buffer {
 
 /* Prototypes */
 int buffer__initialize(Buffer **buf, bufferid_t id, uint32_t size, void *data, char *page_filespec);
-int buffer__update(Buffer *buf, uint32_t size, void *data);
 int buffer__destroy(Buffer *buf, const bool destroy_data);
 int buffer__lock(Buffer *buf);
 void buffer__unlock(Buffer *buf);
 int buffer__update_ref(Buffer *buf, int delta);
-int buffer__victimize(Buffer *buf);
 int buffer__block(Buffer *buf, int pin_threshold);
 int buffer__unblock(Buffer *buf);
 int buffer__compress(Buffer *buf, int compressor_id, int compressor_level);

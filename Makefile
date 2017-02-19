@@ -43,7 +43,7 @@ tyche:
 		$(SRCDIR)/tests.c          \
 		$(SRCDIR)/tyche.c          \
 		-L$(JEMALLOC_DIR) -Wl,-rpath,${JEMALLOC_DIR}/ -ljemalloc -lrt -lm
-	$(CC) $(CFLAGS) -O3 -o $(BINDIR)/tyche \
+	$(CC) $(CFLAGS) -g -pg -O3 -o $(BINDIR)/tyche \
 		$(LZ4_SRCS)                \
 		$(ZLIB_SRCS)               \
 		$(ZSTD_SRCS)               \

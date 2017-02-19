@@ -44,7 +44,7 @@ const int E_BAD_CONF                        =   3;  // User provided a config fi
 /* Warnings and Recoverable Situations */
 const int E_TRY_AGAIN                       = 101;  // Conditions may exist (e.g. threading) requiring a caller the intended action again.
 const int E_BUFFER_NOT_FOUND                = 120;  // When searching for a buffer, throw this when not found.  Let caller handle.
-const int E_BUFFER_IS_VICTIMIZED            = 121;  // When buffers are victimized, callers need to know this.  For ex: lowering ref counts.
+//121 is available
 const int E_BUFFER_ALREADY_EXISTS           = 122;  // When trying to add a buffer to a list, we return this if it already exists.
 const int E_BUFFER_MISSING_DATA             = 123;  // Operations attempting to read data from a buffer might find it has none at the time.
 const int E_BUFFER_ALREADY_COMPRESSED       = 124;  // Not sure this condition ever really exists but we'll set a code.

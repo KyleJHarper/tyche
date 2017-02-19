@@ -99,7 +99,7 @@ struct list {
   pthread_cond_t jobs_parent_cond;               /* The parent condition to signal when the job queue is empty and active compressors is 0. */
   Buffer *comp_victims[VICTIM_BATCH_SIZE];       /* An array of available compressed buffers to remove if comp_size is too high after a sweep. */
   uint16_t comp_victims_index;                   /* The index for the next-available comp buffer to be stored in comp_victims[]. */
-  Buffer *victims[VICTIM_BATCH_SIZE];            /* Items which are victimized and ready for compression. */
+  Buffer *victims[VICTIM_BATCH_SIZE];            /* Items which are ready for compression. */
   uint16_t victims_index;                        /* The tracking index for the next-available victims[] insertion point. */
   uint16_t victims_compressor_index;             /* The index for the next-available buffer to be compressed by a compressor. */
   uint16_t active_compressors;                   /* The number of compressors currently doing work. */

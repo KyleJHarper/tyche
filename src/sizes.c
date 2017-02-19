@@ -127,10 +127,7 @@ int main() {
   printf("Size of Buffer->id                            : %5zu Bytes\n", sizeof((Buffer *)0)->id);
   printf("Size of Buffer->ref_count                     : %5zu Bytes\n", sizeof((Buffer *)0)->ref_count);
   printf("Size of Buffer->flags                         : %5zu Bytes\n", sizeof((Buffer *)0)->flags);
-  printf("Size of Buffer->pending_sweep                 : %5zu Bytes\n", sizeof((Buffer *)0)->pending_sweep);
   printf("Size of Buffer->popularity                    : %5zu Bytes\n", sizeof((Buffer *)0)->popularity);
-  printf("Size of Buffer->victimized                    : %5zu Bytes\n", sizeof((Buffer *)0)->victimized);
-  printf("Size of Buffer->is_ephemeral                  : %5zu Bytes\n", sizeof((Buffer *)0)->is_ephemeral);
   printf("Size of Buffer->pending_writers               : %5zu Bytes\n", sizeof((Buffer *)0)->pending_writers);
   printf("Size of Buffer->lock                          : %5zu Bytes\n", sizeof((Buffer *)0)->lock);
   printf("Size of Buffer->reader_cond                   : %5zu Bytes\n", sizeof((Buffer *)0)->reader_cond);
