@@ -225,7 +225,7 @@ int buffer__unblock(Buffer *buf) {
  * allow us to modify the size(s) in the list accurately.  See buffer__decompress() for the counterpart to this.
  * Caller MUST block (buffer__block/unblock) to drain readers!
  */
-int buffer__compress(Buffer *buf, int compressor_id, int compressor_level) {
+int buffer__compress(Buffer *buf, void **compressed_data, int compressor_id, int compressor_level) {
   // Make sure we're supposed to be here.
   if(compressor_id == NO_COMPRESSOR_ID) {
     buf->comp_length = buf->data_length;
@@ -243,15 +243,14 @@ int buffer__compress(Buffer *buf, int compressor_id, int compressor_level) {
 
   /* Data looks good, time to compress. */
   struct timespec start, end;
-  void *compressed_data = NULL;
   clock_gettime(CLOCK_MONOTONIC, &start);
   // -- Using LZ4
   if(compressor_id == LZ4_COMPRESSOR_ID) {
     int max_compressed_size = LZ4_compressBound(buf->data_length);
-    compressed_data = (void *)malloc(max_compressed_size);
-    if (compressed_data == NULL)
+    *compressed_data = (void *)malloc(max_compressed_size);
+    if (*compressed_data == NULL)
       return E_NO_MEMORY;
-    rv = LZ4_compress_default(buf->data, compressed_data, buf->data_length, max_compressed_size);
+    rv = LZ4_compress_default(buf->data, *compressed_data, buf->data_length, max_compressed_size);
     if (rv < 1)
       return E_BUFFER_COMPRESSION_PROBLEM;
     // LZ4 returns the compressed size in the rv itself, assign it here.
@@ -260,10 +259,10 @@ int buffer__compress(Buffer *buf, int compressor_id, int compressor_level) {
   // -- Using Zlib
   if(compressor_id == ZLIB_COMPRESSOR_ID) {
     uLongf max_compressed_size = compressBound(buf->data_length);
-    compressed_data = (void *)malloc(max_compressed_size);
-    if (compressed_data == NULL)
+    *compressed_data = (void *)malloc(max_compressed_size);
+    if (*compressed_data == NULL)
       return E_NO_MEMORY;
-    rv = compress2(compressed_data, &max_compressed_size, buf->data, buf->data_length, compressor_level);
+    rv = compress2(*compressed_data, &max_compressed_size, buf->data, buf->data_length, compressor_level);
     if (rv != Z_OK)
       return E_BUFFER_COMPRESSION_PROBLEM;
     // Zlib returns the compressed length in max_compressed_size; so assign it here.
@@ -272,22 +271,16 @@ int buffer__compress(Buffer *buf, int compressor_id, int compressor_level) {
   // -- Using Zstd
   if(compressor_id == ZSTD_COMPRESSOR_ID) {
     int max_compressed_size = ZSTD_compressBound(buf->data_length);
-    compressed_data = (void *)malloc(max_compressed_size);
-    if (compressed_data == NULL)
+    *compressed_data = (void *)malloc(max_compressed_size);
+    if (*compressed_data == NULL)
       return E_NO_MEMORY;
-    rv = ZSTD_compress(compressed_data, max_compressed_size, buf->data, buf->data_length, compressor_level);
+    rv = ZSTD_compress(*compressed_data, max_compressed_size, buf->data, buf->data_length, compressor_level);
     if (ZSTD_isError(rv))
       return E_BUFFER_COMPRESSION_PROBLEM;
     // ZSTD returns the compressed size in the rv itself, assign it here.
     buf->comp_length = rv;
   }
 
-  /* Now free buf->data and modify the pointer to look at *compressed_data.  We cannot simply assign the pointer address of
-   * compressed_data to buf->data because it'll waste space.  We need to malloc on the heap, memcpy data, and then free. */
-  free(buf->data);
-  buf->data = (void *)malloc(buf->comp_length);
-  memcpy(buf->data, compressed_data, buf->comp_length);
-  free(compressed_data);
   /* At this point we've compressed the raw data and saved it in a tightly allocated section of heap. */
   clock_gettime(CLOCK_MONOTONIC, &end);
   buf->comp_cost += BILLION *(end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec;
@@ -311,8 +304,11 @@ int buffer__decompress(Buffer *buf, int compressor_id) {
   int rv = E_OK;
   if (buf == NULL)
     return E_BUFFER_NOT_FOUND;
-  if (buf->data == NULL || buf->data_length == 0)
+  if (buf->data == NULL || buf->data_length == 0) {
+printf("Data is %s and length is %u\n", buf->data, buf->data_length);
+exit(9);
     return E_BUFFER_MISSING_DATA;
+  }
   if (buf->comp_length == 0)
     return E_BUFFER_ALREADY_DECOMPRESSED;
 

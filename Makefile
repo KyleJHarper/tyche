@@ -65,6 +65,7 @@ examples:
 		$(ZSTD_SRCS)                \
 		$(SRCDIR)/list.c            \
 		$(SRCDIR)/buffer.c          \
+		$(SRCDIR)/error.c           \
 		-L$(JEMALLOC_DIR) -Wl,-rpath,${JEMALLOC_DIR}/ -ljemalloc -lrt -lm
 
 playground:

@@ -38,6 +38,9 @@ int main() {
   pthread_t threads[thread_count];
   pthread_mutex_init(&mutex, NULL);
 
+  pthread_mutex_lock(&mutex);
+  pthread_mutex_lock(&mutex);
+  printf("This shouldn't happen\n");
   // No protection (single thread)
   clock_gettime(CLOCK_MONOTONIC, &start);
   bob = 0;

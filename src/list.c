@@ -47,6 +47,7 @@ extern const int E_OK;
 extern const int E_GENERIC;
 extern const int E_BUFFER_NOT_FOUND;
 extern const int E_BUFFER_ALREADY_EXISTS;
+extern const int E_BUFFER_ALREADY_COMPRESSED;
 extern const int E_BUFFER_ALREADY_DECOMPRESSED;
 extern const int E_BUFFER_COMPRESSION_PROBLEM;
 extern const int E_BUFFER_MISSING_A_PIN;
@@ -66,7 +67,10 @@ extern const int BUFFER_OVERHEAD;
 extern const int HAVE_PIN;
 extern const int NEED_PIN;
 
-
+// Create a global tracker for compressor IDs.  This is because I can't have circular things:
+// struct list { ... Compressor *compressors; }
+// struct compressor { ... List *list; }
+int next_compress_worker_id = 0;
 
 
 
@@ -165,7 +169,7 @@ int list__initialize(List **list, int compressor_count, int compressor_id, int c
     (*list)->compressor_pool[i].victims_compressor_index = &(*list)->victims_compressor_index;
     (*list)->compressor_pool[i].compressor_id = compressor_id;
     (*list)->compressor_pool[i].compressor_level = compressor_level;
-    pthread_create(&(*list)->compressor_threads[i], NULL, (void*) &list__compressor_start, &(*list)->compressor_pool[i]);
+    pthread_create(&(*list)->compressor_threads[i], NULL, (void*) &list__compressor_start, (*list));
   }
   (*list)->compressor_id = compressor_id;
   (*list)->compressor_level = compressor_level;
@@ -582,7 +586,7 @@ int list__search(List *list, Buffer **buf, bufferid_t id, uint8_t list_pin_statu
   }
 
   /* If the buffer was found and is compressed, we need to decompress it. */
-  if(rv == E_OK && (*buf)->comp_length != 0) {
+  if(rv == E_OK && ((*buf)->flags & compressed)) {
     // The only protection we need is the buffer's lock.  We already have a pin, so it can't poof and there can't be any readers.
     pthread_mutex_lock(&(*buf)->lock);
     // First check above was a dirty read, do it again
@@ -593,6 +597,7 @@ int list__search(List *list, Buffer **buf, bufferid_t id, uint8_t list_pin_statu
       decompress_rv = buffer__decompress(*buf, list->compressor_id);
       if (decompress_rv != E_OK && decompress_rv != E_BUFFER_ALREADY_DECOMPRESSED) {
         pthread_mutex_unlock(&(*buf)->lock);
+printf("why? %d\n", decompress_rv);
         return E_BUFFER_COMPRESSION_PROBLEM;
       }
       // Update counters for the list now by forcibly grabbing the mutex, while still holding our pin.
@@ -604,6 +609,8 @@ int list__search(List *list, Buffer **buf, bufferid_t id, uint8_t list_pin_statu
       list->restorations++;
       pthread_mutex_unlock(&list->lock);
     }
+    // Clear the compressed flag.
+    (*buf)->flags &= (~compressed);
     pthread_mutex_unlock(&(*buf)->lock);
   }
 
@@ -644,7 +651,7 @@ int list__update(List *list, Buffer **callers_buf, void *data, uint32_t size, ui
   pthread_mutex_unlock(&buf->lock);
 
   /* Grab the list lock so we can handle sweeping processes and signaling correctly.  Small race will allow exceeding max, but that's ok. */
-  if(list->current_raw_size > list->max_raw_size) {
+  if((buf->flags & compressing) == 0 && (list->current_raw_size > list->max_raw_size)) {
     // We're about to wake up the sweeper, which means we need to remove this threads list pin if the caller has one.
     if(list_pin_status == HAVE_PIN)
       list__update_ref(list, -1);
@@ -663,6 +670,8 @@ int list__update(List *list, Buffer **callers_buf, void *data, uint32_t size, ui
   if(list_pin_status == NEED_PIN)
     list__update_ref(list, 1);
 
+  // Since we're just updating a buffer in place, we don't need an slstack.  Just find the topmost slnode.
+  SkiplistNode *topmost_slnode = NULL;
   // Build a local stack based on the main list->indexes[] to build breadcrumbs.  Lock each buffer as we descend the skiplist tree.
   // until we have the whole chain.  Since scanning is always down-and-forward we're safe.
   SkiplistNode *slstack[SKIPLIST_MAX];
@@ -672,12 +681,15 @@ int list__update(List *list, Buffer **callers_buf, void *data, uint32_t size, ui
   for(int i = 0; i < SKIPLIST_MAX; i++)
     slstack[i] = list->indexes[i];
 
-  // Traverse the list to find the ideal location at each level.  Since we're searching, use list->levels as the start height.
+  // Traverse the list to find the topmost slnode.
   for(int i = list->levels - 1; i >= 0; i--) {
     for(;;) {
       // Scan forward until we are as close as we can get.
       while(slstack[i]->right != NULL && slstack[i]->right->buffer_id < buf->id)
         slstack[i] = slstack[i]->right;
+      // If the ->right->target matches our buffer, we found the topmost.
+      if(topmost_slnode == NULL && slstack[i]->right != NULL && slstack[i]->right->target == buf)
+        topmost_slnode = slstack[i]->right;
       // Lock the buffer pointed to (if we haven't already) to effectively lock this SkiplistNode so we can test it.
       if(slstack[i]->buffer_id != last_lock_id)
         buffer__lock(slstack[i]->target);
@@ -701,13 +713,12 @@ int list__update(List *list, Buffer **callers_buf, void *data, uint32_t size, ui
   // Now find the nearest neighbor.
   Buffer *nearest_neighbor = slstack[0]->target;
   // Move right in the buffer list.  ->head is always max, so no need to check anything but ->id.
-  while(nearest_neighbor->next->id < buf->id)
+  while(nearest_neighbor->next->id < buf->id) {
     nearest_neighbor = nearest_neighbor->next;
-  // This should NEVER happen because the caller has a pin... but we'll throw it.
-  if(nearest_neighbor->next->id != buf->id) {
-    list__update_ref(list, -1);
-    return E_BUFFER_NOT_FOUND;
   }
+  // This should NEVER happen because the caller has a pin... but we'll throw it.
+  if(nearest_neighbor->next->id != buf->id)
+    exit(3);
 
   // Make a copy of the buffer.  The new buffer will only have ONE (1) ref, the updater!  Remove its pin from buf.
   Buffer *new_buffer;
@@ -716,6 +727,11 @@ int list__update(List *list, Buffer **callers_buf, void *data, uint32_t size, ui
   new_buffer->ref_count = 1;
   new_buffer->data_length = size;
   new_buffer->comp_length = 0;
+  // If the update is working with a compressing buffer, update sizes properly or we'll have skewed accounting.
+  if(buf->flags & compressing) {
+    new_buffer->data_length = buf->data_length;
+    new_buffer->comp_length = size;
+  }
   buffer__lock(buf);
   buffer__update_ref(buf, -1);
   buffer__unlock(buf);
@@ -723,9 +739,11 @@ int list__update(List *list, Buffer **callers_buf, void *data, uint32_t size, ui
   // Update all the linking.  Update the new_buffer first!
   new_buffer->next = buf->next;
   nearest_neighbor->next = new_buffer;
-  for(int i = list->levels - 1; i >= 0; i--) {
-    if(slstack[i]->target == buf)
-      slstack[i]->target = new_buffer;
+  while(topmost_slnode != NULL && topmost_slnode->target == buf) {
+    topmost_slnode->target = new_buffer;
+    if(topmost_slnode->down == NULL)
+      break;
+    topmost_slnode = topmost_slnode->down;
   }
 
   // Unlock any buffers we locked along the way.
@@ -739,10 +757,9 @@ int list__update(List *list, Buffer **callers_buf, void *data, uint32_t size, ui
   // Now that we're done reading buf, we need to change the caller's buf via indirection so they see the new buffer.
   *callers_buf = new_buffer;
 
-  // If everything worked, grab the list lock whenever it's available and increment counters.
-  pthread_mutex_lock(&list->lock);
-  list->current_raw_size = list->current_raw_size - buf->data_length + size;
-  pthread_mutex_unlock(&list->lock);
+  // Check to see if this was just a raw-to-raw update.
+  if((buf->flags & compressing) == 0)
+    __sync_fetch_and_add(&list->current_raw_size, (size - buf->data_length));
 
   // Mark the buffer dirty, remove the updating flag, and throw it in the dirty pool for future eviction.
   pthread_mutex_lock(&buf->lock);
@@ -807,7 +824,7 @@ uint64_t list__sweep(List *list, uint8_t sweep_goal) {
           if(list->clock_hand->flags & pending_sweep)
             continue;
           // If it's compressed, just update the comp_victims array (if possible) and continue.
-          if (list->clock_hand->comp_length > 0) {
+          if (list->clock_hand->flags & compressed) {
             if(list->comp_victims_index < MAX_COMP_VICTIMS) {
               list->comp_victims[list->comp_victims_index] = list->clock_hand;
               list->comp_victims_index++;
@@ -853,6 +870,7 @@ uint64_t list__sweep(List *list, uint8_t sweep_goal) {
   // Finally, remove all pending_sweep flags from the compressed victims now that we're done scanning.
   for(int i=0; i<list->comp_victims_index; i++)
     list->comp_victims[i]->flags &= (~pending_sweep);
+
 
   // We freed up enough raw space.  If comp space is too large start freeing up space.  Update some counters under write protection.
   clock_gettime(CLOCK_MONOTONIC, &start);
@@ -1006,10 +1024,19 @@ int list__destroy(List *list) {
 /* list__compressor_start
  * The is the initialization point for a compressor via pthread_create().
  */
-void list__compressor_start(Compressor *comp) {
+void list__compressor_start(List *list) {
+  // Figure out which index we are.
+  pthread_mutex_lock(&list->lock);
+  int my_worker_id = next_compress_worker_id;
+  Compressor *comp = &list->compressor_pool[my_worker_id];
+  next_compress_worker_id++;
+  pthread_mutex_unlock(&list->lock);
+
   // Try to do work forever.  We need to start off assuming we're an active worker.  It self-regulates within the loop.
   Buffer *work_me[COMPRESSOR_BATCH_SIZE];
+  void *compressed_data = NULL;
   int work_me_count = 0;
+  int rv = E_OK;
   pthread_mutex_lock(comp->jobs_lock);
   (*comp->active_compressors)++;
   pthread_mutex_unlock(comp->jobs_lock);
@@ -1044,10 +1071,34 @@ void list__compressor_start(Compressor *comp) {
     }
     pthread_cond_broadcast(comp->jobs_cond);
     pthread_mutex_unlock(comp->jobs_lock);
+
     for(int i = 0; i < work_me_count; i++) {
-      buffer__block(work_me[i], 0);
-      buffer__compress(work_me[i], comp->compressor_id, comp->compressor_level);
-      buffer__unblock(work_me[i]);
+      // Compress the buffer's data.  Lean on list__update() for the heavy lifting and CoW work.
+      if(work_me[i]->flags & compressed)
+        continue;
+      rv = buffer__compress(work_me[i], &compressed_data, comp->compressor_id, comp->compressor_level);
+if(rv != E_OK) {
+  printf("odd: %d because %u has a data lenght of %u and comp length of %u and compressed flag is %u and compressing is %u\n", rv, work_me[i]->id, work_me[i]->data_length, work_me[i]->comp_length, work_me[i]->flags & compressed, work_me[i]->flags & compressing);
+  exit(4);
+}
+if(compressed_data == NULL) {
+  printf("why is this null?\n");
+  exit(5);
+}
+      if(rv == E_BUFFER_ALREADY_COMPRESSED)
+        continue;
+      // List update requires a pin.
+      buffer__lock(work_me[i]);
+      buffer__update_ref(work_me[i], 1);
+      buffer__unlock(work_me[i]);
+      // We are the only ones who ever set or release the compressing flag so it's ok.
+      work_me[i]->flags |= compressing;
+      rv = list__update(list, &work_me[i], compressed_data, work_me[i]->comp_length, HAVE_PIN);
+      // Removal of the compressing flag doesn't matter because of CoW.  But the new buffer pointed to by work_me[i] should get a flag.
+      work_me[i]->flags |= compressed;
+      buffer__lock(work_me[i]);
+      buffer__update_ref(work_me[i], -1);
+      buffer__unlock(work_me[i]);
       work_me[i] = NULL;
     }
   }
@@ -1088,7 +1139,7 @@ void list__show_structure(List *list) {
   printf(header_format, "", "", "Down", "Target", "[Node Statistics]");
   printf(header_format, "Index", "In Order", "Pointers OK", "IDs Match", "Count      (Coverage :  Optimal :     Delta)");
   printf("%s", header_separator);
-  int count = 0, out_of_order = 0, downs_wrong = 0, downs = 0, non_zero_refs = 0, target_ids_wrong = 0, pending_sweeps = 0;
+  int count = 0, out_of_order = 0, downs_wrong = 0, downs = 0, non_zero_refs = 0, target_ids_wrong = 0, pending_sweeps = 0, compressed = 0, raw = 0;
   int total_skiplistnodes = 0;
   SkiplistNode *slnode = NULL, *sldown = NULL;
   // Step 1:  For each level...
@@ -1103,8 +1154,10 @@ void list__show_structure(List *list) {
       downs = 0;
       sldown = slnode;
       total_skiplistnodes++;
-      if(slnode->buffer_id != slnode->target->id)
+      if(slnode->buffer_id != slnode->target->id) {
         target_ids_wrong++;
+        printf("slnode in index %d has buffer_id of %u but target->id is %u\n", i, slnode->buffer_id, slnode->target->id);
+      }
       // Step 3:  For each slnode looking downward...
       while(sldown->down != NULL) {
         if(sldown->buffer_id == sldown->down->buffer_id)
@@ -1141,6 +1194,10 @@ void list__show_structure(List *list) {
       non_zero_refs++;
     if(nearest_neighbor->flags & pending_sweep)
       pending_sweeps++;
+    if(nearest_neighbor->comp_length == 0)
+      raw++;
+    if(nearest_neighbor->comp_length != 0)
+      compressed++;
   }
   printf("Total number of SkiplistNodes   : %d (%7.4f%% coverage, optimal %8.4f%%, delta %.4f%%)\n", total_skiplistnodes, 100.0 * total_skiplistnodes / (list->raw_count + list->comp_count), 100.0, 100.0 * total_skiplistnodes / (list->raw_count + list->comp_count) - 100.0);
   printf("\n");
@@ -1149,6 +1206,8 @@ void list__show_structure(List *list) {
   printf("Buffers in order from head      : %s\n", out_of_order == 0 ? "yes" : "no");
   printf("Buffers with non-zero ref counts: %d (should be 0)\n", non_zero_refs);
   printf("Buffers pending sweeps          : %d (should be 0)\n", pending_sweeps);
+  printf("Buffers raw (uncompressed)      : %d\n", raw);
+  printf("Buffers compressed              : %d\n", compressed);
   printf("\n");
 }
 
@@ -1249,6 +1308,7 @@ void list__slaughter_house(List *list) {
       if(next->ref_count == 0) {
         current->next = next->next;
         list->cow_current_size = list->cow_current_size - BUFFER_OVERHEAD - next->data_length;
+printf("Murdering cow %u with ref count %u\n", next->id, next->ref_count);
         buffer__destroy(next, true);
       }
       // Ref wasn't zero.  Move forward.

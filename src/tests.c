@@ -425,9 +425,13 @@ void tests__compression() {
   buf->data = (void *)malloc(src_size);
   buf->data_length = src_size;
   memcpy(buf->data, src, buf->data_length);
-  rv = buffer__compress(buf, opts.compressor_id, opts.compressor_level);
+  void *compressed_data = NULL;
+  rv = buffer__compress(buf, &compressed_data, opts.compressor_id, opts.compressor_level);
   if (rv != 0)
     show_error(E_GENERIC, "The rv was non-zero, indicating an error from buffer__compress: %d\n", rv);
+  // Since we're single-threaded in this test, we can just free buf->data and swap compressed data to it.  Normally this requires list__update().
+  free(buf->data);
+  buf->data = compressed_data;
   printf("Compression gave an OK response.    comp_time is %d ns, comp_hits is %d, data_legnth is %d, and comp_length is %d bytes\n", buf->comp_cost, buf->comp_hits, buf->data_length, buf->comp_length);
   memset(new_src, 0, src_size);
   rv = buffer__decompress(buf, opts.compressor_id);

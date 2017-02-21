@@ -98,7 +98,7 @@ struct list {
   pthread_mutex_t jobs_lock;                     /* The mutex that all jobs need to respect. */
   pthread_cond_t jobs_cond;                      /* The shared condition variable for compressors to respect. */
   pthread_cond_t jobs_parent_cond;               /* The parent condition to signal when the job queue is empty and active compressors is 0. */
-  Buffer *comp_victims[VICTIM_BATCH_SIZE];       /* An array of available compressed buffers to remove if comp_size is too high after a sweep. */
+  Buffer *comp_victims[MAX_COMP_VICTIMS];        /* An array of available compressed buffers to remove if comp_size is too high after a sweep. */
   uint16_t comp_victims_index;                   /* The index for the next-available comp buffer to be stored in comp_victims[]. */
   Buffer *victims[VICTIM_BATCH_SIZE];            /* Items which are ready for compression. */
   uint16_t victims_index;                        /* The tracking index for the next-available victims[] insertion point. */
@@ -135,7 +135,7 @@ uint64_t list__sweep(List *list, uint8_t sweep_goal);
 void list__sweeper_start(List *list);
 int list__balance(List *list, uint32_t ratio, uint64_t max_memory);
 int list__destroy(List *list);
-void list__compressor_start(Compressor *comp);
+void list__compressor_start(List *list);
 void list__show_structure(List *list);
 void list__dump_structure(List *list);
 void list__add_cow(List *list, Buffer *buf);

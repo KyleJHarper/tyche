@@ -27,6 +27,9 @@ typedef enum buffer_flags {
   pending_sweep = 1 <<  1,
   updating      = 1 <<  2,
   removing      = 1 <<  3,
+  // When sweeping we need to mark the buffer as 'compressing' so list__update() doesn't flake out (deadlock).
+  compressing   = 1 <<  4,
+  compressed    = 1 <<  5,
 } buffer_flags;
 
 /* Build the typedef and structure for a Buffer */
@@ -66,7 +69,7 @@ void buffer__unlock(Buffer *buf);
 int buffer__update_ref(Buffer *buf, int delta);
 int buffer__block(Buffer *buf, int pin_threshold);
 int buffer__unblock(Buffer *buf);
-int buffer__compress(Buffer *buf, int compressor_id, int compressor_level);
+int buffer__compress(Buffer *buf, void **compressed_data, int compressor_id, int compressor_level);
 int buffer__decompress(Buffer *buf, int compressor_id);
 int buffer__copy(Buffer *src, Buffer *dst, bool copy_data);
 
