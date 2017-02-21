@@ -66,7 +66,6 @@ int buffer__initialize(Buffer **buf, bufferid_t id, uint32_t size, void *data, c
 int buffer__destroy(Buffer *buf, const bool destroy_data);
 int buffer__lock(Buffer *buf);
 void buffer__unlock(Buffer *buf);
-int buffer__update_ref(Buffer *buf, int delta);
 int buffer__block(Buffer *buf, int pin_threshold);
 int buffer__unblock(Buffer *buf);
 int buffer__compress(Buffer *buf, void **compressed_data, int compressor_id, int compressor_level);

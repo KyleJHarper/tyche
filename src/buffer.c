@@ -156,32 +156,9 @@ void buffer__unlock(Buffer *buf) {
 }
 
 
-/* buffer__update_ref
- * Updates a buffer's ref_count.  This will only ever be +1 or -1.  Caller MUST lock the buffer to handle victimization properly.
- *   +1) Adds a pin so the buffer can't be removed or modified.  Blocks if a modification operation is underway.
- *   -1) Anyone can remove their pin.  Upon 0 we notify pending operators (writers).
- */
-int buffer__update_ref(Buffer *buf, int delta) {
-  // Check to see if new refs are supposed to be blocked.  If so, wait.
-  while (delta > 0 && buf->pending_writers != 0)
-    pthread_cond_wait(&buf->reader_cond, &buf->lock);
-
-  // At this point we're safe to modify the ref_count.  When decrementing, check to see if we need to broadcast to anyone.
-  buf->ref_count += delta;
-  if ((buf->pending_writers != 0) && buf->ref_count == 0)
-    pthread_cond_broadcast(&buf->writer_cond);
-
-  // If we're incrementing we need to update popularity too.
-  if (delta > 0 && buf->popularity < MAX_POPULARITY)
-    buf->popularity++;
-
-  return E_OK;
-}
-
-
 /* buffer__block
  * This will simply block the caller until ref_count hits zero, upon which it will continue on while holding the lock to prevent
- * others from doing anything else.  See buffer__update_ref() for how it works together.
+ * others from doing anything else.
  *
  * Caller MUST provide how many list pins (either 0 or 1) to block on!
  * The buffer will REMAIN LOCKED since only a buffer__unblock() from this same thread should ever resume normal flow.
@@ -304,11 +281,8 @@ int buffer__decompress(Buffer *buf, int compressor_id) {
   int rv = E_OK;
   if (buf == NULL)
     return E_BUFFER_NOT_FOUND;
-  if (buf->data == NULL || buf->data_length == 0) {
-printf("Data is %s and length is %u\n", buf->data, buf->data_length);
-exit(9);
+  if (buf->data == NULL || buf->data_length == 0)
     return E_BUFFER_MISSING_DATA;
-  }
   if (buf->comp_length == 0)
     return E_BUFFER_ALREADY_DECOMPRESSED;
 

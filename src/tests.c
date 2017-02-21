@@ -227,11 +227,7 @@ void tests__read(ReadWriteOpts *rwopts) {
       printf("We should never hit this (rv is %d).\n", rv);
     }
     usleep(rand() % rwopts->sleep_delay);  // This just emulates some random time the reader will use this buffer.
-    rv = buffer__lock(selected);
-    if (rv == E_OK) {
-      buffer__update_ref(selected, -1);
-      buffer__unlock(selected);
-    }
+    __sync_fetch_and_add(&selected->ref_count, -1);
   }
   pthread_exit(0);
 }
@@ -296,14 +292,12 @@ void tests__elements(List *list) {
   if (rv != E_OK)
     show_error(E_GENERIC, "Failed to search for a buffer which should have existed.  rv was %d\n", rv);
   printf("Got the buffer, it's ref count is %"PRIu16".\n", buf->ref_count);
-  buffer__lock(buf);
-  buffer__update_ref(buf, -1);
-  buffer__unlock(buf);
+  __sync_fetch_and_add(&buf->ref_count, -1);
 
   // Remove the buffers.
   printf("\nStep 4.  Removing all the dummy buffers.\n");
   while(list->head->next != list->head) {
-    buffer__update_ref(list->head->next, 1);
+    __sync_fetch_and_add(&list->head->next->ref_count, 1);
     list__remove(list, list->head->next);
   }
 
@@ -474,7 +468,7 @@ void tests__move_buffers(List *list, char **pages) {
     show_error(E_GENERIC, "Calculated a total size of %d, and raw_list->current_size is %"PRIu64"\n", total_bytes, list->current_raw_size);
   printf("Total bytes measured in buffers matches the list size, success!\n");
   while(list->head->next != list->head) {
-    buffer__update_ref(list->head->next, 1);
+    __sync_fetch_and_add(&list->head->next->ref_count, 1);
     list__remove(list, list->head->next);
   }
   printf("Test 1 Passed:  Does the list size match the known size of data read from disk?\n\n");
@@ -490,7 +484,7 @@ void tests__move_buffers(List *list, char **pages) {
   }
   printf("All done.  Raw list has %d buffers using %"PRIu64" bytes.  Comp list has %d buffers using %"PRIu64" bytes.\n", list->raw_count, list->current_raw_size, list->comp_count, list->current_comp_size);
   while(list->head->next != list->head) {
-    buffer__update_ref(list->head->next, 1);
+    __sync_fetch_and_add(&list->head->next->ref_count, 1);
     list__remove(list, list->head->next);
   }
   printf("Test 2 Passed:  Will items go into the compressed space if necessary?\n\n");
@@ -506,7 +500,7 @@ void tests__move_buffers(List *list, char **pages) {
   }
   printf("All done.  Raw list has %d buffers using %"PRIu64" bytes.  Comp list has %d buffers using %"PRIu64" bytes.\n", list->raw_count, list->current_raw_size, list->comp_count, list->current_comp_size);
   while(list->head->next != list->head) {
-    buffer__update_ref(list->head->next, 1);
+    __sync_fetch_and_add(&list->head->next->ref_count, 1);
     list__remove(list, list->head->next);
   }
   printf("Test 3 Passed:  Will running out of comp space remove buffers when swept?\n\n");
@@ -525,9 +519,7 @@ void tests__move_buffers(List *list, char **pages) {
     test4_buf = test4_buf->next;
   bufferid_t test4_id = test4_buf->id;
   list__search(list, &test4_buf, test4_id, 0);
-  buffer__lock(test4_buf);
-  buffer__update_ref(test4_buf, -1);
-  buffer__unlock(test4_buf);
+  __sync_fetch_and_add(&test4_buf->ref_count, -1);
   buffer__destroy(test4_buf, DESTROY_DATA);
   printf("Test 4 Passed:  Can we restore items from the offload list when searching finds them there?\n\n");
 

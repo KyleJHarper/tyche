@@ -144,14 +144,14 @@ int main() {
 
 
   printf("\n\nQuick Summary Table\n");
-  printf("+---------------+-------------+\n");
-  printf("| Manager       | %5zu Bytes |\n", sizeof(Manager));
-  printf("| Worker        | %5zu Bytes |\n", sizeof(Worker));
-  printf("| List          | %5zu Bytes |\n", sizeof(List));
-  printf("| Compressor    | %5zu Bytes |\n", sizeof(Compressor));
-  printf("| SkiplistNode  | %5zu Bytes |\n", sizeof(SkiplistNode));
-  printf("| Buffer        | %5zu Bytes |\n", sizeof(Buffer));
-  printf("+---------------+-------------+\n");
+  printf("+---------------+---------------+\n");
+  printf("| Manager       | %7zu Bytes |\n", sizeof(Manager));
+  printf("| Worker        | %7zu Bytes |\n", sizeof(Worker));
+  printf("| List          | %7zu Bytes |\n", sizeof(List));
+  printf("| Compressor    | %7zu Bytes |\n", sizeof(Compressor));
+  printf("| SkiplistNode  | %7zu Bytes |\n", sizeof(SkiplistNode));
+  printf("| Buffer        | %7zu Bytes |\n", sizeof(Buffer));
+  printf("+---------------+---------------+\n");
   printf("(Note: Size may be slightly off due to alignment and/or pointers-to-alloc'd spaces.)\n");
 
 

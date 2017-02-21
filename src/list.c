@@ -401,7 +401,7 @@ int list__remove(List *list, Buffer *buf) {
     pthread_mutex_unlock(&buf->lock);
     while(buf->flags & removing); //spin
     // Since another thread was already removing it, it's now in the slaughter house.  Just remove our pin so it'll flush later.
-    buffer__update_ref(buf, -1);
+    __sync_fetch_and_add(&buf->ref_count, -1);
     return E_OK;
   }
   // Looks like no one else beat us to the update.  Flip some bits and have a party.  We'll mark it dirty after we're done.
@@ -505,9 +505,7 @@ int list__remove(List *list, Buffer *buf) {
   buf->flags &= (~removing);
   pthread_mutex_unlock(&buf->lock);
   // Remove the pin the caller came in with.
-  buffer__lock(buf);
-  buffer__update_ref(buf, -1);
-  buffer__unlock(buf);
+  __sync_fetch_and_add(&buf->ref_count, -1);
   list__add_cow(list, buf);
   list__update_ref(list, -1);
 
@@ -551,14 +549,9 @@ int list__search(List *list, Buffer **buf, bufferid_t id, uint8_t list_pin_statu
     }
     // If the node matches, we're done!  Try to update the ref and assign everything appropriately.
     if(slnode->buffer_id == id) {
-      rv = buffer__lock(slnode->target);
-      if(rv == E_OK) {
-        *buf = slnode->target;
-        buffer__update_ref(*buf, 1);
-      }
-      // If E_OK we still need to unlock it.
-      if(rv == E_OK)
-        buffer__unlock(slnode->target);
+      *buf = slnode->target;
+      __sync_fetch_and_add(&(*buf)->ref_count, 1);
+      rv = E_OK;
     }
     // If we can't move down, leave.
     if(slnode->down == NULL)
@@ -573,15 +566,10 @@ int list__search(List *list, Buffer **buf, bufferid_t id, uint8_t list_pin_statu
       nearest_neighbor = nearest_neighbor->next;
     // If we got a match, score.  Our nearest_neighbor is now the match.  Update ref and assign things.
     if(nearest_neighbor->id == id) {
-      rv = buffer__lock(nearest_neighbor);
-      if(rv == E_OK) {
-        // Assign it.
-        *buf = nearest_neighbor;
-        buffer__update_ref(*buf, 1);
-      }
-      // If E_OK we still need to unlock it.
-      if(rv == E_OK)
-        buffer__unlock(nearest_neighbor);
+      // Assign it.
+      *buf = nearest_neighbor;
+      __sync_fetch_and_add(&(*buf)->ref_count, 1);
+      rv = E_OK;
     }
   }
 
@@ -597,7 +585,6 @@ int list__search(List *list, Buffer **buf, bufferid_t id, uint8_t list_pin_statu
       decompress_rv = buffer__decompress(*buf, list->compressor_id);
       if (decompress_rv != E_OK && decompress_rv != E_BUFFER_ALREADY_DECOMPRESSED) {
         pthread_mutex_unlock(&(*buf)->lock);
-printf("why? %d\n", decompress_rv);
         return E_BUFFER_COMPRESSION_PROBLEM;
       }
       // Update counters for the list now by forcibly grabbing the mutex, while still holding our pin.
@@ -732,9 +719,7 @@ int list__update(List *list, Buffer **callers_buf, void *data, uint32_t size, ui
     new_buffer->data_length = buf->data_length;
     new_buffer->comp_length = size;
   }
-  buffer__lock(buf);
-  buffer__update_ref(buf, -1);
-  buffer__unlock(buf);
+  __sync_fetch_and_add(&buf->ref_count, -1);
 
   // Update all the linking.  Update the new_buffer first!
   new_buffer->next = buf->next;
@@ -885,9 +870,7 @@ uint64_t list__sweep(List *list, uint8_t sweep_goal) {
       if(list->comp_victims[i]->comp_length == 0)
         continue;
       // We add a pin because list__remove requires it (buffers usually come list__search).
-      buffer__lock(list->comp_victims[i]);
-      buffer__update_ref(list->comp_victims[i], 1);
-      buffer__unlock(list->comp_victims[i]);
+      __sync_fetch_and_add(&list->comp_victims[i]->ref_count, 1);
       list__remove(list, list->comp_victims[i]);
       list->comp_victims[i] = NULL;
     }
@@ -896,9 +879,7 @@ uint64_t list__sweep(List *list, uint8_t sweep_goal) {
       while(1) {
         list->clock_hand = list->clock_hand->next;
         if(list->clock_hand->popularity == 0 && list->clock_hand != list->head && list->clock_hand->comp_length != 0) {
-          buffer__lock(list->clock_hand);
-          buffer__update_ref(list->clock_hand, 1);
-          buffer__unlock(list->clock_hand);
+          __sync_fetch_and_add(&list->clock_hand->ref_count, 1);
           list__remove(list, list->clock_hand);
           break;
         }
@@ -984,12 +965,12 @@ int list__destroy(List *list) {
 
   // Destroy all the buffers, including head.
   while(list->head->next != list->head) {
-    buffer__update_ref(list->head->next, 1);
+    __sync_fetch_and_add(&list->head->next->ref_count, 1);
     rv = list__remove(list, list->head->next);
     if(rv != E_OK)
       return E_LIST_REMOVAL;
   }
-  buffer__update_ref(list->head->next, 1);
+  __sync_fetch_and_add(&list->head->next->ref_count, 1);
   list__remove(list, list->head);
 
   // Nuke all the skiplist items.
@@ -1077,28 +1058,16 @@ void list__compressor_start(List *list) {
       if(work_me[i]->flags & compressed)
         continue;
       rv = buffer__compress(work_me[i], &compressed_data, comp->compressor_id, comp->compressor_level);
-if(rv != E_OK) {
-  printf("odd: %d because %u has a data lenght of %u and comp length of %u and compressed flag is %u and compressing is %u\n", rv, work_me[i]->id, work_me[i]->data_length, work_me[i]->comp_length, work_me[i]->flags & compressed, work_me[i]->flags & compressing);
-  exit(4);
-}
-if(compressed_data == NULL) {
-  printf("why is this null?\n");
-  exit(5);
-}
       if(rv == E_BUFFER_ALREADY_COMPRESSED)
         continue;
       // List update requires a pin.
-      buffer__lock(work_me[i]);
-      buffer__update_ref(work_me[i], 1);
-      buffer__unlock(work_me[i]);
+      __sync_fetch_and_add(&work_me[i]->ref_count, 1);
       // We are the only ones who ever set or release the compressing flag so it's ok.
       work_me[i]->flags |= compressing;
       rv = list__update(list, &work_me[i], compressed_data, work_me[i]->comp_length, HAVE_PIN);
       // Removal of the compressing flag doesn't matter because of CoW.  But the new buffer pointed to by work_me[i] should get a flag.
       work_me[i]->flags |= compressed;
-      buffer__lock(work_me[i]);
-      buffer__update_ref(work_me[i], -1);
-      buffer__unlock(work_me[i]);
+      __sync_fetch_and_add(&work_me[i]->ref_count, -1);
       work_me[i] = NULL;
     }
   }
@@ -1308,7 +1277,6 @@ void list__slaughter_house(List *list) {
       if(next->ref_count == 0) {
         current->next = next->next;
         list->cow_current_size = list->cow_current_size - BUFFER_OVERHEAD - next->data_length;
-printf("Murdering cow %u with ref count %u\n", next->id, next->ref_count);
         buffer__destroy(next, true);
       }
       // Ref wasn't zero.  Move forward.

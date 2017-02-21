@@ -267,7 +267,7 @@ void manager__spawn_worker(Manager *mgr) {
       buf_rv = buffer__initialize(&buf, id_to_get, 0, NULL, mgr->pages[id_to_get]);
       if (buf_rv != E_OK)
         show_error(buf_rv, "Unable to get a buffer.  RV is %d.", buf_rv);
-      buffer__update_ref(buf, 1);
+      __sync_fetch_and_add(&buf->ref_count, 1);
       rv = list__add(mgr->list, buf, has_list_pin);
       if (rv == E_BUFFER_ALREADY_EXISTS) {
         // Someone beat us to it.  Just free it and loop around for something else.
@@ -277,9 +277,7 @@ void manager__spawn_worker(Manager *mgr) {
       }
     }
     /* Now we should have a valid buffer.  Hooray.  Mission accomplished. */
-    buffer__lock(buf);
-    buffer__update_ref(buf, -1);
-    buffer__unlock(buf);
+    __sync_fetch_and_add(&buf->ref_count, -1);
     buf = NULL;
 
     /* Release the list pin if there are pending writers.  This is a dirty read/race but that's ok for an extra loop */
