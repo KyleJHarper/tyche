@@ -87,6 +87,7 @@ struct list {
   uint64_t sweep_cost;                           /* Time in ns spent sweeping lists. */
   uint64_t restorations;                         /* Number of buffers restored to the raw list (compressed list doesn't use this). */
   uint64_t compressions;                         /* Buffers compressed during the life of the list. */
+  uint64_t evictions;                            /* Buffers that were evicted from the list entirely. */
 
   /* Management of Nodes for Skiplist and Buffers */
   Buffer *head;                                  /* The head of the list of buffers. */

@@ -65,10 +65,6 @@ extern const int E_NO_MEMORY;
 extern const int E_BAD_ARGS;
 
 
-/* Store the overhead of a Buffer for others to use for calculations.  Note this doesn't count the SkipListNode (24 bytes), probabilistically. */
-const int BUFFER_OVERHEAD = sizeof(Buffer);
-
-
 
 
 /* buffer__initialize

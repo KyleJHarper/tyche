@@ -60,8 +60,8 @@ extern const int E_BAD_ARGS;
 // Warnings
 
 
-/* We need some information from the buffer */
-extern const int BUFFER_OVERHEAD;
+/* Store the overhead of a Buffer.  Since our skiplist will have 1 node per buffer (probabilistically) we include that. */
+const int BUFFER_OVERHEAD = sizeof(Buffer) + sizeof(SkiplistNode);
 
 /* We use the have/don't have data flags. */
 extern const int HAVE_PIN;
@@ -121,6 +121,7 @@ int list__initialize(List **list, int compressor_count, int compressor_id, int c
   (*list)->sweep_cost = 0;
   (*list)->restorations = 0;
   (*list)->compressions = 0;
+  (*list)->evictions = 0;
 
   /* Head Nodes of the List and Skiplist (Index). Make the Buffer list head a dummy buffer. */
   rv = buffer__initialize(&(*list)->head, BUFFER_ID_MAX, 0, (void*)0, NULL);
@@ -180,7 +181,7 @@ int list__initialize(List **list, int compressor_count, int compressor_id, int c
   pthread_mutex_init(&(*list)->cow_lock, NULL);
   pthread_cond_init(&(*list)->cow_killer_cond, NULL);
   pthread_cond_init(&(*list)->cow_waiter_cond, NULL);
-  buffer__initialize(&(*list)->cow_head, BUFFER_ID_MAX, 0, (void*)0, NULL);
+  buffer__initialize(&(*list)->cow_head, BUFFER_ID_MAX, 0, NULL, NULL);
   (*list)->cow_head->next = (*list)->cow_head;
   pthread_create(&(*list)->slaughter_house_thread, NULL, (void *) &list__slaughter_house, (*list));
 
@@ -456,7 +457,7 @@ int list__remove(List *list, Buffer *buf) {
   // Move right in the buffer list.  ->head is always max, so no need to check anything but ->id.
   while(nearest_neighbor->next->id < buf->id)
     nearest_neighbor = nearest_neighbor->next;
-  // This should NEVER happen because the caller has a pin... but we'll throw it.
+  // This should NEVER happen because the caller has a pin... but we'll throw it for debugging.
   if(nearest_neighbor->next->id != buf->id) {
     list__update_ref(list, -1);
     return E_BUFFER_NOT_FOUND;
@@ -466,18 +467,14 @@ int list__remove(List *list, Buffer *buf) {
   rv = E_OK;
   const uint32_t BUFFER_SIZE = BUFFER_OVERHEAD + (buf->comp_length == 0 ? buf->data_length : buf->comp_length);
   // Update the list metrics and move the clock hand if it's pointing at the same address as buf.
-  if(list->clock_hand == buf) {
-    //TODO This should be a CAS
-    pthread_mutex_lock(&list->lock);
-    list->clock_hand = list->clock_hand->next;
-    pthread_mutex_unlock(&list->lock);
-  }
-  if(buf->comp_length == 0) {
-    __sync_fetch_and_sub(&list->current_raw_size, BUFFER_SIZE);
-    __sync_fetch_and_sub(&list->raw_count, 1);
-  } else {
+  if(list->clock_hand == buf)
+    list->clock_hand = buf->next;
+  if(buf->flags & compressed) {
     __sync_fetch_and_sub(&list->current_comp_size, BUFFER_SIZE);
     __sync_fetch_and_sub(&list->comp_count, 1);
+  } else {
+    __sync_fetch_and_sub(&list->current_raw_size, BUFFER_SIZE);
+    __sync_fetch_and_sub(&list->raw_count, 1);
   }
 
   // Now change our ->next pointer for nearest_neighbor to drop this from the list, then destroy the slnodes.
@@ -867,20 +864,22 @@ uint64_t list__sweep(List *list, uint8_t sweep_goal) {
   list->current_comp_size += comp_bytes_added;
   if(list->current_comp_size > list->max_comp_size) {
     for(int i=0; i<list->comp_victims_index && list->current_comp_size > list->max_comp_size; i++) {
-      if(list->comp_victims[i]->comp_length == 0)
+      if((list->comp_victims[i]->flags & compressed) == 0)
         continue;
       // We add a pin because list__remove requires it (buffers usually come list__search).
       __sync_fetch_and_add(&list->comp_victims[i]->ref_count, 1);
       list__remove(list, list->comp_victims[i]);
+      list->evictions++;
       list->comp_victims[i] = NULL;
     }
     // If we still haven't freed enough comp space, start clockhand motion again and take more comp victims.
     while(list->current_comp_size > list->max_comp_size) {
       while(1) {
         list->clock_hand = list->clock_hand->next;
-        if(list->clock_hand->popularity == 0 && list->clock_hand != list->head && list->clock_hand->comp_length != 0) {
+        if(list->clock_hand->popularity == 0 && list->clock_hand != list->head && (list->clock_hand->flags & compressed)) {
           __sync_fetch_and_add(&list->clock_hand->ref_count, 1);
           list__remove(list, list->clock_hand);
+          list->evictions++;
           break;
         }
         list->clock_hand->popularity >>= 1;
@@ -1090,6 +1089,7 @@ void list__show_structure(List *list) {
   /* Locking, Reference Counters, and Similar Members */
   printf("Reference pins  : %"PRIu32".  This should be 0 at program end.\n", list->ref_count);
   printf("Pending writers : %"PRIu8".  This should be 0 at program end.\n", list->pending_writers);
+  printf("CoW space used  : %"PRIu64".  This should be 0 at program end.\n", list->cow_current_size);
   /* Management and Administration Members */
   printf("Sweep goal      : %"PRIu8"%%.\n", list->sweep_goal);
   printf("Sweeps performed: %'"PRIu64".\n", list->sweeps);
@@ -1175,8 +1175,9 @@ void list__show_structure(List *list) {
   printf("Buffers in order from head      : %s\n", out_of_order == 0 ? "yes" : "no");
   printf("Buffers with non-zero ref counts: %d (should be 0)\n", non_zero_refs);
   printf("Buffers pending sweeps          : %d (should be 0)\n", pending_sweeps);
-  printf("Buffers raw (uncompressed)      : %d\n", raw);
-  printf("Buffers compressed              : %d\n", compressed);
+  printf("Buffers raw (uncompressed)      : %'d\n", raw);
+  printf("Buffers compressed              : %'d\n", compressed);
+  printf("Buffers evicted                 : %'"PRIu64"\n", list->evictions);
   printf("\n");
 }
 
@@ -1249,7 +1250,7 @@ void list__add_cow(List *list, Buffer *buf) {
   // Space should be free, add our buffer.
   buf->next = list->cow_head->next;
   list->cow_head->next = buf;
-  list->cow_current_size += BUFFER_OVERHEAD + buf->data_length;
+  list->cow_current_size += BUFFER_OVERHEAD + (buf->comp_length == 0 ? buf->data_length : buf->comp_length);
   pthread_mutex_unlock(&list->cow_lock);
   return;
 }
@@ -1276,12 +1277,12 @@ void list__slaughter_house(List *list) {
       // If the ref is zero, unlink it and destroy it.
       if(next->ref_count == 0) {
         current->next = next->next;
-        list->cow_current_size = list->cow_current_size - BUFFER_OVERHEAD - next->data_length;
+        list->cow_current_size = list->cow_current_size - BUFFER_OVERHEAD - (next->comp_length == 0 ? next->data_length : next->comp_length);
         buffer__destroy(next, true);
       }
       // Ref wasn't zero.  Move forward.
       current = current->next;
-      next = current->next->next;
+      next = current->next;
     }
 
     /* Now go to sleep until someone wakes us up or enough time has passed. */
