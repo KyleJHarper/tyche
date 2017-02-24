@@ -739,9 +739,10 @@ int list__update(List *list, Buffer **callers_buf, void *data, uint32_t size, ui
   // Now that we're done reading buf, we need to change the caller's buf via indirection so they see the new buffer.
   *callers_buf = new_buffer;
 
-  // Check to see if this was just a raw-to-raw update.
+  // Check to see if this was just a raw-to-raw update.  Compressors update list size on their own.
   if((buf->flags & compressing) == 0)
-    __sync_fetch_and_add(&list->current_raw_size, (size - buf->data_length));
+    // Coerce to allow a negative value to the atomic; otherwise an underflow can be sent.
+    __sync_fetch_and_add(&list->current_raw_size, (int)(size - buf->data_length));
 
   // Mark the buffer dirty, remove the updating flag, and throw it in the dirty pool for future eviction.
   pthread_mutex_lock(&buf->lock);
