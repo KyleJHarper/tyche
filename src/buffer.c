@@ -35,9 +35,6 @@ const Buffer BUFFER_INITIALIZER = {
   .flags = 0,
   .popularity = 0,
   .lock = PTHREAD_MUTEX_INITIALIZER,
-  .reader_cond = PTHREAD_COND_INITIALIZER,
-  .writer_cond = PTHREAD_COND_INITIALIZER,
-  .pending_writers = 0,
   /* Cost values for each buffer when pulled from disk or compressed/decompressed. */
   .comp_cost = 0,
   .comp_hits = 0,
@@ -152,42 +149,11 @@ void buffer__unlock(Buffer *buf) {
 }
 
 
-/* buffer__block
- * This will simply block the caller until ref_count hits zero, upon which it will continue on while holding the lock to prevent
- * others from doing anything else.
- *
- * Caller MUST provide how many list pins (either 0 or 1) to block on!
- * The buffer will REMAIN LOCKED since only a buffer__unblock() from this same thread should ever resume normal flow.
+/* buffer__release_pin
+ * Pulls out a pin, atomically, for a buffer.
  */
-int buffer__block(Buffer *buf, int pin_threshold) {
-//TODO  Actually, buffer__block should always use a pin_threshold of 1... the blocker!
-//TODO  If possible... just get rid of buffer blocking altogether... we'll see.  If we don't, we can't get rid of reader/writer conditions :(
-  // Lock the buffer.
-  buffer__lock(buf);
-  buf->pending_writers++;
-  while(buf->ref_count != pin_threshold) {
-    // This is dumb... but if pin threshold is non-zero, remove our pin before waiting, then add it back.  Otherwise we never wake up.
-    if(pin_threshold != 0)
-      buf->ref_count--;
-    pthread_cond_wait(&buf->writer_cond, &buf->lock);
-    if(pin_threshold != 0)
-      buf->ref_count++;
-  }
-  return E_OK;
-}
-
-
-/* buffer__unblock
- * Removes the blocking status from the buffer and starts a cascade of signals to others if pending_writers is 0.
- * Caller MUST have this buffer locked from buffer__block() already!
- */
-int buffer__unblock(Buffer *buf) {
-  // We don't need to do any checking because a block call previously has already protected us.  We just need to signal later.
-  buf->pending_writers--;
-  if(buf->pending_writers == 0)
-    pthread_cond_broadcast(&buf->reader_cond);
-  buffer__unlock(buf);
-  return E_OK;
+void buffer__release_pin(Buffer *buf) {
+  __sync_fetch_and_add(&buf->ref_count, -1);
 }
 
 

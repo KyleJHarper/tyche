@@ -8,7 +8,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>   // For memcpy()
+#include <string.h>   // For memcpy() below, just for this example.
 #include "list.h"     // Include this.  Gives you access to List structures.
 #include "buffer.h"   // Include this.  Gives you access to Buffer structures.
 #include "globals.h"  // Include this.  Gives you access to error codes and constants.
@@ -51,9 +51,8 @@ int main() {
   }
   printf("Got my initialized list.  Compressor threads and management threads are now running.\n");
 
-
   // Step 2)
-  // Add your data to a buffer and store that in your list.
+  // Initialize a buffer object with your data attached, then add it to the list.
   buffer__initialize(&buf, your_data_id, your_data_size, your_data, NULL);
   rv = list__add(list, buf, NEED_PIN);
   if (rv != E_OK) {
@@ -65,7 +64,7 @@ int main() {
 
 
   // Step 3)
-  // Search for some data.  We'll set our buf pointer to NULL to prove this works.
+  // Search for the data we just stored.  We'll set our buf pointer to NULL to prove this works.
   buf = NULL;
   rv = list__search(list, &buf, your_data_id, NEED_PIN);
   if (rv != E_OK) {
@@ -73,38 +72,39 @@ int main() {
     // It's common to get E_BUFFER_NOT_FOUND if it doesn't exist.
     exit(rv);
   }
-  // Hooray, we found the data.  *found_data now has a COPY of your original data.
   printf("Yay!  We found our data inside the list:\n    %s\n", (char *)buf->data);
-  // Searching gives a "pin" on the buffer that prevents other threads from deleting it from under it.
+  // Searching gives a "pin" on the buffer that prevents other threads from changing or deleting it.  We also use CoW
+  // (Copy-on-Write) so your threads won't block except in extreme cases of resource exhaustion.
+  // NOTE:  Normally you call buffer__remove_pin(buf) to release your pin; but we're updating this buffer below, which requires a pin anyway.
 
 
   // Step 4)
   // Update the data by assigning your new value to it.  A Copy-on-Write process will protect the original Buffer for other threads.
-  // In other words, you MUST find and keep your pin on a buffer THEN call list__update().
+  // You MUST find (list__searcch()) and keep your pin on a buffer THEN call list__update().
   int new_data_size = 60;
   char *new_data = malloc(new_data_size);
   memcpy(new_data, "This is your new data that you want assigned to your buffer.", new_data_size);
   rv = list__update(list, &buf, new_data, new_data_size, NEED_PIN);
   if (rv != E_OK) {
-    // The update failed.  Possibly because the buffer wasn't in the list.  Handle this appropriately in your app.
+    // The update failed.  Possibly because the buffer is 'dirty' from another thread updating it before us.  Code for that is E_BUFFER_IS_DIRTY.
     exit(rv);
   }
   printf("Data updated, it's now %"PRIu32" bytes long.\n    %s\n", buf->data_length, (char *)buf->data);
   printf("Our list now has %"PRIu32" raw and %"PRIu32" compressed buffers, using %"PRIu64" bytes.\n", list->raw_count, list->comp_count, list->current_raw_size + list->current_comp_size);
-  // Normally when you're done with a buffer, you remove your pin on it.  But we're removing it below, which requires one:
-  //   buffer__update_ref(buf, -1);
+  // Once again we would normally release our pin with buffer__remove_pin(buf), but in this example we're removing it below, which requires a pin again.
 
 
   // Step 5)
-  // Remove the buffer from the list now that we're done with it.  It's common for people to call list__remove() blindly because
-  // their app can't be sure what's still in the list at any given time.  If the buffer is NOT FOUND, that's almost always OK; the
-  // calling app simply wants to make sure it doesn't exist.
+  // Remove the buffer from the list explicitly.  Normally you don't do this (you'd write-through to the disk after list__update()
+  // of course)... but we'll show you how.  Removal is also a non-blocking operation.
   rv = list__remove(list, buf);
   if (rv != E_OK && rv != E_BUFFER_NOT_FOUND) {
     printf("Failed to remove the buffer.\n");
     exit(rv);
   }
   printf("Removed the buffer, list now has %"PRIu32" raw and %"PRIu32" compressed buffers, using %"PRIu64" bytes.\n", list->raw_count, list->comp_count, list->current_raw_size + list->current_comp_size);
+  // Removal automatically releases THIS thread's pin to avoid a deadlock.  No need to call buffer__release_pin().
+
 
   // Step 6)
   // Our application is done, yay!  You should always destroy the list explicitly.

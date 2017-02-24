@@ -30,7 +30,7 @@ sizes:
 	$(CC) $(CFLAGS) -O3 -o $(BINDIR)/sizes $(SRCDIR)/sizes.c
 
 tyche:
-	$(CC) $(CFLAGS) -g -pg -O3 -o $(BINDIR)/tyche_debug \
+	$(CC) $(CFLAGS) -g -pg -Og -o $(BINDIR)/tyche_debug \
 		$(LZ4_SRCS)                \
 		$(ZLIB_SRCS)               \
 		$(ZSTD_SRCS)               \

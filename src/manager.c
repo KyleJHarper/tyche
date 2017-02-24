@@ -277,7 +277,7 @@ void manager__spawn_worker(Manager *mgr) {
       }
     }
     /* Now we should have a valid buffer.  Hooray.  Mission accomplished. */
-    __sync_fetch_and_add(&buf->ref_count, -1);
+    buffer__release_pin(buf);
     buf = NULL;
 
     /* Release the list pin if there are pending writers.  This is a dirty read/race but that's ok for an extra loop */
