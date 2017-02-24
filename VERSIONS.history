@@ -1,5 +1,14 @@
 Contains a simple note for each tagged release.  We will try to follow SEMVER.  Be aware, all 0.x.y releases are developmental and are NOT guaranteed compatible according to SEMVER.  Major version 0 should go away after major release 1... as will this notice probably.
 
+0.0.16 (2017-02-23)
+- Added support for update operations to complete the CRUD (Create, Read, Update, Delete) operations suite.
+- Added a Copy-on-Write subsystem with a manager to reduce/eliminate blocking for update and delete operations.  Drastically improved performance for readers and reduced sweep cost.
+- Converted blocking operations to non-blocking, making the ACCRS API virtually lock-free.
+- Lock-free design allowed me to remove buffer conditions, reducing buffer overhead by nearly 50% (down to ~88 bytes).
+- Added a flagging system (bit flags + enum) to save space and hopefully improve performance.
+- Pulled apart the "spaghetti-string" nature of the API with tyche.  This subsequently solved several core issues for portability but also paved the way for better benchmarking.
+- Performed a few hours of testing to find major bottlenecks... so far nothing major but we did solve deadlocks and a segfault.  Performance still has a long way to go, particularly with CPU cache faults (how ironic...).
+
 0.0.15 (2017-01-29)
 - Added support for Zstd compression.
 
