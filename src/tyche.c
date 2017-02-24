@@ -25,7 +25,6 @@
 #include "options.h"
 #include "manager.h"
 #include "globals.h"
-#include "tyche.h"
 
 /* Make the options stuct shared. */
 Options opts;

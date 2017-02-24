@@ -17,7 +17,6 @@
 
 /* Globals to help track limits. */
 #define MAX_POPULARITY UINT8_MAX
-#define MAX_GENERATION UINT8_MAX
 #define BUFFER_ID_MAX  UINT32_MAX
 
 /* Enumerator for bit-flags in the buffer. */
@@ -60,13 +59,13 @@ struct buffer {
 
 /* Prototypes */
 int buffer__initialize(Buffer **buf, bufferid_t id, uint32_t size, void *data, char *page_filespec);
-int buffer__destroy(Buffer *buf, const bool destroy_data);
-int buffer__lock(Buffer *buf);
+void buffer__destroy(Buffer *buf, const bool destroy_data);
+void buffer__lock(Buffer *buf);
 void buffer__unlock(Buffer *buf);
 void buffer__release_pin(Buffer *buf);
 int buffer__compress(Buffer *buf, void **compressed_data, int compressor_id, int compressor_level);
 int buffer__decompress(Buffer *buf, int compressor_id);
-int buffer__copy(Buffer *src, Buffer *dst, bool copy_data);
+void buffer__copy(Buffer *src, Buffer *dst, bool copy_data);
 
 
 #endif /* SRC_BUFFER_H_ */

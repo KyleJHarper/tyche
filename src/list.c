@@ -5,7 +5,6 @@
  *      Author: Kyle Harper
  * Description: Builds the buffer lists and functions for them.
  *
- *              Clock sweep is the method this implementation uses for victim selection in the raw buffer list.
  */
 
 /* Include necessary headers here. */
@@ -16,7 +15,6 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdbool.h> /* For bool types. */
-#include <assert.h>
 #include <inttypes.h>
 #include <time.h>      /* for clock_gettime() */
 #include <math.h>
@@ -26,8 +24,6 @@
 #include "list.h"
 
 
-#include <locale.h> /* Remove me after debugging... probably */
-#include <unistd.h> //Also remove after debug.
 
 
 /* We need to know what one billion is for clock timing. */
@@ -68,8 +64,6 @@ extern const int HAVE_PIN;
 extern const int NEED_PIN;
 
 // Create a global tracker for compressor IDs.  This is because I can't have circular things:
-// struct list { ... Compressor *compressors; }
-// struct compressor { ... List *list; }
 int next_compress_worker_id = 0;
 
 
@@ -205,9 +199,7 @@ int list__initialize_skiplistnode(SkiplistNode **slnode, Buffer *buf) {
 
 
 /* list__acquire_write_lock
- * Drains the list of references so we don't modify the list while another thread is scanning it.  The combination of conditions
- * and mutexes should provide perfect consistency/synchronization.  Readers all use list__update_ref which respects these same
- * precepts.
+ * Drains the list of references to allow the calling thread to have complete control of the list without the risk of corruption.
  */
 int list__acquire_write_lock(List *list) {
   /* Check to see if the current lock owner is us; this is free of race conditions because it's only a race when we own it... */
@@ -383,13 +375,10 @@ int list__add(List *list, Buffer *buf, uint8_t list_pin_status) {
 
 
 /* list__remove
- * Removes the buffer from the list's pool while respecting the list lock and readers.  Caller must grab and pass buffer_id before
- * unlocking its reference to the buffer; this way we can rely on finding the ID even if the buffer is removed by another thread.
+ * Removes the buffer from the list's pool while respecting the list lock and readers.  In the event multiple threads try to remove
+ * the same buffer, the first (race condition) will win and the others will simply have their pins removed after the removal is done.
  *
- * In the event multiple threads try to remove the same buffer, the first (race condition) will win and the others will simply have
- * their pins removed after the removal is done.
- *
- * Caller MUST have a pin on the buffer!
+ * Caller MUST have a pin on the buffer!  Function WILL remove all callers' pins, even in a race.
  * Upon successful completion the buffer will be moved to a copy-on-write space (pending deletion).
  */
 int list__remove(List *list, Buffer *buf) {
@@ -511,8 +500,8 @@ int list__remove(List *list, Buffer *buf) {
 
 
 /* list__search
- * Searches for a buffer in the list specified so it can be sent back as a double pointer.  We need to pin the list so we can
- * search it.  When successfully found, we increment ref_count.  Caller MUST get a list pin first!
+ * Searches for a buffer in the list specified so it can be sent back (via indirection).  We need to pin the list so we can
+ * search it.  When successfully found, we increment ref_count.
  */
 int list__search(List *list, Buffer **buf, bufferid_t id, uint8_t list_pin_status) {
   /* Since searching can cause restorations and ultimately exceed max size, check for it.  This is a dirty read but OK. */
@@ -757,7 +746,7 @@ int list__update(List *list, Buffer **callers_buf, void *data, uint32_t size, ui
 
 /* list__update_ref
  * Edits the reference count of threads currently pinning the list.  Pinning happens for searching the list.  Delta should only be
- * 1 or -1, ever.  Typically a worker should call this once and then respect (dirty-read) pending_writers.
+ * 1 or -1, ever.  Typically a worker should call this once and then respect pending_writers.
  */
 int list__update_ref(List *list, int delta) {
   /* Do we own the lock as a writer?  If so, we don't need to mess with reference counting.  Avoids deadlocking. */
@@ -918,7 +907,7 @@ void list__sweeper_start(List *list) {
   }
 
   // Perform a final sweep.  This is to solve the edge case where a reader (list__add or list__search) is stuck waiting because its
-  // last wake-up failed the predicate because others add/restores pushed it over the limit again.  Ergo, they're hung at shutdown.
+  // last wake-up failed the predicate because other adds/restores pushed it over the limit again.  Ergo, they're hung at shutdown.
   list__sweep(list, list->sweep_goal);
 
   return;
@@ -926,8 +915,7 @@ void list__sweeper_start(List *list) {
 
 
 /* list__balance
- * Redistributes memory between a list and it's offload target.  The list__sweep() and list__pop() functions will handle the
- * buffer migration while respecting the new boundaries.
+ * Redistributes memory between a list and it's offload target.  The list__sweep() function will enforce new boundaries at runtime.
  */
 int list__balance(List *list, uint32_t ratio, uint64_t max_memory) {
   // As always, be safe.

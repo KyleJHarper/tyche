@@ -19,12 +19,8 @@ OBJECTS  := $(SOURCES:$(SRCDIR)/%.c=$(OBJDIR)/%.o)
 build:
 	$(MAKE) examples
 	$(MAKE) playground
-	$(MAKE) hello
 	$(MAKE) sizes
 	$(MAKE) tyche
-
-hello:
-	$(CC) $(CFLAGS) -O3 -o $(BINDIR)/hello $(SRCDIR)/hello.c
 
 sizes:
 	$(CC) $(CFLAGS) -O3 -o $(BINDIR)/sizes $(SRCDIR)/sizes.c

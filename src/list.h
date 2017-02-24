@@ -16,11 +16,7 @@
 #include "buffer.h"
 
 /* A list is simply the collection of buffers, metadata to describe the list for management, and control attributes to protect it.
- * List functions come in reader and writer flavors.
- *   Reader functions can safely rely on the list__update_ref_count() function to 'pin' the list so writers can't change it.
- *   Writer functions can safely rely on the list__acquire_write_lock() to block new readers and wait on existing readers.  Writers
- *   can also safely rely on the list__release_write_lock() to unblock other writers and readers (in that order!).
- * In short: writers have priority but are patient for existing readers.
+ * Most people will call this a "pool"... shrugs.
  */
 
 
@@ -85,7 +81,7 @@ struct list {
   uint8_t sweep_goal;                            /* Minimum percentage of memory we want to free up whenever we sweep, relative to current_size. */
   uint64_t sweeps;                               /* Number of times the list has been swept. */
   uint64_t sweep_cost;                           /* Time in ns spent sweeping lists. */
-  uint64_t restorations;                         /* Number of buffers restored to the raw list (compressed list doesn't use this). */
+  uint64_t restorations;                         /* Number of buffers restored. */
   uint64_t compressions;                         /* Buffers compressed during the life of the list. */
   uint64_t evictions;                            /* Buffers that were evicted from the list entirely. */
 

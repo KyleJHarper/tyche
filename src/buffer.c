@@ -65,10 +65,8 @@ extern const int E_BAD_ARGS;
 
 
 /* buffer__initialize
- * TODO Fix description
- * Creates a new buffer, simply put.  We have to create a new buffer (with a new pointer) and return its address because we NULL
- * out existing buffers' pointers when we remove them from their pools.  The *page_filespec is the path to the file (page) we're
- * going to read into the buffer's ()->data member.
+ * Creates a new buffer which will link to the *data provided.
+ * The *page_filespec is purely for tyche testing, and frankly should go away.
  */
 int buffer__initialize(Buffer **buf, bufferid_t id, uint32_t size, void *data, char *page_filespec) {
   *buf = (Buffer *)malloc(sizeof(Buffer));
@@ -114,35 +112,29 @@ int buffer__initialize(Buffer **buf, bufferid_t id, uint32_t size, void *data, c
  * A concise function to completely free up the memory used by a buffer.
  * Caller MUST have ensured the buffer is not referenced!
  */
-int buffer__destroy(Buffer *buf, const bool destroy_data) {
-  if (buf == NULL)
-    return E_OK;
-
+void buffer__destroy(Buffer *buf, const bool destroy_data) {
   if (destroy_data) {
     /* Free the members which are pointers to other data locations. */
     free(buf->data);
-    buf->data = NULL;
   }
   /* All remaining members will die when free is invoked against the buffer itself. */
   free(buf);
-  // Setting buf to NULL here is useless because it's not a double pointer, on purpose.  Caller needs to NULL their own pointers.
 
-  /* Then unlock the element with lock_id now that the buffer is gone, in case others use this ID. */
-  return E_OK;
+  return;
 }
 
 
 /* buffer__lock
- * Simply locks the ->lock (mutex) of the buffer for times when atomicity matter.  Always checks for victimization, that's it.
+ * Simply locks the ->lock (mutex) of the buffer for times when atomicity matter.
  */
-int buffer__lock(Buffer *buf) {
+void buffer__lock(Buffer *buf) {
   pthread_mutex_lock(&buf->lock);
-  return E_OK;
+  return;
 }
 
 
 /* buffer__unlock
- * Unlocks the ->lock element (mutex) for the given buffer.  Compiler will likely inline, but we might add complexity later.
+ * Unlocks the ->lock element (mutex) for the given buffer.
  */
 void buffer__unlock(Buffer *buf) {
   pthread_mutex_unlock(&buf->lock);
@@ -162,7 +154,7 @@ void buffer__release_pin(Buffer *buf) {
  * Whatever is in ->data will be obliterated without any checking (free()'d).
  * The data_length will remain intact because the compressor needs it for safety (and a future malloc), and we set comp_length to
  * allow us to modify the size(s) in the list accurately.  See buffer__decompress() for the counterpart to this.
- * Caller MUST block (buffer__block/unblock) to drain readers!
+ * Caller MUST drain readers.  (Only sweep should use this...)
  */
 int buffer__compress(Buffer *buf, void **compressed_data, int compressor_id, int compressor_level) {
   // Make sure we're supposed to be here.
@@ -230,7 +222,7 @@ int buffer__compress(Buffer *buf, void **compressed_data, int compressor_id, int
 /* buffer__decompress
  * Decompresses the buffer's ->data element.
  * This sets comp_length back to 0 which signals that the buffer is no longer in a compressed state.
- * Caller MUST block (buffer__block/unblock) to drain readers!
+ * Caller MUST ensure no pins are in this (only search restores, which is safe for this).
  */
 int buffer__decompress(Buffer *buf, int compressor_id) {
   // Make sure we're supposed to actually be doing work.
@@ -292,11 +284,7 @@ int buffer__decompress(Buffer *buf, int compressor_id) {
 /* buffer__copy
  * Simple function to copy the contents of one buffer and all its elements to another.
  */
-int buffer__copy(Buffer *src, Buffer *dst, bool copy_data) {
-  /* Make sure the buffer is real.  Caller must initialize. */
-  if (dst == NULL)
-    return E_BAD_ARGS;
-
+void buffer__copy(Buffer *src, Buffer *dst, bool copy_data) {
   /* Attributes for typical buffer organization and management. */
   dst->id           = src->id;
   dst->ref_count    = src->ref_count;
@@ -321,5 +309,5 @@ int buffer__copy(Buffer *src, Buffer *dst, bool copy_data) {
   // We do NOT copy ->next data because that's handled by list__* functions.
   dst->next = NULL;
 
-  return E_OK;
+  return;
 }
