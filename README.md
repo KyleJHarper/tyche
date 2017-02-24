@@ -5,10 +5,21 @@ The tyche project is actually just an implementation of the currently-theoretica
 
 This will be open-source and free but I am still going to enforce the Apache 2.0 software license to it for now, as well as retain copyright on the documentation of the theory.
 
-**NOTE** Tyche is purpose-built for __benchmarking__ in a controlled environment!  A separate project is underway for an API.
+**NOTE** Tyche is purpose-built for __benchmarking__ in a controlled environment!  The List (aka Pool) API is actively under development and pending a clever code name...
 
 ====
 Latest Changelog Entries
+
+**[2017-02-23]**
+*Released version 0.0.16.  This version fixes several outstanding bugs and bottlenecks as listed below.*
+
+*First and foremost, the ACCRS API is now (basically) lock-free by means of convention and Copy-on-Write.*
+
+*Second, the API naturally supports update() and remove() functions which includes CoW (Copy-on-Write) logic to protect readers and reduce/eliminate blocking.*
+
+*Third, significant efforts were made to make the ACCRS API independent of tyche itself.  An example is included for easy integration, and significant edge case testing was done to find errors in logic that were leading to memory leaks, performance problems, dead locks, race conditions, and segfaults.*
+
+*Finally, now that CRUD operations are all available, lock-free implementation is in place, and the API is relatively independent, we're FINALLY ready to focus on the 'adaptive' part of this theory!  Very exciting stuff!!*
 
 **[2017-01-28]**
 *Released version 0.0.15 which adds support for zstd.  The user may now send -c 'zstd' in addition to 'lz4' or 'zlib'.*
