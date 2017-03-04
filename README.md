@@ -10,6 +10,15 @@ This will be open-source and free but I am still going to enforce the Apache 2.0
 ====
 Latest Changelog Entries
 
+**[2017-03-03]**
+*Released version 0.0.17.  This includes a few updates.*
+
+*1) Tyche performs updates and deletes at a configurable rate now.  Lightly tested, but emulates CRUD now.*
+
+*2) Bias can be applied to help represent the "hot" data in your data set.*
+
+*3) Multiple pages can be fetched per "round" by a worker, better mimicking real world scenarios.*
+
 **[2017-02-23]**
 *Released version 0.0.16.  This version fixes several outstanding bugs and bottlenecks as listed below.*
 

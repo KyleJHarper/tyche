@@ -1,5 +1,11 @@
 Contains a simple note for each tagged release.  We will try to follow SEMVER.  Be aware, all 0.x.y releases are developmental and are NOT guaranteed compatible according to SEMVER.  Major version 0 should go away after major release 1... as will this notice probably.
 
+0.0.17 (2017-03-03)
+- Fixed some update/delete issues with flags.
+- Realized that spinning is still considered blocking, so we're no lock free and never will be with this approach :(
+- Added page biasing.
+- Added the ability to specify multiple pages per round for workers to fetch.
+
 0.0.16 (2017-02-23)
 - Added support for update operations to complete the CRUD (Create, Read, Update, Delete) operations suite.
 - Added a Copy-on-Write subsystem with a manager to reduce/eliminate blocking for update and delete operations.  Drastically improved performance for readers and reduced sweep cost.
