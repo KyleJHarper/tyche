@@ -64,9 +64,14 @@ void options__process(int argc, char **argv) {
   opts.cpu_count = sysconf(_SC_NPROCESSORS_ONLN) > 0 ? (uint16_t)sysconf(_SC_NPROCESSORS_ONLN) : 1;
   /* Tyche Management */
   opts.duration = 5;
-  opts.hit_ratio = -1;
   opts.compressor_id = LZ4_COMPRESSOR_ID;
   opts.compressor_level = 1;
+  opts.min_pages_retrieved = 5;
+  opts.max_pages_retrieved = 5;
+  opts.bias_percent = 1.0;
+  opts.bias_aggregate = 1.0;
+  opts.update_frequency = 0.0;
+  opts.delete_frequency = 0.0;
   /* Run Test? */
   opts.test = NULL;
   opts.extended_test_options = NULL;
@@ -75,12 +80,22 @@ void options__process(int argc, char **argv) {
   opts.verbosity = 0;
 
   /* Process everything passed from CLI now. */
+  char *save_ptr = NULL;
+  char *token = NULL;
   int c = 0;
   opterr = 0;
-  while ((c = getopt(argc, argv, "b:c:Cd:f:hm:n:p:qr:t:w:X:v")) != -1) {
+  while ((c = getopt(argc, argv, "b:B:c:Cd:D:f:hm:M:n:p:qt:U:w:X:v")) != -1) {
     switch (c) {
       case 'b':
         opts.dataset_max = (uint64_t)atoll(optarg);
+        break;
+      case 'B':
+        token = strtok_r(optarg, ",", &save_ptr);
+        if(token != NULL)
+          opts.bias_percent = 1.0 * atof(token) / 100;
+        token = strtok_r(NULL, ",", &save_ptr);
+        if (token != NULL)
+          opts.bias_aggregate = 1.0 * atof(token) / 100;
         break;
       case 'c':
         if(strcmp(optarg, "lz4") != 0 && strcmp(optarg, "zlib") != 0 && strcmp(optarg, "zstd"))
@@ -100,6 +115,9 @@ void options__process(int argc, char **argv) {
         if (atoi(optarg) > MAX_DURATION)
           opts.duration = MAX_DURATION;
         break;
+      case 'D':
+        opts.delete_frequency = 1.0 * atof(optarg) / 100;
+        break;
       case 'f':
         opts.fixed_ratio = (int8_t)atoi(optarg);
         break;
@@ -110,6 +128,14 @@ void options__process(int argc, char **argv) {
       case 'm':
         opts.max_memory = (uint64_t)atoll(optarg);
         break;
+      case 'M':
+        token = strtok_r(optarg, ",", &save_ptr);
+        if(token != NULL)
+          opts.min_pages_retrieved = atoi(token);
+        token = strtok_r(NULL, ",", &save_ptr);
+        if (token != NULL)
+          opts.max_pages_retrieved = atoi(token);
+        break;
       case 'n':
         opts.page_limit = (uint32_t)atoll(optarg);
         break;
@@ -119,13 +145,13 @@ void options__process(int argc, char **argv) {
       case 'q':
         opts.quiet = 1;
         break;
-      case 'r':
-        opts.hit_ratio = (int8_t)atoi(optarg);
-        break;
       case 't':
         if (opts.test != NULL)
           show_error(E_BAD_CLI, "You cannot specify the -t option more than once.");
         opts.test = optarg;
+        break;
+      case 'U':
+        opts.update_frequency = 1.0 * atof(optarg) / 100;
         break;
       case 'w':
         opts.workers = (uint16_t)atoi(optarg);
@@ -147,7 +173,7 @@ void options__process(int argc, char **argv) {
         break;
       case '?':
         options__show_help();
-        if (optopt == 'b' || optopt == 'c' || optopt == 'd' || optopt == 'f' || optopt == 'm' || optopt == 'n' || optopt == 'p' || optopt == 'r' || optopt == 't' || optopt == 'w' || optopt == 'X')
+        if (optopt == 'b' || optopt == 'B' || optopt == 'c' || optopt == 'd' || optopt == 'D' || optopt == 'f' || optopt == 'm' || optopt == 'M' || optopt == 'n' || optopt == 'p' || optopt == 't' || optopt == 'U' || optopt == 'w' || optopt == 'X')
           show_error(E_BAD_CLI, "Option -%c requires an argument.", optopt);
         if (isprint (optopt))
           show_error(E_BAD_CLI, "Unknown option `-%c'.", optopt);
@@ -188,13 +214,6 @@ void options__process(int argc, char **argv) {
     show_error(E_BAD_CLI, "The duration (-d) is 0.  You either sent invalid input (atoi() failed), or you misunderstood the option.  The test must run for at least 1 second.");
   if (opts.duration == MAX_DURATION)
     show_error(E_BAD_CLI, "You specified a duration (-d) greater than the max allowed (%d).", MAX_DURATION);
-  // -- Hit ratio can't be 0, nor can it be more than 100.
-  if (opts.hit_ratio == 0)
-    show_error(E_BAD_CLI, "The target hit ratio (-r) is 0.  You either sent invalid input (atoi() failed), or you misunderstood the option; if you intended to keep the hit ratio as close to zero as possible, simply set the max memory (-m) to the minimum value (%d).", MIN_MEMORY);
-  if (opts.hit_ratio < -1)
-    show_error(E_BAD_CLI, "The target hit ratio (-r) cannot be negative.  You send %d.", opts.hit_ratio);
-  if (opts.hit_ratio > 100)
-    show_error(E_BAD_CLI, "The target hit ratio (-r) cannot be over 100... that's just weird.");
   // -- Dataset max cannot be 0.  Other than that... shrugs.
   if (opts.dataset_max == 0)
     show_error(E_BAD_CLI, "The maximum dataset bytes (-b) is 0.  You either sent invalid input (atoi() failed), or you misunderstood the option; it limits the number of bytes the scan functions will find before moving on with the test.");
@@ -204,6 +223,19 @@ void options__process(int argc, char **argv) {
   // -- When compression is disabled, warn the user!
   if (opts.compressor_id == NO_COMPRESSOR_ID)
     fprintf(stderr, "WARNING!!  Compression is DISABLED (you sent -C).\n");
+  // -- If bias isn't between 0 and 100 we're in trouble.
+  if (opts.bias_percent < 0 || opts.bias_percent > 100)
+    show_error(E_BAD_CLI, "The bias percentage (-B X,Y) must be between 0 and 100 inclusive, not %d.\n", opts.bias_percent);
+  if (opts.bias_aggregate < 0 || opts.bias_aggregate > 100)
+    show_error(E_BAD_CLI, "The bias aggregate (-B X,Y) must be between 0 and 100 inclusive, not %d.\n", opts.bias_aggregate);
+  // -- If the update or delete frequencies aren't between 0 and 100 we're in trouble.
+  if (opts.update_frequency < 0 || opts.update_frequency > 100)
+    show_error(E_BAD_CLI, "The update frequency (-U) must be between 0 and 100 inclusive, not %d.\n", opts.update_frequency);
+  if (opts.delete_frequency < 0 || opts.delete_frequency > 100)
+    show_error(E_BAD_CLI, "The delete frequency (-D) must be between 0 and 100 inclusive, not %d.\n", opts.delete_frequency);
+  // -- The min pages retrieved in a round can't greater than max...
+  if (opts.min_pages_retrieved > opts.max_pages_retrieved)
+    show_error(E_BAD_CLI, "You can't set the minimum pages per round (X) higher than the maximum per round (Y) for -M.\n");
 
   return;
 }
@@ -217,29 +249,36 @@ void options__show_help() {
   fprintf(stderr, "tyche - Example Program for the Adaptive Compressed Cache Replacement Strategy (ACCRS)\n");
   fprintf(stderr, "        This is an implementation of ACCRS and is NOT intended as a tool or API!\n");
   fprintf(stderr, "\n");
-  fprintf(stderr, "  Usage: tyche <-p pages_directory> <-m memory_size> [-bcCdfhmnpqrtwXv]\n");
+  fprintf(stderr, "  Usage: tyche <-p pages_directory> <-m memory_size> [-bBcCdDfhmnpqrtUwXv]\n");
   fprintf(stderr, "     ex: tyche -d /data/pages/8k -m 10000000\n");
   fprintf(stderr, "\n");
   fprintf(stderr, "  Options:\n");
   fprintf(stderr, "    %2s   %-13s   %s", "-b", "<number>",       "Maximum number of bytes to use from the data pages.  Default: unlimited.\n");
+  fprintf(stderr, "    %2s   %-13s   %s", "-B", "X,Y",            "Bias to simulate page popularity.  For example: -B 20,80 would mean:\n");
+  fprintf(stderr, "    %2s   %-13s   %s",   "", "",               "  X) Percentage of data set that is popular; aka the Bias Percentage.\n");
+  fprintf(stderr, "    %2s   %-13s   %s",   "", "",               "  Y) Percentage of hits that the popular buffers should make up; aka the Bias Aggregate.\n");
+  fprintf(stderr, "    %2s   %-13s   %s",   "", "",               "     The above would mimic the Pareto Principle (80/20 Rule) in our usage pattern.\n");
   fprintf(stderr, "    %2s   %-13s   %s", "-c", "lz4,zlib,zstd",  "Which compressor to use: defaults to lz4.\n");
   fprintf(stderr, "    %2s   %-13s   %s", "-C", "",               "Disable compression steps (for testing list management speeds).\n");
   fprintf(stderr, "    %2s   %-13s   %s", "-d", "<number>",       "Duration to run tyche, in seconds (+/- 1 sec).  Default: 5 sec\n");
+  fprintf(stderr, "    %2s   %-13s   %s", "-D", "0 - 100",        "Percentage of times a worker should delete the buffers it finds.\n");
   fprintf(stderr, "    %2s   %-13s   %s", "-f", "1 - 100",        "Fixed ratio.  Percentage RAM guaranteed for the raw buffer list.  Default: disabled (-1)\n");
   fprintf(stderr, "    %2s   %-13s   %s", "-h", "",               "Show this help.\n");
   fprintf(stderr, "    %2s   %-13s   %s", "-m", "<number>",       "Maximum number of bytes (RAM) to use for all buffers.  Default: 10 MB.\n");
+  fprintf(stderr, "    %2s   %-13s   %s", "-M", "X,Y",            "Minimum (X) and maximum (Y) pages to use per round by workers.  Default: 5,5\n");
   fprintf(stderr, "    %2s   %-13s   %s", "-n", "<number>",       "Maximum number of pages to use from the sample data pages.  Default: unlimited.\n");
   fprintf(stderr, "    %2s   %-13s   %s", "-p", "/some/dir",      "The directory to scan for pages of sample data.  Default: ./sample_data.\n");
   fprintf(stderr, "    %2s   %-13s   %s", "-q", "",               "Suppress most output, namely tracking/status.  Default: false.\n");
   fprintf(stderr, "    %2s   %-13s   %s", "-r", "1 - 100",        "Hit Ratio to ensure as a minimum (by searching raw list when too low).  Default: disabled (-1)\n");
   fprintf(stderr, "    %2s   %-13s   %s", "-t", "test_name",      "Run an internal test.  Specify 'help' to see available tests.  (For debugging).\n");
+  fprintf(stderr, "    %2s   %-13s   %s", "-U", "0 - 100",        "Percentage of times a worker should update the buffers' data it finds.\n");
   fprintf(stderr, "    %2s   %-13s   %s", "-w", "<number>",       "Number of workers (threads) to use while testing.  Defaults to CPU count.\n");
   fprintf(stderr, "    %2s   %-13s   %s", "-X", "opt1,opt2",      "Extended options for tests that require it.  Specify -X 'help' for information.\n");
   fprintf(stderr, "    %2s   %-13s   %s", "-v", "",               "Increase verbosity.  Repeat to increment level.  Current levels:\n");
   fprintf(stderr, "    %2s   %-13s   %s",   "", "",               "  0) Show normal output (default).  Update frequency is 0.25s. \n");
   fprintf(stderr, "    %2s   %-13s   %s",   "", "",               "  1) Increase update frequency to 0.1s.  Show a list summary at the end.\n");
   fprintf(stderr, "    %2s   %-13s   %s",   "", "",               "  2) Increase update frequency to 0.01s.  Show list summary.  Display ENTIRE list structure!\n");
-  fprintf(stderr, "(Note, capital options are usually for advanced testing use only.)\n");
+  fprintf(stderr, "(Note, capital options are usually for advanced use only.)\n");
   fprintf(stderr, "\n");
 
   return;

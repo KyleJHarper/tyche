@@ -533,23 +533,34 @@ void tests__move_buffers(List *list, char **pages) {
  */
 void tests__options() {
   // Just print them out to show what they ended up looking like.
-  printf("opts->page_directory = %s\n",        opts.page_directory);
-  printf("opts->page_count     = %"PRIu32"\n", opts.page_count);
-  printf("opts->page_limit     = %"PRIu32"\n", opts.page_limit);
-  printf("opts->smallest_page  = %"PRIu16"\n", opts.smallest_page);
-  printf("opts->biggest_page   = %"PRIu16"\n", opts.biggest_page);
-  printf("opts->dataset_size   = %"PRIu64"\n", opts.dataset_size);
-  printf("opts->dataset_max    = %"PRIu64"\n", opts.dataset_max);
+  printf("opts->page_directory ....... = %s\n",              opts.page_directory);
+  printf("opts->page_count ........... = %"PRIu32"\n",       opts.page_count);
+  printf("opts->page_limit ........... = %"PRIu32"\n",       opts.page_limit);
+  printf("opts->smallest_page ........ = %"PRIu16"\n",       opts.smallest_page);
+  printf("opts->biggest_page ......... = %"PRIu16"\n",       opts.biggest_page);
+  printf("opts->dataset_size ......... = %"PRIu64"\n",       opts.dataset_size);
+  printf("opts->dataset_max .......... = %"PRIu64"\n",       opts.dataset_max);
   /* Resource Control */
-  printf("opts->max_memory     = %"PRIu64"\n", opts.max_memory);
-  printf("opts->fixed_ratio    = %"PRIi8"\n",  opts.fixed_ratio);
-  printf("opts->workers        = %"PRIu16"\n", opts.workers);
-  /* Test Management */
-  printf("opts->duration       = %"PRIu16"\n", opts.duration);
-  printf("opts->hit_ratio      = %"PRIi8"\n",  opts.hit_ratio);
+  printf("opts->max_memory ........... = %"PRIu64"\n",       opts.max_memory);
+  printf("opts->fixed_ratio .......... = %"PRIi8"\n",        opts.fixed_ratio);
+  printf("opts->workers .............. = %"PRIu16"\n",       opts.workers);
+  printf("opts->cput_count ........... = %"PRIu16"\n",       opts.cpu_count);
+  /* Tyche Management */
+  printf("opts->duration ............. = %"PRIu16"\n",       opts.duration);
+  printf("opts->compressor_id ........ = %d\n",              opts.compressor_id);
+  printf("opts->compressor_level ..... = %d\n",              opts.compressor_level);
+  printf("opts->min_pages_retrieved .. = %d\n",              opts.min_pages_retrieved);
+  printf("opts->max_pages_retrieved .. = %d\n",              opts.max_pages_retrieved);
+  printf("opts->bias_percent ......... = %3.2f (%4.2f%%)\n", opts.bias_percent,     100.0 * opts.bias_percent);
+  printf("opts->bias_aggregate ....... = %3.2f (%4.2f%%)\n", opts.bias_aggregate,   100.0 * opts.bias_aggregate);
+  printf("opts->update_frequency ..... = %3.2f (%4.2f%%)\n", opts.update_frequency, 100.0 * opts.update_frequency);
+  printf("opts->delete_frequency ..... = %3.2f (%4.2f%%)\n", opts.delete_frequency, 100.0 * opts.delete_frequency);
+  /* Run Test? */
+  printf("opts->test ................. = %s\n",              opts.test);
+  printf("opts->extended_test_optsions = %s\n",              opts.extended_test_options);
   /* Niceness Features */
-  printf("opts->quiet          = %"PRIi8"\n",  opts.quiet);
-  printf("opts->verbosity      = %"PRIi8"\n",  opts.verbosity);
+  printf("opts->quiet ................ = %"PRIi8"\n",        opts.quiet);
+  printf("opts->verbosity ............ = %"PRIi8"\n",        opts.verbosity);
 
   return;
 }

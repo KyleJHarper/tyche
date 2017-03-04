@@ -22,13 +22,14 @@
 /* Enumerator for bit-flags in the buffer. */
 typedef enum buffer_flags {
   // These control CoW (copy-on-write) synchronization.
-  dirty         = 1 <<  0,
-  pending_sweep = 1 <<  1,
-  updating      = 1 <<  2,
-  removing      = 1 <<  3,
+  dirty         = 1 <<  0,   //  1
+  pending_sweep = 1 <<  1,   //  2
+  updating      = 1 <<  2,   //  4
+  removing      = 1 <<  3,   //  8
+  removed       = 1 <<  4,   // 16
   // When sweeping we need to mark the buffer as 'compressing' so list__update() doesn't flake out (deadlock).
-  compressing   = 1 <<  4,
-  compressed    = 1 <<  5,
+  compressing   = 1 <<  5,   // 32
+  compressed    = 1 <<  6,   // 64
 } buffer_flags;
 
 /* Build the typedef and structure for a Buffer */

@@ -23,7 +23,7 @@
 #include "error.h"
 #include "list.h"
 
-
+#include <unistd.h>  // Debugging, remove when sleep() is gone
 
 
 /* We need to know what one billion is for clock timing. */
@@ -251,6 +251,7 @@ int list__release_write_lock(List *list) {
  * Adds a node to the list specified.  Buffer must be created by caller.  We use localized (buffer) locking to aid with insertion
  * performance, but it's a minor improvement.  The real benefit is that readers can continue searching (list__search()) while this
  * function is running.
+ * Note:  You MUST set a pin BEFORE adding if you want to guarantee it won't vanish!
  */
 int list__add(List *list, Buffer *buf, uint8_t list_pin_status) {
   /* Initialize a few basic values. */
@@ -385,17 +386,19 @@ int list__remove(List *list, Buffer *buf) {
   /* Caller has to have a pin, so even though ref_count is a dirty read it will always be 1+ if the caller did their job right. */
   if(buf->ref_count < 1)
     return E_BUFFER_MISSING_A_PIN;
-  /* Use atomics/locks to compare and/or set the dirty flag to prevent multiple updates at once. */
+  /* Use atomics/locks to compare and/or set the dirty flag to prevent multiple updates/deletes at once. */
   pthread_mutex_lock(&buf->lock);
-  if(buf->flags & removing) {
+  if(buf->flags & dirty) {
     pthread_mutex_unlock(&buf->lock);
-    while(buf->flags & removing); //spin
-    // Since another thread was already removing it, it's now in the slaughter house.  Just remove our pin so it'll flush later.
+    while(buf->flags & (removing | updating))
+      __sync_synchronize();
+    // Whether the buffer was removed or updated doesn't matter, it's in the slaughter house.  Just release our pin.
     __sync_fetch_and_add(&buf->ref_count, -1);
     return E_OK;
   }
   // Looks like no one else beat us to the update.  Flip some bits and have a party.  We'll mark it dirty after we're done.
   buf->flags |= removing;
+  buf->flags |= dirty;
   pthread_mutex_unlock(&buf->lock);
 
   /* Get a read lock to ensure the sweeper doesn't run (or that it's the sweeper who actually called us). */
@@ -447,10 +450,8 @@ int list__remove(List *list, Buffer *buf) {
   while(nearest_neighbor->next->id < buf->id)
     nearest_neighbor = nearest_neighbor->next;
   // This should NEVER happen because the caller has a pin... but we'll throw it for debugging.
-  if(nearest_neighbor->next->id != buf->id) {
-    list__update_ref(list, -1);
-    return E_BUFFER_NOT_FOUND;
-  }
+  if(nearest_neighbor->next->id != buf->id)
+    exit(1);
 
   // We should be close-as-can-be.  If ->next matches, we're on the right track.  Otherwise we're still E_BUFFER_NOT_FOUND.
   rv = E_OK;
@@ -487,7 +488,7 @@ int list__remove(List *list, Buffer *buf) {
 
   /* Flip bits and let go of the list pin we held.  Then send the buffer off. */
   pthread_mutex_lock(&buf->lock);
-  buf->flags |= dirty;
+  buf->flags = buf->flags | removed;
   buf->flags &= (~removing);
   pthread_mutex_unlock(&buf->lock);
   // Remove the pin the caller came in with.
@@ -614,13 +615,15 @@ int list__update(List *list, Buffer **callers_buf, void *data, uint32_t size, ui
     return E_BUFFER_MISSING_A_PIN;
   /* Use atomics/locks to compare and/or set the dirty flag to prevent multiple updates at once. */
   pthread_mutex_lock(&buf->lock);
-  if((buf->flags & dirty) || (buf->flags & updating)) {
+  if(buf->flags & dirty) {
     pthread_mutex_unlock(&buf->lock);
-    while(buf->flags & updating); //spin
+    while((buf->flags & updating) || (buf->flags & removing))
+      __sync_synchronize();
     return E_BUFFER_IS_DIRTY;
   }
   // Looks like no one else beat us to the update.  Flip some bits and have a party.  We'll mark it dirty after we're done.
   buf->flags |= updating;
+  buf->flags |= dirty;
   pthread_mutex_unlock(&buf->lock);
 
   /* Grab the list lock so we can handle sweeping processes and signaling correctly.  Small race will allow exceeding max, but that's ok. */
@@ -690,8 +693,9 @@ int list__update(List *list, Buffer **callers_buf, void *data, uint32_t size, ui
     nearest_neighbor = nearest_neighbor->next;
   }
   // This should NEVER happen because the caller has a pin... but we'll throw it.
-  if(nearest_neighbor->next->id != buf->id)
+  if(nearest_neighbor->next->id != buf->id) {
     exit(3);
+  }
 
   // Make a copy of the buffer.  The new buffer will only have ONE (1) ref, the updater!  Remove its pin from buf.
   Buffer *new_buffer;
@@ -735,7 +739,6 @@ int list__update(List *list, Buffer **callers_buf, void *data, uint32_t size, ui
 
   // Mark the buffer dirty, remove the updating flag, and throw it in the dirty pool for future eviction.
   pthread_mutex_lock(&buf->lock);
-  buf->flags |= dirty;
   buf->flags &= (~updating);
   pthread_mutex_unlock(&buf->lock);
   list__add_cow(list, buf);
@@ -1078,7 +1081,7 @@ void list__show_structure(List *list) {
   /* Locking, Reference Counters, and Similar Members */
   printf("Reference pins  : %"PRIu32".  This should be 0 at program end.\n", list->ref_count);
   printf("Pending writers : %"PRIu8".  This should be 0 at program end.\n", list->pending_writers);
-  printf("CoW space used  : %"PRIu64".  This should be 0 at program end.\n", list->cow_current_size);
+  printf("CoW space used  : %"PRIu64".  This should be less than 5%% of max_memory at program end.\n", list->cow_current_size);
   /* Management and Administration Members */
   printf("Sweep goal      : %"PRIu8"%%.\n", list->sweep_goal);
   printf("Sweeps performed: %'"PRIu64".\n", list->sweeps);
@@ -1280,7 +1283,7 @@ void list__slaughter_house(List *list) {
     pthread_cond_broadcast(&list->cow_waiter_cond);
     wait_rv = pthread_cond_timedwait(&list->cow_killer_cond, &list->cow_lock, &ts);
     // If we timed out, we have to unlock because the mutex was given back to us.
-    if(wait_rv == ETIMEDOUT)
+    if(wait_rv == ETIMEDOUT || wait_rv == 0)
       pthread_mutex_unlock(&list->cow_lock);
   }
 
@@ -1288,7 +1291,7 @@ void list__slaughter_house(List *list) {
   while(list->cow_head->next != list->cow_head) {
     next = list->cow_head->next;
     list->cow_head->next = list->cow_head->next->next;
-    list->cow_current_size = list->cow_current_size - BUFFER_OVERHEAD - next->data_length;
+    list->cow_current_size = list->cow_current_size - BUFFER_OVERHEAD - (next->comp_length == 0 ? next->data_length : next->comp_length);
     buffer__destroy(next, true);
   }
 

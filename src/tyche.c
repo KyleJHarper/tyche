@@ -43,7 +43,7 @@ int main(int argc, char **argv) {
   srand(time(NULL));
   Manager *mgr = manager__initialize(0, pages);
 
-  /* Run the managers. */
+  /* Run the manager(s). */
   manager__start(mgr);
 
   /* Clean up and send final notice. */

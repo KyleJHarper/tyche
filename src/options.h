@@ -32,9 +32,14 @@ struct options {
 
   /* Tyche Management */
   uint16_t duration;            // Amount of time for each worker to run, in seconds (s).
-  int8_t hit_ratio;             // Minimum hit ratio to attain when testing.
   int compressor_id;            // The ID of the compressor to use for buffer__compress/decompress.
   int compressor_level;         // The level of zlib/zstd to use (1-9).  Future option.  For now, always 1.
+  int min_pages_retrieved;      // The minimum number of pages to find and pin for a "round" in a worker.
+  int max_pages_retrieved;      // The maximum number of pages to find and pin for a "round" in a worker.
+  float bias_percent;           // Percentage of data set that is most popular (e.g.: 20%)
+  float bias_aggregate;         // Percentage of all hits that the biased buffers represent (e.g.: 80%)
+  float update_frequency;       // Percentage of hits that should result in a list__update() too.
+  float delete_frequency;       // Percentage of hits that should result in a list__remove() too.  Generally VERY small.
 
   /* Run Test? */
   char *test;                   // Name of a test to run.

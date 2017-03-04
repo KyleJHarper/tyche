@@ -95,8 +95,7 @@ int main() {
 
 
   // Step 5)
-  // Remove the buffer from the list explicitly.  Normally you don't do this (you'd write-through to the disk after list__update()
-  // of course)... but we'll show you how.  Removal is also a non-blocking operation.
+  // Remove the buffer from the list explicitly.  Removal is also a non-blocking operation.
   rv = list__remove(list, buf);
   if (rv != E_OK && rv != E_BUFFER_NOT_FOUND) {
     printf("Failed to remove the buffer.\n");

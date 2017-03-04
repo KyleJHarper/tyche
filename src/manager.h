@@ -19,6 +19,9 @@ struct worker {
   workerid_t id;         // ID of the worker.
   uint64_t misses;       // Count of buffer misses for the life of this worker.
   uint64_t hits;         // Count of buffer hits for the life of this worker.
+  uint64_t rounds;       // Number of rounds the worker finished.
+  uint64_t updates;      // Number of pages updated by this worker.
+  uint64_t deletions;    // Number of pages deleted by this worker.
 };
 
 /* Build the manager struct. */
@@ -41,6 +44,9 @@ struct manager {
   Worker *workers;        // The pool of workers this manager has assigned to it.
   uint64_t hits;          // Total hits for all workers.
   uint64_t misses;        // Total misses for all workers.
+  uint64_t rounds;        // Total rounds performed by all workers.
+  uint64_t updates;       // Total number of updated pages by all workers.
+  uint64_t deletions;     // Total number of deleted pages by all workers.
 };
 
 
