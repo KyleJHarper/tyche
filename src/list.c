@@ -56,9 +56,6 @@ extern const int E_BAD_ARGS;
 // Warnings
 
 
-/* Store the overhead of a Buffer.  Since our skiplist will have 1 node per buffer (probabilistically) we include that. */
-const int BUFFER_OVERHEAD = sizeof(Buffer) + sizeof(SkiplistNode);
-
 /* We use the have/don't have data flags. */
 extern const int HAVE_PIN;
 extern const int NEED_PIN;

@@ -121,23 +121,24 @@ int main() {
 
   // -- Buffer Information
   printf("\n");
-  /* Tracking for the list we're part of. */
-  printf("Size of Buffer->next                          : %5zu Bytes\n", sizeof((Buffer *)0)->next);
-  /* Attributes for typical buffer organization and management. */
-  printf("Size of Buffer->id                            : %5zu Bytes\n", sizeof((Buffer *)0)->id);
-  printf("Size of Buffer->ref_count                     : %5zu Bytes\n", sizeof((Buffer *)0)->ref_count);
-  printf("Size of Buffer->flags                         : %5zu Bytes\n", sizeof((Buffer *)0)->flags);
-  printf("Size of Buffer->popularity                    : %5zu Bytes\n", sizeof((Buffer *)0)->popularity);
-  printf("Size of Buffer->lock                          : %5zu Bytes\n", sizeof((Buffer *)0)->lock);
-  /* Cost values for each buffer when pulled from disk or compressed/decompressed. */
-  printf("Size of Buffer->comp_cost                     : %5zu Bytes\n", sizeof((Buffer *)0)->comp_cost);
-  printf("Size of Buffer->comp_hits                     : %5zu Bytes\n", sizeof((Buffer *)0)->comp_hits);
-  /* The actual payload we want to cache (i.e.: the page). */
+  /* The payload we want to cache (i.e.: the page). */
+  printf("Size of Buffer->data                          : %5zu Bytes\n", sizeof((Buffer *)0)->data);
   printf("Size of Buffer->data_length                   : %5zu Bytes\n", sizeof((Buffer *)0)->data_length);
   printf("Size of Buffer->comp_length                   : %5zu Bytes\n", sizeof((Buffer *)0)->comp_length);
-  printf("Size of Buffer->data                          : %5zu Bytes\n", sizeof((Buffer *)0)->data);
+  /* Attributes for typical buffer organization and management. */
+  printf("Size of Buffer->id                            : %5zu Bytes\n", sizeof((Buffer *)0)->id);
+  printf("Size of Buffer->flags                         : %5zu Bytes\n", sizeof((Buffer *)0)->flags);
+  printf("Size of Buffer->overhead                      : %5zu Bytes\n", sizeof((Buffer *)0)->overhead);
+  printf("Size of Buffer->padding                       : %5zu Bytes\n", sizeof((Buffer *)0)->padding);
+  printf("Size of Buffer->windows                       : %5zu Bytes\n", sizeof((Buffer *)0)->windows);
+  printf("Size of Buffer->comp_cost                     : %5zu Bytes\n", sizeof((Buffer *)0)->comp_cost);
+  printf("Size of Buffer->ref_count                     : %5zu Bytes\n", sizeof((Buffer *)0)->ref_count);
+  printf("Size of Buffer->cas_lock                      : %5zu Bytes\n", sizeof((Buffer *)0)->cas_lock);
+  /* The actual Skiplist elements, via Flexible Array Member (C99) support. */
+  printf("Size of Buffer->sl_levels                     : %5zu Bytes\n", sizeof((Buffer *)0)->sl_levels);
+  printf("Size of Buffer->nexts (on avg)                : %5d Bytes\n", 16);
   printf("-----------------------------------------------------------\n");
-  printf("Size of Buffer                                  %5zu Bytes\n", sizeof(Buffer));
+  printf("Size of Buffer                                  %5zu Bytes\n", sizeof(Buffer) + 16);
 
 
   printf("\n\nQuick Summary Table\n");
@@ -147,15 +148,14 @@ int main() {
   printf("| List          | %7zu Bytes |\n", sizeof(List));
   printf("| Compressor    | %7zu Bytes |\n", sizeof(Compressor));
   printf("| SkiplistNode  | %7zu Bytes |\n", sizeof(SkiplistNode));
-  printf("| Buffer        | %7zu Bytes |\n", sizeof(Buffer));
+  printf("| Buffer        | %7zu Bytes |\n", sizeof(Buffer) + 16);
   printf("+---------------+---------------+\n");
-  printf("(Note: Size may be slightly off due to alignment and/or pointers-to-alloc'd spaces.)\n");
 
 
   printf("\n\n%10s%10s\n", "PAGE_SIZE", "Overhead");
   float size = 0.0;
   for (int i=1024; i<=65536; i*=2) {
-    size = (100.0f * sizeof(Buffer)) / (sizeof(Buffer) + i);
+    size = (100.0f * (sizeof(Buffer) + 16)) / i;
     printf("%10i%9.3f%%\n", i, size);
   }
 
