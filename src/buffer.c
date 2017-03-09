@@ -62,16 +62,14 @@ extern const int E_BUFFER_ALREADY_DECOMPRESSED;
 extern const int E_BUFFER_COMPRESSION_PROBLEM;
 // Also get the NO_MEMORY one for allocations.
 extern const int E_NO_MEMORY;
-extern const int E_BAD_ARGS;
 
 
 
 
 /* buffer__initialize
  * Creates a new buffer which will link to the *data provided.
- * The *page_filespec is purely for tyche testing, and frankly should go away.
  */
-int buffer__initialize(Buffer **buf, uint8_t sl_levels, bufferid_t id, uint32_t size, void *data, char *page_filespec) {
+int buffer__initialize(Buffer **buf, bufferid_t id, uint8_t sl_levels, uint32_t size, void *data) {
   *buf = (Buffer *)malloc(sizeof(Buffer) + (sizeof(Buffer*) * sl_levels));
   if (*buf == NULL)
     return E_NO_MEMORY;
@@ -81,33 +79,12 @@ int buffer__initialize(Buffer **buf, uint8_t sl_levels, bufferid_t id, uint32_t 
   for(int i=0; i<sl_levels; i++)
     (*buf)->nexts = NULL;
   (*buf)->sl_levels = sl_levels;
-  /* If the page_filespec, *data, and size are all null/0, the user just wants a blank buffer. */
-  if (page_filespec == NULL && size == 0 && data == NULL)
+  /* If the *data and size are all null/0, the user just wants a blank buffer. */
+  if (size == 0 && data == NULL)
     return E_OK;
-  /* Error if page_filespec and *data or size exist.  Logical XOR via boolean equality. */
-  if ((page_filespec != NULL) == (size > 0 || data != NULL))
-    return E_BAD_ARGS;
-
-  /* If we weren't given a filespec, we better have been given *data and size. */
-  if (page_filespec == NULL) {
-    (*buf)->data = data;
-    (*buf)->data_length = size;
-    return E_OK;
-  }
-
-  /* Use *page to try to read the page from the disk. */
-  FILE *fh = fopen(page_filespec, "rb");
-  if (fh == NULL)
-    return E_GENERIC;
-  fseek(fh, 0, SEEK_END);
-  (*buf)->data_length = ftell(fh);
-  rewind(fh);
-  (*buf)->data = malloc((*buf)->data_length);
-  if ((*buf)->data == NULL)
-    return E_NO_MEMORY;
-  if (fread((*buf)->data, (*buf)->data_length, 1, fh) == 0)
-    return E_GENERIC;
-  fclose(fh);
+  /* Set the data and size, then move on. */
+  (*buf)->data = data;
+  (*buf)->data_length = size;
 
   return E_OK;
 }

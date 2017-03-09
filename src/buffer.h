@@ -52,14 +52,15 @@ enum buffer_flags {
  * (The above assumes 64-bit architecture of course.  32 and 16 bit would align on 64 bit as well since it's a common multiple).
  */
 typedef uint32_t bufferid_t;
+typedef uint32_t buffer_size_t;
 typedef struct buffer Buffer;
 struct buffer {
   /* The payload we want to cache (i.e.: the page). */
   // -- Word 1
   void *data;                     /* Pointer to the memory holding the page data, whether raw or compressed. */
   // -- Word 2
-  uint32_t data_length;           /* Number of bytes originally in *data. */
-  uint32_t comp_length;           /* Number of bytes in *data if it was compressed.  Set to 0 when not used. */
+  buffer_size_t data_length;      /* Number of bytes originally in *data. */
+  buffer_size_t comp_length;      /* Number of bytes in *data if it was compressed.  Set to 0 when not used. */
 
   /* Attributes for typical buffer organization and management. */
   // -- Word 3
@@ -82,7 +83,7 @@ struct buffer {
 
 
 /* Prototypes */
-int buffer__initialize(Buffer **buf, uint8_t sl_levels, bufferid_t id, uint32_t size, void *data, char *page_filespec);
+int buffer__initialize(Buffer **buf, bufferid_t id, uint8_t sl_levels, buffer_size_t size, void *data, char *page_filespec);
 void buffer__destroy(Buffer *buf, const bool destroy_data);
 void buffer__lock(Buffer *buf);
 void buffer__unlock(Buffer *buf);

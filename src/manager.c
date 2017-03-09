@@ -20,6 +20,7 @@
 #include "error.h"
 #include "manager.h"
 #include "tests.h"
+#include "io.h"
 
 
 /* We need to know what one billion is for clock timing and others are for pretty output. */
@@ -278,6 +279,9 @@ void manager__spawn_worker(Manager *mgr) {
   const int BUF_MAX = 10000;  // At 8 bytes per pointer, this uses 80KB on the stack.
   const int modulo = (opts.max_pages_retrieved - opts.min_pages_retrieved) > 1 ? (opts.max_pages_retrieved - opts.min_pages_retrieved) : 2;
   Buffer *bufs[BUF_MAX];
+  void *data = NULL;
+  void *new_data = NULL;
+  buffer_size_t data_length = 0;
   int fetch_this_round = 0;
   int rv = 0;
   int buf_rv = 0;
@@ -333,17 +337,18 @@ void manager__spawn_worker(Manager *mgr) {
         mgr->workers[id].hits++;
       while(rv == E_BUFFER_NOT_FOUND) {
         mgr->workers[id].misses++;
-        buf_rv = buffer__initialize(&bufs[i], id_to_get, 0, NULL, mgr->pages[id_to_get]);
-        if (buf_rv != E_OK)
-          show_error(buf_rv, "Unable to get a buffer.  RV is %d.", buf_rv);
-        bufs[i]->ref_count++;
-        rv = list__add(mgr->list, bufs[i], has_list_pin);
+        rv = manager__fetch_page(mgr->pages[id_to_get], &data, &data_length);
+        if (rv != E_OK)
+          show_error(rv, "Ran into an error trying to fetch a page... weird (1).");
+        rv = list__add(mgr->list, &bufs[i], has_list_pin, id_to_get, data, data_length);
         if (rv == E_OK)
           break;
-        // If it already exists, destroy our copy and search again.
+        // If it already exists, destroy our copy; list__add gave us a pin and link via &bufs[i].
         if (rv == E_BUFFER_ALREADY_EXISTS)
-          buffer__destroy(bufs[i], DESTROY_DATA);
-        rv = list__search(mgr->list, &bufs[i], id_to_get, has_list_pin);
+          free(data);
+        if (rv == E_OK || rv == E_BUFFER_ALREADY_EXISTS)
+          break;
+        show_error(rv, "Got an error trying to add a missing buffer... odd.");
       }
     }
     // Hooray, we finished a round!
@@ -354,18 +359,21 @@ void manager__spawn_worker(Manager *mgr) {
       // Try to update the buffers.  The purpose of tyche is to stress test the API, not data randomizing speed.  So we'll cheat by
       // simply copying the same data.
       for(int i=0; i<fetch_this_round; i++) {
-        void *new_data = malloc(bufs[i]->data_length);
+        new_data = malloc(bufs[i]->data_length);
         memcpy(new_data, bufs[i]->data, bufs[i]->data_length);
         rv = list__update(mgr->list, &bufs[i], new_data, bufs[i]->data_length, has_list_pin);
         while(rv == E_BUFFER_IS_DIRTY) {
-          // Someone else updated this buffer before us and it's in the slaughter house now.  Find the updated one.
+          // Someone else updated or deleted this buffer before us and it's in the slaughter house now.
+          // For this application (tyche) we'll just loop repeatedly and keep trying to update it.  Other applications would
+          // probably want to search and re-evaluate their own changes and such (e.g. transactions/MVCC/dirty reads/blind writes).
           id_to_get = bufs[i]->id;
           buffer__release_pin(bufs[i]);
           rv = list__search(mgr->list, &bufs[i], id_to_get, has_list_pin);
           while(rv == E_BUFFER_NOT_FOUND) {
-            buf_rv = buffer__initialize(&bufs[i], id_to_get, 0, NULL, mgr->pages[id_to_get]);
-            bufs[i]->ref_count++;
-            rv = list__add(mgr->list, bufs[i], has_list_pin);
+            rv = manager__fetch_page(mgr->pages[id_to_get], &data, &data_length);
+            if (rv != E_OK)
+              show_error(rv, "Ran into an error trying to fetch a page... weird (1).");
+            rv = list__add(mgr->list, &bufs[i], has_list_pin, id_to_get, data, data_length);
             if (rv == E_OK)
               break;
             if (rv == E_BUFFER_ALREADY_EXISTS)
@@ -447,5 +455,25 @@ int manager__destroy(Manager *mgr) {
   list__destroy(mgr->list);
   free(mgr->workers);
   free(mgr);
+  return E_OK;
+}
+
+
+/* manager__fetch_page
+ * Gets a page from the disk so it can be loaded in a buffer.
+ */
+int manager__fetch_page(char *page_filespec, void **data, buffer_size_t *data_length) {
+  FILE *fh = fopen(page_filespec, "rb");
+  if (fh == NULL)
+    return E_GENERIC;
+  fseek(fh, 0, SEEK_END);
+  *data_length = ftell(fh);
+  rewind(fh);
+  *data = malloc(*data_length);
+  if (*data == NULL)
+    return E_NO_MEMORY;
+  if (fread(*data, *data_length, 1, fh) == 0)
+    return E_GENERIC;
+  fclose(fh);
   return E_OK;
 }

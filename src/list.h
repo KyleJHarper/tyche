@@ -20,19 +20,6 @@
  */
 
 
-/* Build the Skiplist & Node Structures. */
-typedef struct skiplistnode SkiplistNode;
-struct skiplistnode {
-  /* Directions for Traversal.  Left-To-Right Mentality. */
-  SkiplistNode *right;   /* The next highest node in the skiplist graph. */
-  SkiplistNode *down;    /* The next more-granular node in the skiplist graph. */
-
-  /* Buffer Reference to the List Item Itself */
-  Buffer *target;        /* The buffer this node points to.  Always NULL when *up exists. */
-  bufferid_t buffer_id;  /* The ID of the buffer we're pointing to.  Saves a dereference when scanning. */
-};
-
-
 /* Build the Compressor Structures */
 typedef struct compressor Compressor;
 struct compressor {
@@ -65,14 +52,14 @@ struct list {
   uint64_t max_comp_size;                        /* Maximum number of bytes the comp list is allowed to hold, ever. */
 
   /* Locking, Reference Counters, and Similar Members */
-  pthread_mutex_t lock;                          /* For operations requiring exclusive locking of the list (writing to it). */
+  pthread_mutex_t lock;                          /* For operations requiring exclusive locking of the list. */
   pthread_t lock_owner;                          /* Stores the pthread_self() value to avoid double/dead locking. */
   uint8_t lock_depth;                            /* The depth of functions which have locked us, to ensure deeper calls don't release locks. */
   pthread_cond_t writer_condition;               /* The condition variable for writers to wait for when attempting to drain a list of refs. */
   pthread_cond_t reader_condition;               /* The condition variable for readers to wait for when attempting to increment ref count. */
   pthread_cond_t sweeper_condition;              /* The condition variable for sweeping signals. */
-  uint32_t ref_count;                            /* Number of threads pinning this list (searching it) */
-  uint8_t pending_writers;                       /* Value to indicate how many writers are waiting to edit the list. */
+  uint32_t ref_count;                            /* Number of threads pinning this list.  Useful for draining. */
+  uint16_t pending_writers;                      /* Value to indicate how many writers are waiting to edit the list. */
 
   /* Management and Administration Members */
   pthread_t sweeper_thread;                      /* The threads that the sweeper runs in. */
@@ -87,8 +74,6 @@ struct list {
   /* Management of Nodes for Skiplist and Buffers */
   Buffer *head;                                  /* The head of the list of buffers. */
   Buffer *clock_hand;                            /* The current Buffer to be checked when sweeping is invoked. */
-  SkiplistNode *indexes[SKIPLIST_MAX];           /* List of the heads of the bottom-most (least-granular) Skiplists. */
-  uint8_t levels;                                /* The current height of the skip list thus far. */
 
   /* Compressor Pool Management */
   pthread_mutex_t jobs_lock;                     /* The mutex that all jobs need to respect. */
@@ -119,14 +104,14 @@ struct list {
 
 /* Function prototypes.  Not required, but whatever. */
 int list__initialize(List **list, int compressor_count, int compressor_id, int compressor_level, uint64_t max_memory);
-int list__initialize_skiplistnode(SkiplistNode **slnode, Buffer *buf);
-int list__add(List *list, Buffer *buf, uint8_t list_pin_status);
+int list__add(List *list, Buffer **buf, uint8_t list_pin_status);
 int list__remove(List *list, Buffer *buf);
 int list__update(List *list, Buffer **callers_buf, void *data, uint32_t size, uint8_t list_pin_status);
 int list__update_ref(List *list, int delta);
 int list__search(List *list, Buffer **buf, bufferid_t id, uint8_t list_pin_status);
 int list__acquire_write_lock(List *list);
 int list__release_write_lock(List *list);
+inline void list__check_out_of_memory(List *list, uint8_t list_pin_status);
 uint64_t list__sweep(List *list, uint8_t sweep_goal);
 void list__sweeper_start(List *list);
 int list__balance(List *list, uint32_t ratio, uint64_t max_memory);

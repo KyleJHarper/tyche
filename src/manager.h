@@ -9,6 +9,7 @@
 
 #ifndef SRC_MANAGER_H_
 #define SRC_MANAGER_H_
+#include "buffer.h"
 
 
 /* Build the worker struct. */
@@ -58,6 +59,7 @@ void manager__spawn_worker(Manager *mgr);
 void manager__assign_worker_id(workerid_t *referring_id_ptr);
 void manager__abbreviate_number(uint64_t source_number, double *short_number, char *unit);
 int manager__destroy(Manager *mgr);
+int manager__fetch_page(char *page_filespec, void **data, buffer_size_t data_length);
 
 
 #endif /* SRC_MANAGER_H_ */
