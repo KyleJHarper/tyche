@@ -38,7 +38,6 @@ const Buffer BUFFER_INITIALIZER = {
   .id = 0,
   .flags = 0,
   .overhead = 0,
-  .padding = 0,
   .windows = {0},
   .comp_cost = 0,
   .ref_count = 0,
@@ -54,7 +53,6 @@ const Buffer BUFFER_INITIALIZER = {
 
 /* Extern the error codes we'll use. */
 extern const int E_OK;
-extern const int E_GENERIC;
 extern const int E_BUFFER_NOT_FOUND;
 extern const int E_BUFFER_MISSING_DATA;
 extern const int E_BUFFER_ALREADY_COMPRESSED;
@@ -79,6 +77,8 @@ int buffer__initialize(Buffer **buf, bufferid_t id, uint8_t sl_levels, uint32_t 
   for(int i=0; i<sl_levels; i++)
     (*buf)->nexts = NULL;
   (*buf)->sl_levels = sl_levels;
+  /* Set the overhead. */
+  (*buf)->overhead = sizeof(Buffer) + (sizeof(Buffer*) * sl_levels);
   /* If the *data and size are all null/0, the user just wants a blank buffer. */
   if (size == 0 && data == NULL)
     return E_OK;

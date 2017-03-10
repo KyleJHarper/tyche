@@ -249,7 +249,7 @@ inline void list__check_out_of_memory(List *list, uint8_t list_pin_status) {
  * Note: You MUST check return code!
  *   E_OK: will create a Buffer and add a pin for you, then set your **buf to it.
  *   E_BUFFER_ALREADY_EXISTS: will add a pin to the already-found buffer and set your **buf to it.  You still need to free() your *data!
- *   ALL OTHER ERRORS (if any): will mean **buf was not set and no action was taken on the list.
+ *   ALL OTHER ERRORS (if any): will mean **buf is in an unknown state and no action was taken on the list.
  * You MUST release pins from **buf when E_OK **OR** E_BUFFER_ALREADY_EXISTS!
  */
 int list__add(List *list, Buffer **buf, uint8_t list_pin_status, bufferid_t id, void *data, buffer_size_t data_length) {
@@ -263,16 +263,31 @@ int list__add(List *list, Buffer **buf, uint8_t list_pin_status, bufferid_t id, 
   uint8_t sl_levels = 1;
   while((sl_levels <= list->head->sl_levels) && (rand() % 2 == 0))
     sl_levels++;
+  // Make the buffer optimistically...
+  rv = buffer__initialize(buf, id, sl_levels, data_length, data);
+  if(rv != E_OK)
+    return rv;
 
-
-  // This first lock is always safe because ->head can't be removed.
-  Buffer *locked_buffers[sl_levels];
-  Buffer *current = list->head;
-  Buffer *next = NULL;
+  // Start tracking everything we lock and link from.  This first lock is always safe because ->head can't be removed.
+  Buffer *locked_buffers[SKIPLIST_MAX];      // Track which buffers we locked.
+  Buffer *predecessors[SKIPLIST_MAX];        // Track predecessors.  To avoid deadlock, this is a separate list from locked_buffers.
+  int locked_buffers_index = -1;             // Index offset for the locked buffers array.
+  int predecessors_index = -1;               // Index offset for the predecessors we're keeping track of.
+  Buffer *current = list->head;              // Typical 'cur' pointer as we scan.
+  Buffer *next = NULL;                       // Typical 'next' pointer as we scan.
   buffer__lock(current);
-  bufferid_t last_lock_id = list->head->id;
-  int locked_buffers_index = -1;
-  bool release_lock = true;
+  bufferid_t last_lock_id = list->head->id;  // Used in a check to prevent deadlocking by locking the same predecessor twice.
+  bool release_lock = true;                  // Flag to decide if we should unlock a predecessor when the loop repeats.
+
+  // If sl_levels is higher than ->head's sl_levels then we need to keep the lock on head so we can safely link it later.
+  if(sl_levels > list->head->sl_levels) {
+    release_lock = false;
+    locked_buffers_index++;
+    locked_buffers[locked_buffers_index] = list->head;
+    last_lock_id = list->head->id;
+    predecessors_index++;
+    predecessors[predecessors_index] = list->head;
+  }
   // Begin searching.  Start at the highest level (which ->head is always maxed on at runtime) and hold locks as necessary.
   for(int sl_level_index = list->head->sl_levels - 1; sl_level_index >= 0; sl_level_index--) {
     // Try moving forward.  Testing ->nexts[sl_level] is always safe because we hold a lock on current.  Do NOT land on matches.
@@ -287,10 +302,17 @@ int list__add(List *list, Buffer **buf, uint8_t list_pin_status, bufferid_t id, 
     // Check to see if the buffer already exists.  If so, just break out so we can unwind the locked buffers safely.
     if(current->nexts[sl_level_index]->id == id) {
       rv = E_BUFFER_ALREADY_EXISTS;
+      buffer__destroy(*buf, false);
+      *buf = current->nexts[sl_level_index];
       break;
     }
     // We're as far "right" as we can go on this level and *current is locked.  Decide if we're keeping it locked, then loop.
-    if(sl_level_index >= sl_levels || current->id == last_lock_id)
+    if(sl_level_index >= sl_levels)
+      continue;
+    // We always track predecessors that meet the level check directly above.
+    predecessors_index++;
+    predecessors[predecessors_index] = current;
+    if(current->id == last_lock_id)
       continue;
     // We met the level requirement and this locked buffer hasn't been saved yet.
     release_lock = false;
@@ -299,55 +321,28 @@ int list__add(List *list, Buffer **buf, uint8_t list_pin_status, bufferid_t id, 
     last_lock_id = current->id;
   }
 
-
-
-  // Continue searching the list from slstack[0] to ensure it doesn't already exist.  Then add to the list.
-  if (rv == E_OK) {
-    Buffer *nearest_neighbor = slstack[0]->target;
-    // Move right in the buffer list.  ->head is always max, so no need to check anything but ->id.
-    while(nearest_neighbor->next->id <= buf->id)
-      nearest_neighbor = nearest_neighbor->next;
-    if(nearest_neighbor->id == buf->id) {
-      rv = E_BUFFER_ALREADY_EXISTS;
-    } else {
-      buf->next = nearest_neighbor->next;
-      nearest_neighbor->next = buf;
+  // If we're still OK then we've locked everything and the buffer doesn't exist.  Start linking predecessors together.
+  if(rv == E_OK) {
+    // Since everything was OK, ->head needs it's sl_levels updated if this node was taller than it.
+    if(sl_levels > list->head->sl_levels)
+      list->head->sl_levels++;
+    // Link the predecessors.
+    for(int i=0; i<=predecessors_index; i++) {
+      (*buf)->nexts[i] = predecessors[i]->sl_levels[i];  // Point buf's ->next to predecessor's ->next at this level.
+      predecessors[i]->nexts[i] = *buf;                  // Point the predecessor to the new buffer now.
     }
+    // Now update the list components.
+    __sync_fetch_and_add(&list->raw_count, 1);
+    __sync_fetch_and_add(&list->current_raw_size, (*buf)->overhead + (*buf)->data_length);
   }
 
-  // Loop through the slstack and begin linking Skiplist Nodes together everything is still E_OK.
-  if (rv == E_OK) {
-    SkiplistNode *slnode = NULL;
-    for(int i = 0; i < levels; i++) {
-      // Create a new Skiplist Node for each level we'll be inserting at and insert it into that index.
-      slnode_rv = list__initialize_skiplistnode(&slnode, buf);
-      if (slnode_rv != E_OK)
-        return slnode_rv;
-      slnode->right = slstack[i]->right;
-      slstack[i]->right = slnode;
-    }
-    // Now that the Nodes all exist (if any) and our slstack's ->right members point to them, we can set their ->down members.
-    for(int i = levels - 1; i > 0; i--)
-      slstack[i]->right->down = slstack[i-1]->right;
-  }
-
-  // Unlock any buffers we locked along the way.
-  for(int i = locked_ids_index; i >= 0; i--)
+  // Regardless of rv, release all the locks in the order they were locked, for consistency.
+  for(int i = 0; i >= locked_buffers_index; i++)
     buffer__unlock(locked_buffers[i]);
 
   // Remove the list pin we set if the caller didn't provide one.
   if(list_pin_status == NEED_PIN)
     list__update_ref(list, -1);
-
-  // If everything worked, grab the list lock whenever it's available and increment counters.
-  if (rv == E_OK) {
-    pthread_mutex_lock(&list->lock);
-    if(levels == list->levels)
-      list->levels++;
-    list->raw_count++;
-    list->current_raw_size += BUFFER_OVERHEAD + buf->data_length;
-    pthread_mutex_unlock(&list->lock);
-  }
 
   return rv;
 }

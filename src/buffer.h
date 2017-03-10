@@ -66,8 +66,7 @@ struct buffer {
   // -- Word 3
   bufferid_t id;                  /* Identifier of the page. Should come from the system providing the data itself. */
   uint16_t flags;                 /* Holds 16 bit flags.  See enum above for details. */
-  uint8_t overhead;               /* The overhead of each buffer.  It varies because of ->nexts below. */
-  uint8_t padding;                /* Useless padding, forcing alignment. */
+  uint16_t overhead;              /* The overhead of each buffer.  It varies because of ->nexts below. */
   // -- Word 4
   uint16_t windows[MAX_WINDOWS];  /* Array of windows for tracking popularity. */
   // -- Word 5

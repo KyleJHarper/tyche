@@ -30,8 +30,6 @@ extern const int E_BAD_CLI;
 extern const int E_BUFFER_NOT_FOUND;
 extern const int E_GENERIC;
 
-extern const int BUFFER_OVERHEAD;
-
 //extern const int KEEP_DATA;
 extern const int DESTROY_DATA;
 
