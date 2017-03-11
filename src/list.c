@@ -349,124 +349,120 @@ int list__add(List *list, Buffer **buf, uint8_t list_pin_status, bufferid_t id, 
 
 
 /* list__remove
- * Removes the buffer from the list's pool while respecting the list lock and readers.  In the event multiple threads try to remove
- * the same buffer, the first (race condition) will win and the others will simply have their pins removed after the removal is done.
+ * Removes the buffer from the list's while respecting the list lock and readers.  In the event multiple threads try to remove the
+ * same buffer, the first (race condition) will win and the others will simply have their pins removed after the removal is done.
  *
- * Caller MUST have a pin on the buffer!  Function WILL remove all callers' pins, even in a race.
  * Upon successful completion the buffer will be moved to a copy-on-write space (pending deletion).
+ * Caller MUST have a pin on the buffer!  Function WILL remove all callers' pins, even in a race.
  */
 int list__remove(List *list, Buffer *buf) {
-  /* Caller has to have a pin, so even though ref_count is a dirty read it will always be 1+ if the caller did their job right. */
-  if(buf->ref_count < 1)
-    return E_BUFFER_MISSING_A_PIN;
-  /* Use atomics/locks to compare and/or set the dirty flag to prevent multiple updates/deletes at once. */
-  pthread_mutex_lock(&buf->lock);
+  /* Use atomics/locks to compare and/or set the dirty flag to prevent multiple updates/deletes. */
+  buffer__lock(buf);
   if(buf->flags & dirty) {
-    pthread_mutex_unlock(&buf->lock);
+    buffer__unlock(buf);
     while(buf->flags & (removing | updating))
       __sync_synchronize();
     // Whether the buffer was removed or updated doesn't matter, it's in the slaughter house.  Just release our pin.
     __sync_fetch_and_add(&buf->ref_count, -1);
     return E_OK;
   }
-  // Looks like no one else beat us to the update.  Flip some bits and have a party.  We'll mark it dirty after we're done.
+  // Looks like no one else beat us to the update/delete.  Flip some bits and have a party.
   buf->flags |= removing;
   buf->flags |= dirty;
-  pthread_mutex_unlock(&buf->lock);
+  // We can unlock the buffer to allow others to continue scanning while we build our list of predecessors.
+  // This is safe because all other update/remove functions will spin-wait or abort now that the dirty flag is set.
+  // In fact, we don't need the lock ever again.
+  buffer__unlock(buf);
 
   /* Get a read lock to ensure the sweeper doesn't run (or that it's the sweeper who actually called us). */
   list__update_ref(list, 1);
   int rv = E_BUFFER_NOT_FOUND;
 
-  // Build a local stack based on the main list->indexes[] to build breadcrumbs.  Lock each buffer as we descend the skiplist tree.
-  // until we have the whole chain.  Since scanning is always down-and-forward we're safe.
-  SkiplistNode *slstack[SKIPLIST_MAX];
-  Buffer *locked_buffers[SKIPLIST_MAX];
-  bufferid_t last_lock_id = BUFFER_ID_MAX - 1;
-  int locked_ids_index = -1;
-  for(int i = 0; i < SKIPLIST_MAX; i++)
-    slstack[i] = list->indexes[i];
+  // Start tracking everything we lock and link from.  This first lock is always safe because ->head can't be removed.
+  Buffer *locked_buffers[SKIPLIST_MAX];        // Track which buffers we locked.
+  Buffer *predecessors[SKIPLIST_MAX];          // Track predecessors.  To avoid deadlock, this is a separate list from locked_buffers.
+  int locked_buffers_index = -1;               // Index offset for the locked buffers array.
+  int predecessors_index = -1;                 // Index offset for the predecessors we're keeping track of.
+  Buffer *current = list->head;                // Typical 'cur' pointer as we scan.
+  Buffer *next = NULL;                         // Typical 'next' pointer as we scan.
+  buffer__lock(current);
+  bufferid_t last_lock_id = BUFFER_ID_MAX - 1; // Used in a check to prevent deadlocking by locking the same predecessor twice.
+  bool release_lock = true;                    // Flag to decide if we should unlock a predecessor when the loop repeats.
 
-  // Traverse the list to find the ideal location at each level.  Since we're searching, use list->levels as the start height.
-  int levels = 0;
-  for(int i = list->levels - 1; i >= 0; i--) {
-    for(;;) {
-      // Scan forward until we are as close as we can get.
-      while(slstack[i]->right != NULL && slstack[i]->right->buffer_id < buf->id)
-        slstack[i] = slstack[i]->right;
-      // Lock the buffer pointed to (if we haven't already) to effectively lock this SkiplistNode so we can test it.
-      if(slstack[i]->buffer_id != last_lock_id)
-        buffer__lock(slstack[i]->target);
-      // If right is NULL or the ->right member is still bigger, we're as far over as we can go and should have a lock.
-      if(slstack[i]->right == NULL || slstack[i]->right->buffer_id >= buf->id) {
-        if(slstack[i]->buffer_id != last_lock_id) {
-          last_lock_id = slstack[i]->buffer_id;
-          locked_ids_index++;
-          locked_buffers[locked_ids_index] = slstack[i]->target;
-        }
-        break;  // Breaks the forward scanning.
-      }
-      // Otherwise, someone inserted while we acquired this lock.  Release and try moving forward again.
-      buffer__unlock(slstack[i]->target);
+  // If sl_levels is higher than ->head's sl_levels then we need to keep the lock on head so we can safely link it later.
+  if(buf->sl_levels == list->head->sl_levels) {
+    release_lock = false;
+    locked_buffers_index++;
+    locked_buffers[locked_buffers_index] = list->head;
+    last_lock_id = list->head->id;
+    predecessors_index++;
+    predecessors[predecessors_index] = list->head;
+  }
+
+  // Begin searching.  Start at the highest level (which ->head is always maxed on at runtime) and hold locks as necessary.
+  for(int sl_level_index = list->head->sl_levels - 1; sl_level_index >= 0; sl_level_index--) {
+    // Try moving forward.  Testing ->nexts[sl_level] is always safe because we hold a lock on current.  Do NOT land on matches.
+    while(current->nexts[sl_level_index]->id < buf->id) {
+      next = current->nexts[sl_level_index];
+      buffer__lock(next);
+      if(release_lock)
+        buffer__unlock(current);
+      current = next;
+      release_lock = true;
     }
-    // Modify the next slstack node to look at the more-forward position we just jumped to.  If we're at index 0, skip it, we're done.
-    if(i != 0)
-      slstack[i-1] = slstack[i]->down;
-    // If ->right exists and its id matches increment levels so we can modify the skiplist levels later.
-    if(slstack[i]->right != NULL && slstack[i]->right->buffer_id == buf->id)
-      levels++;
+    // We're as far "right" as we can go on this level and *current is locked.  Decide if we're keeping it locked, then loop.
+    //TODO  Can this be a pointer to pointer check?  Just ->nexts[sl_level_index] = buf ?  Or *buf?  Etc?
+    if(current->nexts[sl_level_index]->id == buf->id)
+      rv = E_OK;
+    if(sl_level_index >= buf->sl_levels)
+      continue;
+    //TODO  REMOVE THIS NEXT LINE - DEBUGGING
+    if(current->nexts[sl_level_index]->id != buf->id)
+      show_error(1, "Current nexts at this level doesn't match buf->id.  This is wrong.");
+    // We always track predecessors that meet the level check directly above.
+    predecessors_index++;
+    predecessors[predecessors_index] = current;
+    if(current->id == last_lock_id)
+      continue;
+    // We met the level requirement and this locked buffer hasn't been saved yet.
+    release_lock = false;
+    locked_buffers_index++;
+    locked_buffers[locked_buffers_index] = current;
+    last_lock_id = current->id;
   }
 
-  // Now find the nearest neighbor.
-  Buffer *nearest_neighbor = slstack[0]->target;
-  // Move right in the buffer list.  ->head is always max, so no need to check anything but ->id.
-  while(nearest_neighbor->next->id < buf->id)
-    nearest_neighbor = nearest_neighbor->next;
-  // This should NEVER happen because the caller has a pin... but we'll throw it for debugging.
-  if(nearest_neighbor->next->id != buf->id)
-    exit(1);
-
-  // We should be close-as-can-be.  If ->next matches, we're on the right track.  Otherwise we're still E_BUFFER_NOT_FOUND.
-  rv = E_OK;
-  const uint32_t BUFFER_SIZE = BUFFER_OVERHEAD + (buf->comp_length == 0 ? buf->data_length : buf->comp_length);
-  // Update the list metrics and move the clock hand if it's pointing at the same address as buf.
-  if(list->clock_hand == buf)
-    list->clock_hand = buf->next;
-  if(buf->flags & compressed) {
-    __sync_fetch_and_sub(&list->current_comp_size, BUFFER_SIZE);
-    __sync_fetch_and_sub(&list->comp_count, 1);
-  } else {
-    __sync_fetch_and_sub(&list->current_raw_size, BUFFER_SIZE);
-    __sync_fetch_and_sub(&list->raw_count, 1);
-  }
-
-  // Now change our ->next pointer for nearest_neighbor to drop this from the list, then destroy the slnodes.
-  nearest_neighbor->next = buf->next;
+  // If we're E_OK then we found it and locked everything we needed.  Unlink it and update list values.
   if(rv == E_OK) {
-    SkiplistNode *slnode = NULL;
-    for(int i = levels - 1; i >= 0; i--) {
-      // Each of these levels was already found to have the node, so ->right->right has to exist or at least be NULL.
-      slnode = slstack[i]->right;
-      slstack[i]->right = slstack[i]->right->right;
-      free(slnode);
-      // If the list's skip-index at this level is empty, drop the list levels height.
-      if(list->indexes[i]->right == NULL)
-        list->levels--;
+    const buffer_size_t BUFFER_SIZE = buf->overhead + (buf->comp_length == 0 ? buf->data_length : buf->comp_length);
+    // Update the list metrics and move the clock hand if it's pointing at the same address as buf.
+    if(list->clock_hand == buf)
+      list->clock_hand = buf->nexts[0];
+    // Link the predecessors.
+    for(int i=0; i<=predecessors_index; i++)
+      predecessors[i]->nexts[i] = buf->nexts[i];   // Point the predecessor over buf.
+    if(buf->flags & compressed) {
+      __sync_fetch_and_sub(&list->current_comp_size, BUFFER_SIZE);
+      __sync_fetch_and_sub(&list->comp_count, 1);
+    } else {
+      __sync_fetch_and_sub(&list->current_raw_size, BUFFER_SIZE);
+      __sync_fetch_and_sub(&list->raw_count, 1);
     }
+    // Now that it's removed, check to see if the highest sl_level matches head.  If so, that level might be empty again.
+    if(list->head->nexts[buf->sl_levels - 1] == list->head)
+      list->head->sl_levels--;
+    // Set the removed flag and remove the pin the caller came in with.
+    buf->flags |= removed;
+    __sync_fetch_and_add(&buf->ref_count, -1);
   }
 
-  // Unlock any buffers we locked along the way.
-  for(int i = locked_ids_index; i >= 0; i--)
+  // Regardless of rv, release all the locks in the order they were locked, for consistency.
+  for(int i = 0; i >= locked_buffers_index; i++)
     buffer__unlock(locked_buffers[i]);
 
-  /* Flip bits and let go of the list pin we held.  Then send the buffer off. */
-  pthread_mutex_lock(&buf->lock);
-  buf->flags = buf->flags | removed;
+  // Flip bits and let go of the list pin we held.  Then send the buffer off if everything is OK.
   buf->flags &= (~removing);
-  pthread_mutex_unlock(&buf->lock);
-  // Remove the pin the caller came in with.
-  __sync_fetch_and_add(&buf->ref_count, -1);
-  list__add_cow(list, buf);
+  if(rv == E_OK)
+    list__add_cow(list, buf);
   list__update_ref(list, -1);
 
   return rv;
@@ -474,92 +470,63 @@ int list__remove(List *list, Buffer *buf) {
 
 
 /* list__search
- * Searches for a buffer in the list specified so it can be sent back (via indirection).  We need to pin the list so we can
- * search it.  When successfully found, we increment ref_count.
+ * Searches for a buffer in the list specified so it can be sent back (via indirection).
+ * Caller MUST release their pin on the buf when they're done with it.
  */
 int list__search(List *list, Buffer **buf, bufferid_t id, uint8_t list_pin_status) {
-  /* Since searching can cause restorations and ultimately exceed max size, check for it.  This is a dirty read but OK. */
-  if(list->current_raw_size > list->max_raw_size) {
-    // We're about to wake up the sweeper, which means we need to remove this threads list pin if the caller has one.
-    if(list_pin_status == HAVE_PIN)
-      list__update_ref(list, -1);
-    pthread_mutex_lock(&list->lock);
-    while(list->current_raw_size > list->max_raw_size) {
-      pthread_cond_broadcast(&list->sweeper_condition);
-      pthread_cond_wait(&list->reader_condition, &list->lock);
-    }
-    pthread_mutex_unlock(&list->lock);
-    // Now put this threads list pin back in place, making the caller never-aware it lost it's pin; if applicable.
-    if(list_pin_status == HAVE_PIN)
-      list__update_ref(list, 1);
-  }
-
+  // Initialize a few basic values and test for OOM.  Then make sure the list is pinned properly.
+  int rv = E_BUFFER_NOT_FOUND;
+  list__check_out_of_memory(list, list_pin_status);
   /* If the caller doesn't provide a list pin, add one. */
   if(list_pin_status == NEED_PIN)
     list__update_ref(list, 1);
 
-  /* Begin searching the list at the highest level's index head. */
-  int rv = E_BUFFER_NOT_FOUND;
-  SkiplistNode *slnode = list->indexes[list->levels];
-  while(rv == E_BUFFER_NOT_FOUND) {
-    // Move right until we can't go farther.  Try to let the system know to prefetch this, as this is the hottest spot in the code.
-    while(slnode->right != NULL && slnode->right->buffer_id <= id) {
-      slnode = slnode->right;
-      __builtin_prefetch(slnode->right, 0, 1);
-    }
-    // If the node matches, we're done!  Try to update the ref and assign everything appropriately.
-    if(slnode->buffer_id == id) {
-      *buf = slnode->target;
-      __sync_fetch_and_add(&(*buf)->ref_count, 1);
-      rv = E_OK;
-    }
-    // If we can't move down, leave.
-    if(slnode->down == NULL)
-      break;
-    slnode = slnode->down;
-  }
+  // Searching doesn't keep locks, so there's very little to track here.
+  Buffer *current = list->head;              // Typical 'cur' pointer as we scan.
+  Buffer *next = NULL;                       // Typical 'next' pointer as we scan.
+  buffer__lock(current);
 
-  /* If we're still E_BUFFER_NOT_FOUND, scan the nearest_neighbor until we find it. */
-  if(rv == E_BUFFER_NOT_FOUND) {
-    Buffer *nearest_neighbor = slnode->target;
-    while(nearest_neighbor->next->id <= id)
-      nearest_neighbor = nearest_neighbor->next;
-    // If we got a match, score.  Our nearest_neighbor is now the match.  Update ref and assign things.
-    if(nearest_neighbor->id == id) {
-      // Assign it.
-      *buf = nearest_neighbor;
-      __sync_fetch_and_add(&(*buf)->ref_count, 1);
+  // Begin searching.  Start at the highest level (which ->head is always maxed on at runtime) and hold locks as necessary.
+  for(int sl_level_index = list->head->sl_levels - 1; sl_level_index >= 0; sl_level_index--) {
+    // Try moving forward.  Testing ->nexts[sl_level] is always safe because we hold a lock on current.  Land on matches.
+    while(current->nexts[sl_level_index]->id <= id) {
+      next = current->nexts[sl_level_index];
+      buffer__lock(next);
+      buffer__unlock(current);
+      current = next;
+    }
+    // If the buffer matches, hooray, we're done!
+    if(current->id == id) {
       rv = E_OK;
+      *buf = current;
+      __sync_fetch_and_add(&(*buf)->ref_count, 1);
+      break;
     }
   }
 
   /* If the buffer was found and is compressed, we need to decompress it. */
   if(rv == E_OK && ((*buf)->flags & compressed)) {
-    // The only protection we need is the buffer's lock.  We already have a pin, so it can't poof and there can't be any readers.
-    pthread_mutex_lock(&(*buf)->lock);
-    // First check above was a dirty read, do it again
-    if((*buf)->comp_length != 0) {
-      // No one else decompressed it before us, so let's move forward.
-      int decompress_rv = E_OK;
-      uint16_t comp_length = (*buf)->comp_length;
-      decompress_rv = buffer__decompress(*buf, list->compressor_id);
-      if (decompress_rv != E_OK && decompress_rv != E_BUFFER_ALREADY_DECOMPRESSED) {
-        pthread_mutex_unlock(&(*buf)->lock);
-        return E_BUFFER_COMPRESSION_PROBLEM;
-      }
-      // Update counters for the list now by forcibly grabbing the mutex, while still holding our pin.
-      pthread_mutex_lock(&list->lock);
-      list->raw_count++;
-      list->comp_count--;
-      list->current_comp_size -= (BUFFER_OVERHEAD + comp_length);
-      list->current_raw_size += (BUFFER_OVERHEAD + (*buf)->data_length);
-      list->restorations++;
-      pthread_mutex_unlock(&list->lock);
+    int decompress_rv = E_OK;
+    buffer_size_t comp_length = (*buf)->comp_length;
+    decompress_rv = buffer__decompress(*buf, list->compressor_id);
+    if (decompress_rv != E_OK) {
+      buffer__unlock(*buf);  // This is *current too, which needs unlocked.
+      return decompress_rv;
     }
+    // Update counters for the list.  Just use its mutex since we're doing several operations.
+    pthread_mutex_lock(&list->lock);
+    list->raw_count++;
+    list->comp_count--;
+    list->current_comp_size -= ((*buf)->overhead + comp_length);
+    list->current_raw_size += ((*buf)->overhead + (*buf)->data_length);
+    list->restorations++;
+    pthread_mutex_unlock(&list->lock);
     // Clear the compressed flag.
     (*buf)->flags &= (~compressed);
-    pthread_mutex_unlock(&(*buf)->lock);
   }
+
+  // Regardless of rv, unlock current.
+  buffer__unlock(current);
 
   /* If the caller didn't provide a pin, remove the one we set above. */
   if(list_pin_status == NEED_PIN)
@@ -581,142 +548,136 @@ int list__search(List *list, Buffer **buf, bufferid_t id, uint8_t list_pin_statu
  * Upon successful completion the original buffer will be moved to a copy-on-write space (pending deletion), and the caller's buf
  * will be linked to the NEW buffer.  In other words, you get the new/updated buffer back so you don't have to search for it again.
  */
-int list__update(List *list, Buffer **callers_buf, void *data, uint32_t size, uint8_t list_pin_status) {
-  /* Caller has to have a pin, so even though ref_count is a dirty read it will always be 1+ if the caller did their job right. */
+int list__update(List *list, Buffer **callers_buf, void *data, buffer_size_t size, uint8_t list_pin_status) {
+  /* Use atomics/locks to compare and/or set the dirty flag to prevent multiple updates/deletes. */
   Buffer *buf = *callers_buf;
-  if(buf->ref_count < 1)
-    return E_BUFFER_MISSING_A_PIN;
-  /* Use atomics/locks to compare and/or set the dirty flag to prevent multiple updates at once. */
-  pthread_mutex_lock(&buf->lock);
+  buffer__lock(buf);
   if(buf->flags & dirty) {
-    pthread_mutex_unlock(&buf->lock);
-    while((buf->flags & updating) || (buf->flags & removing))
+    buffer__unlock(buf);
+    while(buf->flags & (removing | updating))
       __sync_synchronize();
+    // Whether the buffer was removed or updated doesn't matter, it's in the slaughter house.  Keep pin and return to caller.
     return E_BUFFER_IS_DIRTY;
   }
-  // Looks like no one else beat us to the update.  Flip some bits and have a party.  We'll mark it dirty after we're done.
+  // Looks like no one else beat us to the update/delete.  Flip some bits and have a party.
   buf->flags |= updating;
   buf->flags |= dirty;
-  pthread_mutex_unlock(&buf->lock);
+  // We can unlock the buffer to allow others to continue scanning while we build our list of predecessors.
+  // This is safe because all other update/remove functions will spin-wait or abort now that the dirty flag is set.
+  // In fact, we don't need the lock ever again.
+  buffer__unlock(buf);
 
   /* Grab the list lock so we can handle sweeping processes and signaling correctly.  Small race will allow exceeding max, but that's ok. */
-  if((buf->flags & compressing) == 0 && (list->current_raw_size > list->max_raw_size)) {
-    // We're about to wake up the sweeper, which means we need to remove this threads list pin if the caller has one.
-    if(list_pin_status == HAVE_PIN)
-      list__update_ref(list, -1);
-    pthread_mutex_lock(&list->lock);
-    while(list->current_raw_size > list->max_raw_size) {
-      pthread_cond_broadcast(&list->sweeper_condition);
-      pthread_cond_wait(&list->reader_condition, &list->lock);
-    }
-    pthread_mutex_unlock(&list->lock);
-    // Now put this threads list pin back in place, making the caller never-aware it lost it's pin; if applicable.
-    if(list_pin_status == HAVE_PIN)
-      list__update_ref(list, 1);
-  }
-
+  if((buf->flags & compressing) == 0)
+    list__check_out_of_memory(list);
   // Add a list pin if the caller didn't provide one.
   if(list_pin_status == NEED_PIN)
     list__update_ref(list, 1);
 
-  // Since we're just updating a buffer in place, we don't need an slstack.  Just find the topmost slnode.
-  SkiplistNode *topmost_slnode = NULL;
-  // Build a local stack based on the main list->indexes[] to build breadcrumbs.  Lock each buffer as we descend the skiplist tree.
-  // until we have the whole chain.  Since scanning is always down-and-forward we're safe.
-  SkiplistNode *slstack[SKIPLIST_MAX];
-  Buffer *locked_buffers[SKIPLIST_MAX];
-  bufferid_t last_lock_id = BUFFER_ID_MAX - 1;
-  int locked_ids_index = -1;
-  for(int i = 0; i < SKIPLIST_MAX; i++)
-    slstack[i] = list->indexes[i];
+  /* Get a read lock to ensure the sweeper doesn't run (or that it's the sweeper who actually called us). */
+  list__update_ref(list, 1);
+  int rv = E_BUFFER_NOT_FOUND;
 
-  // Traverse the list to find the topmost slnode.
-  for(int i = list->levels - 1; i >= 0; i--) {
-    for(;;) {
-      // Scan forward until we are as close as we can get.
-      while(slstack[i]->right != NULL && slstack[i]->right->buffer_id < buf->id)
-        slstack[i] = slstack[i]->right;
-      // If the ->right->target matches our buffer, we found the topmost.
-      if(topmost_slnode == NULL && slstack[i]->right != NULL && slstack[i]->right->target == buf)
-        topmost_slnode = slstack[i]->right;
-      // Lock the buffer pointed to (if we haven't already) to effectively lock this SkiplistNode so we can test it.
-      if(slstack[i]->buffer_id != last_lock_id)
-        buffer__lock(slstack[i]->target);
-      // If right is NULL or the ->right member is still bigger, we're as far over as we can go and should have a lock.
-      if(slstack[i]->right == NULL || slstack[i]->right->buffer_id >= buf->id) {
-        if(slstack[i]->buffer_id != last_lock_id) {
-          last_lock_id = slstack[i]->buffer_id;
-          locked_ids_index++;
-          locked_buffers[locked_ids_index] = slstack[i]->target;
-        }
-        break;
-      }
-      // Otherwise, someone inserted while we acquired this lock.  Release and try moving forward again.
-      buffer__unlock(slstack[i]->target);
+  // Start tracking everything we lock and link from.  This first lock is always safe because ->head can't be removed.
+  Buffer *locked_buffers[SKIPLIST_MAX];        // Track which buffers we locked.
+  Buffer *predecessors[SKIPLIST_MAX];          // Track predecessors.  To avoid deadlock, this is a separate list from locked_buffers.
+  int locked_buffers_index = -1;               // Index offset for the locked buffers array.
+  int predecessors_index = -1;                 // Index offset for the predecessors we're keeping track of.
+  Buffer *current = list->head;                // Typical 'cur' pointer as we scan.
+  Buffer *next = NULL;                         // Typical 'next' pointer as we scan.
+  buffer__lock(current);
+  bufferid_t last_lock_id = BUFFER_ID_MAX - 1; // Used in a check to prevent deadlocking by locking the same predecessor twice.
+  bool release_lock = true;                    // Flag to decide if we should unlock a predecessor when the loop repeats.
+
+  // If sl_levels is higher than ->head's sl_levels then we need to keep the lock on head so we can safely link it later.
+  if(buf->sl_levels == list->head->sl_levels) {
+    release_lock = false;
+    locked_buffers_index++;
+    locked_buffers[locked_buffers_index] = list->head;
+    last_lock_id = list->head->id;
+    predecessors_index++;
+    predecessors[predecessors_index] = list->head;
+  }
+
+  // Begin searching.  Start at the highest level (which ->head is always maxed on at runtime) and hold locks as necessary.
+  for(int sl_level_index = list->head->sl_levels - 1; sl_level_index >= 0; sl_level_index--) {
+    // Try moving forward.  Testing ->nexts[sl_level] is always safe because we hold a lock on current.  Do NOT land on matches.
+    while(current->nexts[sl_level_index]->id < buf->id) {
+      next = current->nexts[sl_level_index];
+      buffer__lock(next);
+      if(release_lock)
+        buffer__unlock(current);
+      current = next;
+      release_lock = true;
     }
-    // Modify the next slstack node to look at the more-forward position we just jumped to.  If we're at index 0, skip it, we're done.
-    if(i != 0)
-      slstack[i-1] = slstack[i]->down;
+    // We're as far "right" as we can go on this level and *current is locked.  Decide if we're keeping it locked, then loop.
+    //TODO  Can this be a pointer to pointer check?  Just ->nexts[sl_level_index] = buf ?  Or *buf?  Etc?
+    if(current->nexts[sl_level_index]->id == buf->id)
+      rv = E_OK;
+    if(sl_level_index >= buf->sl_levels)
+      continue;
+    //TODO  REMOVE THIS NEXT LINE - DEBUGGING
+    if(current->nexts[sl_level_index]->id != buf->id)
+      show_error(1, "Current nexts at this level doesn't match buf->id.  This is wrong.  From update btw.");
+    // We always track predecessors that meet the level check directly above.
+    predecessors_index++;
+    predecessors[predecessors_index] = current;
+    if(current->id == last_lock_id)
+      continue;
+    // We met the level requirement and this locked buffer hasn't been saved yet.
+    release_lock = false;
+    locked_buffers_index++;
+    locked_buffers[locked_buffers_index] = current;
+    last_lock_id = current->id;
   }
 
-  // Now find the nearest neighbor.
-  Buffer *nearest_neighbor = slstack[0]->target;
-  // Move right in the buffer list.  ->head is always max, so no need to check anything but ->id.
-  while(nearest_neighbor->next->id < buf->id) {
-    nearest_neighbor = nearest_neighbor->next;
-  }
-  // This should NEVER happen because the caller has a pin... but we'll throw it.
-  if(nearest_neighbor->next->id != buf->id) {
-    exit(3);
+  // If rv is E_OK then we found it and locked everything.  Create the new buffer and update linking.
+  if(rv == E_OK) {
+    // Make a copy of the buffer.  The new buffer will only have ONE (1) ref, the updater!  Remove its pin from buf.
+    Buffer *new_buffer;
+    buffer__initialize(&new_buffer, buf->id, buf->sl_levels, size, data);
+    buffer__copy(buf, new_buffer, false);
+    new_buffer->ref_count = 1;
+    new_buffer->data_length = size;
+    new_buffer->comp_length = 0;
+    // If the update is working with a compressing buffer, update sizes properly or we'll have skewed accounting.
+    if(buf->flags & compressing) {
+      new_buffer->data_length = buf->data_length;
+      new_buffer->comp_length = size;
+    }
+    // Remove callers pin on the original buffer.
+    __sync_fetch_and_add(&buf->ref_count, -1);
+
+    // Update the list metrics and move the clock hand if it's pointing at the same address as buf.
+    if(list->clock_hand == buf)
+      list->clock_hand = buf->nexts[0];
+    // Link the predecessors.
+    for(int i=0; i<=predecessors_index; i++) {
+      new_buffer->nexts[i] = buf->nexts[i];     // Point new buffer to old buf's entries.
+      predecessors[i]->nexts[i] = new_buffer;   // Point the predecessor to new_buffer.
+    }
+    // Now that we're done, we need to change the caller's buf via indirection so they see the new buffer.
+    *callers_buf = new_buffer;
   }
 
-  // Make a copy of the buffer.  The new buffer will only have ONE (1) ref, the updater!  Remove its pin from buf.
-  Buffer *new_buffer;
-  buffer__initialize(&new_buffer, buf->id, size, data, NULL);
-  buffer__copy(buf, new_buffer, false);
-  new_buffer->ref_count = 1;
-  new_buffer->data_length = size;
-  new_buffer->comp_length = 0;
-  // If the update is working with a compressing buffer, update sizes properly or we'll have skewed accounting.
-  if(buf->flags & compressing) {
-    new_buffer->data_length = buf->data_length;
-    new_buffer->comp_length = size;
-  }
-  __sync_fetch_and_add(&buf->ref_count, -1);
-
-  // Update all the linking.  Update the new_buffer first!
-  new_buffer->next = buf->next;
-  nearest_neighbor->next = new_buffer;
-  while(topmost_slnode != NULL && topmost_slnode->target == buf) {
-    topmost_slnode->target = new_buffer;
-    if(topmost_slnode->down == NULL)
-      break;
-    topmost_slnode = topmost_slnode->down;
-  }
-
-  // Unlock any buffers we locked along the way.
-  for(int i = locked_ids_index; i >= 0; i--)
+  // Regardless of rv, release all the locks in the order they were locked, for consistency.
+  for(int i = 0; i >= locked_buffers_index; i++)
     buffer__unlock(locked_buffers[i]);
 
   // Remove the list pin we set if the caller didn't provide one.
   if(list_pin_status == NEED_PIN)
     list__update_ref(list, -1);
 
-  // Now that we're done reading buf, we need to change the caller's buf via indirection so they see the new buffer.
-  *callers_buf = new_buffer;
-
   // Check to see if this was just a raw-to-raw update.  Compressors update list size on their own.
   if((buf->flags & compressing) == 0)
-    // Coerce to allow a negative value to the atomic; otherwise an underflow can be sent.
-    __sync_fetch_and_add(&list->current_raw_size, (int)(size - buf->data_length));
+    __sync_fetch_and_add(&list->current_raw_size, (int)(size - buf->data_length));  // Coerce to allow a negative value to atomic.
 
-  // Mark the buffer dirty, remove the updating flag, and throw it in the dirty pool for future eviction.
-  pthread_mutex_lock(&buf->lock);
+  // Clear the updating flag and add this to the slaughter house if everything is OK.
   buf->flags &= (~updating);
-  pthread_mutex_unlock(&buf->lock);
-  list__add_cow(list, buf);
+  if(rv == E_OK)
+    list__add_cow(list, buf);
 
-  return E_OK;
+  return rv;
 }
 
 
@@ -766,8 +727,8 @@ uint64_t list__sweep(List *list, uint8_t sweep_goal) {
     while(1) {
       // Scan until we find a buffer to remove.  Popularity is halved until a victim is found.  Skip head matches.
       while(1) {
-        list->clock_hand = list->clock_hand->next;
-        if (list->clock_hand->popularity == 0 && list->clock_hand != list->head) {
+        list->clock_hand = list->clock_hand->nexts[0];
+        if(list->clock_hand->popularity == 0 && list->clock_hand != list->head) {
           // If the buffer is already pending for sweep operations, we can't reuse it.  Skip.
           if(list->clock_hand->flags & pending_sweep)
             continue;

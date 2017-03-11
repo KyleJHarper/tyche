@@ -74,6 +74,8 @@ struct list {
   /* Management of Nodes for Skiplist and Buffers */
   Buffer *head;                                  /* The head of the list of buffers. */
   Buffer *clock_hand;                            /* The current Buffer to be checked when sweeping is invoked. */
+  float WINDOW_WEIGHTS[MAX_WINDOWS];             /* The weights the user wants to assign to each window. */
+  int window_index;                              /* The index for the current window. */
 
   /* Compressor Pool Management */
   pthread_mutex_t jobs_lock;                     /* The mutex that all jobs need to respect. */
