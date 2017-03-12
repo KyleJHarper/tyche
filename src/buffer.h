@@ -15,9 +15,11 @@
 #include <stdbool.h> /* For bool types. */
 
 
-/* Globals to help track limits. */
+/* Globals to help track limits and window information. */
 #define MAX_POPULARITY  UINT16_MAX
+#define POPULARITY_HIT           1
 #define MAX_WINDOWS              4
+#define WINDOW_DURATION          5  // Seconds
 #define SKIPLIST_MAX            32
 #define BUFFER_ID_MAX   UINT32_MAX
 
@@ -67,7 +69,7 @@ struct buffer {
   bufferid_t id;                  /* Identifier of the page. Should come from the system providing the data itself. */
   uint16_t flags;                 /* Holds 16 bit flags.  See enum above for details. */
   uint16_t overhead;              /* The overhead of each buffer.  It varies because of ->nexts below. */
-  // -- Word 4
+  // -- Word 4 (when using the default of 4 windows)
   uint16_t windows[MAX_WINDOWS];  /* Array of windows for tracking popularity. */
   // -- Word 5
   uint32_t comp_cost;             /* Time spent, in ns, to compress and decompress a page.  Using clock_gettime(3) */
@@ -82,7 +84,7 @@ struct buffer {
 
 
 /* Prototypes */
-int buffer__initialize(Buffer **buf, bufferid_t id, uint8_t sl_levels, buffer_size_t size, void *data, char *page_filespec);
+int buffer__initialize(Buffer **buf, bufferid_t id, uint8_t sl_levels, buffer_size_t size, void *data);
 void buffer__destroy(Buffer *buf, const bool destroy_data);
 void buffer__lock(Buffer *buf);
 void buffer__unlock(Buffer *buf);

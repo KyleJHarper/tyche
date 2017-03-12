@@ -44,9 +44,6 @@ extern const int E_GENERIC;
 extern const int E_BUFFER_NOT_FOUND;
 extern const int E_BUFFER_ALREADY_EXISTS;
 extern const int E_BUFFER_ALREADY_COMPRESSED;
-extern const int E_BUFFER_ALREADY_DECOMPRESSED;
-extern const int E_BUFFER_COMPRESSION_PROBLEM;
-extern const int E_BUFFER_MISSING_A_PIN;
 extern const int E_BUFFER_IS_DIRTY;
 extern const int E_LIST_CANNOT_BALANCE;
 extern const int E_LIST_REMOVAL;
@@ -62,6 +59,9 @@ extern const int NEED_PIN;
 
 // Create a global tracker for compressor IDs.  This is because I can't have circular things:
 int next_compress_worker_id = 0;
+// Set the weights globally following Zipf's law.
+const int WINDOW_WEIGHTS[MAX_WINDOWS] = {1, 2, 3, 4};
+
 
 
 
@@ -122,6 +122,7 @@ int list__initialize(List **list, int compressor_count, int compressor_id, int c
   (*list)->head->sl_levels = 1;
   (*list)->head->nexts[0] = (*list)->head;
   (*list)->clock_hand = (*list)->head;
+  (*list)->window_index = 0;
 
   /* Compressor Pool Management */
   pthread_mutex_init(&(*list)->jobs_lock, NULL);
@@ -495,11 +496,18 @@ int list__search(List *list, Buffer **buf, bufferid_t id, uint8_t list_pin_statu
       buffer__unlock(current);
       current = next;
     }
-    // If the buffer matches, hooray, we're done!
+    // If the buffer matches, hooray, we're done!  Update the window data.
     if(current->id == id) {
       rv = E_OK;
       *buf = current;
-      __sync_fetch_and_add(&(*buf)->ref_count, 1);
+      __sync_fetch_and_add(&(*buf)->ref_count, 1);  // This has to be atomic because other threads can release their pin any time.
+      if((*buf)->windows[list->window_index] + POPULARITY_HIT <= MAX_POPULARITY)
+        (*buf)->windows[list->window_index] += POPULARITY_HIT;
+      // Compute the point-in-time weight.
+      uint32_t new_weight = 0;
+      for(int i=0; i<MAX_WINDOWS; i++)
+        new_weight += ((*buf)->windows[(list->window_index + i) % MAX_WINDOWS] * WINDOW_WEIGHTS[i]);
+      (*buf)->weighted_popularity = new_weight;
       break;
     }
   }
@@ -1231,5 +1239,4 @@ void list__slaughter_house(List *list) {
 
   return;
 }
-
 

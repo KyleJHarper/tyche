@@ -71,11 +71,10 @@ struct list {
   uint64_t compressions;                         /* Buffers compressed during the life of the list. */
   uint64_t evictions;                            /* Buffers that were evicted from the list entirely. */
 
-  /* Management of Nodes for Skiplist and Buffers */
+  /* Management of Nodes. */
   Buffer *head;                                  /* The head of the list of buffers. */
   Buffer *clock_hand;                            /* The current Buffer to be checked when sweeping is invoked. */
-  float WINDOW_WEIGHTS[MAX_WINDOWS];             /* The weights the user wants to assign to each window. */
-  int window_index;                              /* The index for the current window. */
+  uint8_t window_index;                          /* The index for the current window. */
 
   /* Compressor Pool Management */
   pthread_mutex_t jobs_lock;                     /* The mutex that all jobs need to respect. */
