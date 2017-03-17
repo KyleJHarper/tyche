@@ -59,9 +59,23 @@ extern const int NEED_PIN;
 
 // Create a global tracker for compressor IDs.  This is because I can't have circular things:
 int next_compress_worker_id = 0;
-// Set the weights globally following Zipf's law.
-const int WINDOW_WEIGHTS[MAX_WINDOWS] = {1, 2, 3, 4};
 
+/* Lots of constants and math for window tracking */
+// Set the weights globally following Zipf's law.
+const int   WINDOW_WEIGHTS[MAX_WINDOWS] = {1, 2, 3, 4};
+const float MIN_WEIGHT = 1.0f / WINDOW_WEIGHTS[MAX_WINDOWS - 1];
+const float MAX_WEIGHT = (float)ceil(1.0f * MAX_POPULARITY * (1.0 + (1.0/2) + (1.0/3) + (1.0/4)));
+const int   MAX_BUCKETS = (log(MAX_WEIGHT) / log(2)) + (log(WINDOW_WEIGHTS[MAX_WINDOWS - 1]) / log(POPULARITY_HIT)) + 2;
+float BUCKET_THRESHOLDS[MAX_BUCKETS] = {0};
+// Explained: We break buckets up starting with the lowest possible value (MIN_WEIGHT) and move them every time they double from
+// their previous value.  So for example, if MIN_WEIGHT was 1/4 the buckets will be:
+//   bucket_weights[0] = 1/4 * 1 ==> 1/4
+//   bucket_weights[1] = 1/4 * 2 ==> 1/2
+//   bucket_weights[1] = 1/4 * 4 ==> 1
+//   bucket_weights[1] = 1/4 * 8 ==> 2
+// In the end we have log(max_weight)/log(2) to get the number of buckets for whole integers.  Then we add a few more by computing
+// the log() of the numerator and denominator of our popularity hit and the smallest window weight.  Then we add 2 to account for
+// rounding and the zero-index.
 
 
 
@@ -115,14 +129,18 @@ int list__initialize(List **list, int compressor_count, int compressor_id, int c
   (*list)->evictions = 0;
 
   /* Head Nodes of the List. Make the Buffer list head a dummy buffer. */
-  rv = buffer__initialize(&(*list)->head, BUFFER_ID_MAX, SKIPLIST_MAX, 0, (void*)0, NULL);
+  rv = buffer__initialize(&(*list)->head, BUFFER_ID_MAX, SKIPLIST_MAX, 0, NULL);
   if (rv != E_OK)
     return rv;
   // Change the list head levels back to 1 now that we're done allocating space for it.
   (*list)->head->sl_levels = 1;
   (*list)->head->nexts[0] = (*list)->head;
-  (*list)->clock_hand = (*list)->head;
   (*list)->window_index = 0;
+  for(int i=0; i<UINT8_MAX; i++) {
+    rv = buffer__initialize(&(*list)->buckets[i], BUFFER_ID_MAX, 0, 0, NULL);
+    (*list)->buckets[i]->bucket_right = (*list)->buckets[i];
+    (*list)->buckets[i]->bucket_left  = (*list)->buckets[i];
+  }
 
   /* Compressor Pool Management */
   pthread_mutex_init(&(*list)->jobs_lock, NULL);
@@ -168,6 +186,9 @@ int list__initialize(List **list, int compressor_count, int compressor_id, int c
   (*list)->cow_head->nexts[0] = (*list)->cow_head;
   pthread_create(&(*list)->slaughter_house_thread, NULL, (void *) &list__slaughter_house, (*list));
 
+  /* Update the bucket thresholds since we can't do this globally :(  */
+  for(int i=0; i<MAX_BUCKETS; i++)
+    BUCKET_THRESHOLDS[i] = MIN_WEIGHT * pow(2,i);
   return E_OK;
 }
 
@@ -507,7 +528,8 @@ int list__search(List *list, Buffer **buf, bufferid_t id, uint8_t list_pin_statu
       uint32_t new_weight = 0;
       for(int i=0; i<MAX_WINDOWS; i++)
         new_weight += ((*buf)->windows[(list->window_index + i) % MAX_WINDOWS] * WINDOW_WEIGHTS[i]);
-      (*buf)->weighted_popularity = new_weight;
+      if(new_weight > BUCKET_THRESHOLDS[(*buf)->bucket_index])
+        list__assign_to_bucket(*buf);
       break;
     }
   }
@@ -728,7 +750,16 @@ uint64_t list__sweep(List *list, uint8_t sweep_goal) {
   uint64_t bytes_freed = 0;
   uint64_t comp_bytes_added = 0;
   uint32_t total_victims = 0;
+  uint8_t  bucket_index = 0;
   const uint64_t BYTES_NEEDED = (list->current_raw_size > list->max_raw_size ? list->current_raw_size - list->max_raw_size : 0) + (list->max_raw_size * sweep_goal / 100);
+
+  // -- Step 1) Free up raw space until we hit the sweep goal
+  if(BYTES_NEEDED != 0 && list->current_raw_size > list->max_raw_size) {
+    while(true){
+      //
+    }
+  }
+
 
   // Loop forever to free up memory.  Memory checks happen near the end of the loop.
   if(BYTES_NEEDED != 0 && list->current_raw_size > list->max_raw_size) {

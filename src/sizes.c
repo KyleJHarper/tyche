@@ -69,8 +69,6 @@ int main() {
   /* Management of Nodes for Skiplist and Buffers */
   printf("Size of List->head                            : %5zu Bytes\n", sizeof((List *)0)->head);
   printf("Size of List->clock_hand                      : %5zu Bytes\n", sizeof((List *)0)->clock_hand);
-  printf("Size of List->indexes                         : %5zu Bytes\n", sizeof((List *)0)->indexes);
-  printf("Size of List->levels                          : %5zu Bytes\n", sizeof((List *)0)->levels);
   /* Compressor Pool Management */
   printf("Size of List->jobs_lock                       : %5zu Bytes\n", sizeof((List *)0)->jobs_lock);
   printf("Size of List->jobs_cond                       : %5zu Bytes\n", sizeof((List *)0)->jobs_cond);
@@ -107,35 +105,23 @@ int main() {
   printf("Size of Compressor                              %5zu Bytes\n", sizeof(Compressor));
 
 
-  // -- SkiplistNode Information
-  printf("\n");
-  /* Directions for Traversal.  Left-To-Right Mentality. */
-  printf("Size of SkiplistNode->right                   : %5zu Bytes\n", sizeof((SkiplistNode *)0)->right);
-  printf("Size of SkiplistNode->down                    : %5zu Bytes\n", sizeof((SkiplistNode *)0)->down);
-  /* Buffer Reference to the List Item Itself */
-  printf("Size of SkiplistNode->target                  : %5zu Bytes\n", sizeof((SkiplistNode *)0)->target);
-  printf("Size of SkiplistNode->buffer_id               : %5zu Bytes\n", sizeof((SkiplistNode *)0)->buffer_id);
-  printf("-----------------------------------------------------------\n");
-  printf("Size of SkiplistNode                            %5zu Bytes\n", sizeof(SkiplistNode));
-
-
   // -- Buffer Information
   printf("\n");
-  /* The payload we want to cache (i.e.: the page). */
   printf("Size of Buffer->data                          : %5zu Bytes\n", sizeof((Buffer *)0)->data);
   printf("Size of Buffer->data_length                   : %5zu Bytes\n", sizeof((Buffer *)0)->data_length);
   printf("Size of Buffer->comp_length                   : %5zu Bytes\n", sizeof((Buffer *)0)->comp_length);
-  /* Attributes for typical buffer organization and management. */
-  printf("Size of Buffer->id                            : %5zu Bytes\n", sizeof((Buffer *)0)->id);
-  printf("Size of Buffer->flags                         : %5zu Bytes\n", sizeof((Buffer *)0)->flags);
-  printf("Size of Buffer->overhead                      : %5zu Bytes\n", sizeof((Buffer *)0)->overhead);
-  printf("Size of Buffer->padding                       : %5zu Bytes\n", sizeof((Buffer *)0)->padding);
+  printf("Size of Buffer->bucket_right                  : %5zu Bytes\n", sizeof((Buffer *)0)->bucket_right);
+  printf("Size of Buffer->bucket_left                   : %5zu Bytes\n", sizeof((Buffer *)0)->bucket_left);
   printf("Size of Buffer->windows                       : %5zu Bytes\n", sizeof((Buffer *)0)->windows);
-  printf("Size of Buffer->comp_cost                     : %5zu Bytes\n", sizeof((Buffer *)0)->comp_cost);
+  printf("Size of Buffer->id                            : %5zu Bytes\n", sizeof((Buffer *)0)->id);
+  printf("Size of Buffer->overhead                      : %5zu Bytes\n", sizeof((Buffer *)0)->overhead);
   printf("Size of Buffer->ref_count                     : %5zu Bytes\n", sizeof((Buffer *)0)->ref_count);
+  printf("Size of Buffer->flags                         : %5zu Bytes\n", sizeof((Buffer *)0)->flags);
+  printf("Size of Buffer->bucket_index                  : %5zu Bytes\n", sizeof((Buffer *)0)->bucket_index);
+  printf("Size of Buffer->bucket_cas_lock               : %5zu Bytes\n", sizeof((Buffer *)0)->bucket_cas_lock);
   printf("Size of Buffer->cas_lock                      : %5zu Bytes\n", sizeof((Buffer *)0)->cas_lock);
-  /* The actual Skiplist elements, via Flexible Array Member (C99) support. */
   printf("Size of Buffer->sl_levels                     : %5zu Bytes\n", sizeof((Buffer *)0)->sl_levels);
+  printf("Size of Buffer->padding                       : %5zu Bytes\n", sizeof((Buffer *)0)->padding);
   printf("Size of Buffer->nexts (on avg)                : %5d Bytes\n", 16);
   printf("-----------------------------------------------------------\n");
   printf("Size of Buffer                                  %5zu Bytes\n", sizeof(Buffer) + 16);
@@ -147,7 +133,6 @@ int main() {
   printf("| Worker        | %7zu Bytes |\n", sizeof(Worker));
   printf("| List          | %7zu Bytes |\n", sizeof(List));
   printf("| Compressor    | %7zu Bytes |\n", sizeof(Compressor));
-  printf("| SkiplistNode  | %7zu Bytes |\n", sizeof(SkiplistNode));
   printf("| Buffer        | %7zu Bytes |\n", sizeof(Buffer) + 16);
   printf("+---------------+---------------+\n");
 

@@ -12,7 +12,6 @@
 #include <stdint.h>
 #include <stdbool.h> /* For bool types. */
 #include <stdlib.h>
-#include <time.h>     /* for clock_gettime() */
 #include <string.h>   /* for memcpy() */
 #include "buffer.h"
 #include "lz4/lz4.h"
@@ -29,25 +28,22 @@ extern const int ZSTD_COMPRESSOR_ID;
 
 /* Create a buffer initializer to help save time. */
 const Buffer BUFFER_INITIALIZER = {
-  /* The payload we want to cache (i.e.: the page). */
   .data = NULL,
   .data_length = 0,
   .comp_length = 0,
-
-  /* Attributes for typical buffer organization and management. */
-  .id = 0,
-  .flags = 0,
-  .overhead = 0,
-  .weighted_popularity = 0,
-  .padding = 0,
+  .bucket_right = NULL,
+  .bucket_left = NULL,
   .windows = {0},
-  .comp_cost = 0,
+  .id = 0,
+  .overhead = 0,
   .ref_count = 0,
+  .flags = 0,
+  .bucket_index = 0,
+  .bucket_cas_lock = 0,
   .cas_lock = 0,
-
-  /* The actual Skiplist elements, via Flexible Array Member (C99) support. */
-  .sl_levels = 1
-  // We can't set the FAM here.
+  .sl_levels = 1,
+  .padding = 0
+  // We can't set the ->nexts[] FAM here.
 };
 
 /* We need to know what one billion is for clock timing. */
@@ -160,8 +156,6 @@ int buffer__compress(Buffer *buf, void **compressed_data, int compressor_id, int
     return E_BUFFER_ALREADY_COMPRESSED;
 
   /* Data looks good, time to compress. */
-  struct timespec start, end;
-  clock_gettime(CLOCK_MONOTONIC, &start);
   // -- Using LZ4
   if(compressor_id == LZ4_COMPRESSOR_ID) {
     int max_compressed_size = LZ4_compressBound(buf->data_length);
@@ -200,8 +194,6 @@ int buffer__compress(Buffer *buf, void **compressed_data, int compressor_id, int
   }
 
   /* At this point we've compressed the raw data and saved it in a tightly allocated section of heap. */
-  clock_gettime(CLOCK_MONOTONIC, &end);
-  buf->comp_cost += BILLION *(end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec;
   return E_OK;
 }
 
@@ -228,8 +220,6 @@ int buffer__decompress(Buffer *buf, int compressor_id) {
     return E_BUFFER_ALREADY_DECOMPRESSED;
 
   /* Data looks good, time to decompress.  Lock the buffer for safety. */
-  struct timespec start, end;
-  clock_gettime(CLOCK_MONOTONIC, &start);
   void *decompressed_data = (void *)malloc(buf->data_length);
   if (decompressed_data == NULL)
     return E_NO_MEMORY;
@@ -259,9 +249,7 @@ int buffer__decompress(Buffer *buf, int compressor_id) {
   buf->data = decompressed_data;
 
   /* At this point we've decompressed the data and replaced buf->data with it.  Update tracking counters and move on. */
-  clock_gettime(CLOCK_MONOTONIC, &end);
   buf->comp_length = 0;
-  buf->comp_cost += BILLION *(end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec;
 
   return E_OK;
 }
@@ -272,7 +260,6 @@ int buffer__decompress(Buffer *buf, int compressor_id) {
  * Caller MUST have initialized with the same levels.
  */
 void buffer__copy(Buffer *src, Buffer *dst, bool copy_data) {
-  /* The payload we want to cache (i.e.: the page). */
   if(copy_data) {
     free(dst->data);
     dst->data = malloc(src->comp_length > 0 ? src->comp_length : src->data_length);
@@ -280,18 +267,15 @@ void buffer__copy(Buffer *src, Buffer *dst, bool copy_data) {
   }
   dst->data_length = src->data_length;
   dst->comp_length = src->comp_length;
-
-  /* Attributes for typical buffer organization and management. */
-  dst->id = src->id;
-  // Do NOT copy flags.  Only list functions manage these.
-  dst->overhead = src->overhead;
+  // Don't copy bucket_right or left
   for(int i=0; i<MAX_WINDOWS; i++)
     dst->windows[i] = src->windows[i];
-  dst->comp_cost = src->comp_cost;
+  dst->id = src->id;
+  dst->overhead = src->overhead;
   dst->ref_count = src->ref_count;
+  // Do NOT copy flags.  Only list functions manage these.
+  // Do NOT copy the bucket index or bucket cas lock
   // Do NOT copy the cas lock.
-
-  /* The actual Skiplist elements, via Flexible Array Member (C99) support. */
   dst->sl_levels = src->sl_levels;
   // Do NOT track ->nexts.  Only a list function should do this.
 

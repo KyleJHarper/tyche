@@ -73,8 +73,8 @@ struct list {
 
   /* Management of Nodes. */
   Buffer *head;                                  /* The head of the list of buffers. */
-  Buffer *clock_hand;                            /* The current Buffer to be checked when sweeping is invoked. */
   uint8_t window_index;                          /* The index for the current window. */
+  Buffer *buckets[UINT8_MAX];                    /* The "heads" for the buckets the buffers fall into. */
 
   /* Compressor Pool Management */
   pthread_mutex_t jobs_lock;                     /* The mutex that all jobs need to respect. */
